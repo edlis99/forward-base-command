@@ -17,6 +17,8 @@ export interface UnitStats {
   sightRange: number;
   attackCooldown: number;
   cost: number;
+  accuracy: number; // 0-1 base hit chance
+  critChance: number; // 0-1 critical hit chance
 }
 
 export interface Unit {
@@ -39,6 +41,14 @@ export interface Unit {
   alive: boolean;
   selected: boolean;
   inCover: boolean;
+  accuracy: number;
+  critChance: number;
+  morale: number; // 0-1, affects combat effectiveness
+  facing: number; // angle in radians for rotation
+  kills: number; // track kills for veterancy/rewards
+  veterancy: number; // 0=rookie, 1=regular, 2=veteran, 3=elite
+  droneActive: boolean; // whether this unit has launched a drone
+  droneTarget: Position | null; // where the drone is scouting
 }
 
 export interface TerrainCell {
@@ -47,6 +57,7 @@ export interface TerrainCell {
   y: number;
   coverBonus: number;
   movementCost: number;
+  elevation: number; // 0=low, 1=normal, 2=high — affects range/damage
 }
 
 export interface Ability {
@@ -58,6 +69,7 @@ export interface Ability {
   radius: number;
   description: string;
   key: string;
+  requiresUnit: boolean; // drone requires a selected unit to launch
 }
 
 export interface ActiveEffect {
@@ -65,7 +77,8 @@ export interface ActiveEffect {
   pos: Position;
   radius: number;
   timeLeft: number;
-  delay: number; // for airstrike delay
+  delay: number;
+  sourceUnitId?: string; // which unit launched this (for drones)
 }
 
 export interface Wreckage {
@@ -77,7 +90,7 @@ export interface Wreckage {
 export interface EventLog {
   message: string;
   time: number;
-  type: 'kill' | 'ability' | 'spawn' | 'info';
+  type: 'kill' | 'ability' | 'spawn' | 'info' | 'reward';
 }
 
 export interface GameState {
@@ -103,6 +116,9 @@ export interface GameState {
   wave: number;
   enemySpawnTimer: number;
   time: number;
+  killStreak: number; // consecutive kills without losing a unit
+  totalKills: number;
+  waveBonus: number; // bonus CP for completing a wave
 }
 
 export interface InputState {

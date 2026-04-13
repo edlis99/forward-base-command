@@ -1,12 +1,12 @@
 import { GameState, InputState, AbilityType } from './types';
 import { generateTerrain } from './terrain';
-import { createUnit, moveUnit, updateCombat, getUnitsInRect } from './units';
+import { createUnit, moveUnit, updateCombat, getUnitsInRect, checkVeterancy } from './units';
 import { createAbilities, activateAbility, updateEffects, updateFogOfWar } from './abilities';
 import { updateAI, checkGameOver } from './ai';
 import { render } from './renderer';
 import {
   CELL_SIZE, MAP_COLS, MAP_ROWS, STARTING_CP, CP_RATE, CP_PER_KILL,
-  PLAYER_SPAWN, ENEMY_SPAWN, ENEMY_SPAWN_INTERVAL,
+  PLAYER_SPAWN, ENEMY_SPAWN, ENEMY_SPAWN_INTERVAL, CP_STREAK_BONUS, CP_WAVE_CLEAR_BONUS,
 } from './constants';
 
 export function createInitialState(): GameState {
@@ -35,11 +35,13 @@ export function createInitialState(): GameState {
     gameOver: false,
     gameResult: null,
     wave: 0,
-    enemySpawnTimer: 5, // first wave after 5s
+    enemySpawnTimer: 5,
     time: 0,
+    killStreak: 0,
+    totalKills: 0,
+    waveBonus: 0,
   };
 
-  // Starting player units
   const px = PLAYER_SPAWN.x * CELL_SIZE;
   const py = PLAYER_SPAWN.y * CELL_SIZE;
   state.units.push(createUnit('infantry', 'player', px, py - 60));
@@ -74,7 +76,6 @@ export function update(state: GameState, input: InputState, dt: number) {
   if (input.keys.has('a') || input.keys.has('arrowleft')) state.camera.x -= camSpeed;
   if (input.keys.has('d') || input.keys.has('arrowright')) state.camera.x += camSpeed;
 
-  // Clamp camera
   state.camera.x = Math.max(0, Math.min(state.mapWidth - 800, state.camera.x));
   state.camera.y = Math.max(0, Math.min(state.mapHeight - 600, state.camera.y));
 
@@ -86,6 +87,9 @@ export function update(state: GameState, input: InputState, dt: number) {
     if (unit.alive) moveUnit(unit, dt, state);
   }
 
+  // Track previous wave enemy count for wave clear bonus
+  const prevEnemyCount = state.units.filter(u => u.alive && u.team === 'enemy').length;
+
   // Combat
   for (const unit of state.units) {
     const msg = updateCombat(unit, dt, state);
@@ -93,16 +97,52 @@ export function update(state: GameState, input: InputState, dt: number) {
       state.eventLog.unshift({ message: msg, time: state.time, type: 'kill' });
       if (state.eventLog.length > 20) state.eventLog.pop();
 
-      // Award CP for kills
+      // Reward system
       const killedUnit = state.units.find(u => !u.alive && u.health <= 0);
       if (killedUnit) {
-        if (killedUnit.team === 'enemy') state.commandPoints += CP_PER_KILL;
+        if (killedUnit.team === 'enemy') {
+          state.totalKills++;
+          state.killStreak++;
+          
+          // Base CP + streak bonus
+          const streakBonus = Math.min(state.killStreak * CP_STREAK_BONUS, 50);
+          const totalReward = CP_PER_KILL + streakBonus;
+          state.commandPoints += totalReward;
+          
+          if (state.killStreak >= 3) {
+            state.eventLog.unshift({
+              message: `Kill streak x${state.killStreak}! +${totalReward} CP`,
+              time: state.time,
+              type: 'reward',
+            });
+          }
+
+          // Veterancy check for the killing unit
+          const vetMsg = checkVeterancy(unit, state);
+          if (vetMsg) {
+            state.eventLog.unshift({ message: vetMsg, time: state.time, type: 'reward' });
+          }
+        } else {
+          // Player unit died — reset streak
+          state.killStreak = 0;
+        }
         state.wreckage.push({ pos: { ...killedUnit.pos }, type: killedUnit.type, timer: 60 });
       }
     }
   }
 
-  // Remove dead units (keep for a frame for wreckage)
+  // Wave clear bonus check
+  const currentEnemyCount = state.units.filter(u => u.alive && u.team === 'enemy').length;
+  if (prevEnemyCount > 0 && currentEnemyCount === 0 && state.wave > 0) {
+    state.commandPoints += CP_WAVE_CLEAR_BONUS;
+    state.eventLog.unshift({
+      message: `Wave cleared! +${CP_WAVE_CLEAR_BONUS} CP bonus`,
+      time: state.time,
+      type: 'reward',
+    });
+  }
+
+  // Remove dead units
   state.units = state.units.filter(u => u.alive || u.health > -9999);
 
   // Effects
@@ -139,9 +179,8 @@ export function screenToWorld(screenX: number, screenY: number, state: GameState
 }
 
 export function handleLeftClick(worldX: number, worldY: number, state: GameState, shiftKey: boolean) {
-  // Ability targeting
   if (state.activeAbility) {
-    const effect = activateAbility(state.activeAbility, { x: worldX, y: worldY }, state.abilities);
+    const effect = activateAbility(state.activeAbility, { x: worldX, y: worldY }, state.abilities, state);
     if (effect) {
       state.activeEffects.push(effect);
       state.eventLog.unshift({
@@ -154,12 +193,10 @@ export function handleLeftClick(worldX: number, worldY: number, state: GameState
     return;
   }
 
-  // Unit selection
   if (!shiftKey) {
     state.units.forEach(u => u.selected = false);
   }
 
-  // Try to select a unit
   for (const unit of state.units) {
     if (!unit.alive || unit.team !== 'player') continue;
     const dx = unit.pos.x - worldX;
@@ -175,13 +212,11 @@ export function handleRightClick(worldX: number, worldY: number, state: GameStat
   const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player');
   if (selected.length === 0) return;
 
-  // Check if clicking on enemy unit
   for (const unit of state.units) {
     if (!unit.alive || unit.team !== 'enemy') continue;
     const dx = unit.pos.x - worldX;
     const dy = unit.pos.y - worldY;
     if (Math.sqrt(dx * dx + dy * dy) < 18) {
-      // Attack target
       selected.forEach(u => {
         u.attackTarget = unit.id;
         u.targetPos = { x: worldX, y: worldY };
@@ -190,7 +225,6 @@ export function handleRightClick(worldX: number, worldY: number, state: GameStat
     }
   }
 
-  // Move command with formation offset
   const centerX = selected.reduce((s, u) => s + u.pos.x, 0) / selected.length;
   const centerY = selected.reduce((s, u) => s + u.pos.y, 0) / selected.length;
 

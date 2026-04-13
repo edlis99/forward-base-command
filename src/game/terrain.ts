@@ -22,6 +22,7 @@ export function generateTerrain(): TerrainCell[][] {
         y: y * CELL_SIZE,
         coverBonus: 0,
         movementCost: 1,
+        elevation: 1,
       };
     }
   }
@@ -85,6 +86,34 @@ export function generateTerrain(): TerrainCell[][] {
       if (dist <= 1) {
         setTerrain(grid, 35 + dx, 20 + dy, 'water');
       }
+    }
+  }
+
+  // Elevation: hills
+  const hillAreas = [
+    { cx: 14, cy: 8, r: 3 },
+    { cx: 44, cy: 5, r: 2 },
+    { cx: 22, cy: 28, r: 3 },
+  ];
+  for (const h of hillAreas) {
+    for (let dy = -h.r; dy <= h.r; dy++) {
+      for (let dx = -h.r; dx <= h.r; dx++) {
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist <= h.r) {
+          const gx = h.cx + dx;
+          const gy = h.cy + dy;
+          if (gx >= 0 && gx < MAP_COLS && gy >= 0 && gy < MAP_ROWS) {
+            grid[gy][gx].elevation = 2;
+          }
+        }
+      }
+    }
+  }
+
+  // Water is low elevation
+  for (let y = 0; y < MAP_ROWS; y++) {
+    for (let x = 0; x < MAP_COLS; x++) {
+      if (grid[y][x].type === 'water') grid[y][x].elevation = 0;
     }
   }
 

@@ -10,8 +10,9 @@ export function createAbilities(): Ability[] {
       currentCooldown: 0,
       duration: 10,
       radius: 200,
-      description: 'Reveals fog of war in target area (Q)',
+      description: 'Launch drone from selected unit to reveal area (Q)',
       key: 'q',
+      requiresUnit: true,
     },
     {
       type: 'airstrike',
@@ -22,6 +23,7 @@ export function createAbilities(): Ability[] {
       radius: 80,
       description: 'Heavy damage in target zone after 3s delay (W)',
       key: 'w',
+      requiresUnit: false,
     },
     {
       type: 'smoke_screen',
@@ -32,13 +34,33 @@ export function createAbilities(): Ability[] {
       radius: 100,
       description: 'Blocks line of sight in area (E)',
       key: 'e',
+      requiresUnit: false,
     },
   ];
 }
 
-export function activateAbility(type: AbilityType, pos: Position, abilities: Ability[]): ActiveEffect | null {
+export function activateAbility(type: AbilityType, pos: Position, abilities: Ability[], state: GameState): ActiveEffect | null {
   const ability = abilities.find(a => a.type === type);
   if (!ability || ability.currentCooldown > 0) return null;
+
+  // Drone requires a selected unit
+  if (type === 'recon_drone') {
+    const selectedUnit = state.units.find(u => u.alive && u.selected && u.team === 'player' && !u.droneActive);
+    if (!selectedUnit) return null; // need a selected unit to launch drone
+    
+    selectedUnit.droneActive = true;
+    selectedUnit.droneTarget = { ...pos };
+    ability.currentCooldown = ability.cooldown;
+
+    return {
+      type,
+      pos: { ...pos },
+      radius: ability.radius,
+      timeLeft: ability.duration + 0,
+      delay: 0,
+      sourceUnitId: selectedUnit.id,
+    };
+  }
 
   ability.currentCooldown = ability.cooldown;
 
@@ -65,7 +87,6 @@ export function updateEffects(state: GameState, dt: number): string[] {
     if (effect.type === 'airstrike' && effect.delay > 0) {
       effect.delay -= dt;
       if (effect.delay <= 0) {
-        // Deal damage to all units in radius
         for (const unit of state.units) {
           if (!unit.alive) continue;
           const dist = distance(unit.pos, effect.pos);
@@ -82,6 +103,14 @@ export function updateEffects(state: GameState, dt: number): string[] {
     }
 
     if (effect.timeLeft <= 0) {
+      // Clean up drone state on source unit
+      if (effect.type === 'recon_drone' && effect.sourceUnitId) {
+        const sourceUnit = state.units.find(u => u.id === effect.sourceUnitId);
+        if (sourceUnit) {
+          sourceUnit.droneActive = false;
+          sourceUnit.droneTarget = null;
+        }
+      }
       state.activeEffects.splice(i, 1);
     }
   }
@@ -95,14 +124,12 @@ export function updateFogOfWar(state: GameState) {
   const rows = terrain.length;
   const cs = state.cellSize;
 
-  // Reset fog (keep revealed for already-seen areas)
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
-      fogOfWar[y][x] = true; // fog on by default
+      fogOfWar[y][x] = true;
     }
   }
 
-  // Player units reveal fog
   for (const unit of units) {
     if (!unit.alive || unit.team !== 'player') continue;
     const sight = unit.sightRange;
@@ -124,7 +151,6 @@ export function updateFogOfWar(state: GameState) {
     }
   }
 
-  // Recon drone reveals fog
   for (const effect of activeEffects) {
     if (effect.type === 'recon_drone') {
       const cx = Math.floor(effect.pos.x / cs);
