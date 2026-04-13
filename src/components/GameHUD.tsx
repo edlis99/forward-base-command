@@ -1,7 +1,6 @@
 import React from 'react';
 import { GameState, UnitType } from '../game/types';
-import { UNIT_STATS } from '../game/constants';
-import { spawnUnit } from '../game/engine';
+import { UNIT_STATS, VETERANCY_NAMES } from '../game/constants';
 
 interface GameHUDProps {
   gameState: GameState;
@@ -15,10 +14,10 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onSpawn, onAbility }) => {
   const cp = Math.floor(gameState.commandPoints);
 
   const unitTypes: { type: UnitType; label: string; icon: string }[] = [
-    { type: 'infantry', label: 'Infantry', icon: '⬡' },
-    { type: 'tank', label: 'Tank', icon: '◆' },
-    { type: 'apc', label: 'APC', icon: '▬' },
-    { type: 'helicopter', label: 'Heli', icon: '✕' },
+    { type: 'infantry', label: 'Infantry', icon: '👤' },
+    { type: 'tank', label: 'Tank', icon: '🔷' },
+    { type: 'apc', label: 'APC', icon: '🚛' },
+    { type: 'helicopter', label: 'Heli', icon: '🚁' },
   ];
 
   return (
@@ -37,6 +36,12 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onSpawn, onAbility }) => {
           <div className="text-xs font-mono" style={{ color: '#8a9a7a' }}>
             Units: {gameState.units.filter(u => u.alive && u.team === 'player').length}
           </div>
+          <div className="text-xs font-mono" style={{ color: '#d4c47a' }}>
+            Kills: {gameState.totalKills}
+            {gameState.killStreak >= 3 && (
+              <span style={{ color: '#f0a030' }}> 🔥x{gameState.killStreak}</span>
+            )}
+          </div>
         </div>
 
         {/* Abilities */}
@@ -44,6 +49,9 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onSpawn, onAbility }) => {
           {gameState.abilities.map(ab => {
             const active = gameState.activeAbility === ab.type;
             const ready = ab.currentCooldown <= 0;
+            const needsUnit = ab.requiresUnit;
+            const hasSelected = selected.length > 0;
+            const canUse = ready && (!needsUnit || hasSelected);
             return (
               <button
                 key={ab.type}
@@ -51,14 +59,15 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onSpawn, onAbility }) => {
                 className="px-3 py-1 text-xs font-mono border transition-colors"
                 style={{
                   background: active ? 'rgba(74,144,217,0.3)' : 'rgba(40,50,40,0.8)',
-                  borderColor: active ? '#4a90d9' : ready ? '#5a6a5a' : '#3a4a3a',
-                  color: ready ? '#c0d0b0' : '#5a6a5a',
-                  cursor: ready ? 'pointer' : 'not-allowed',
+                  borderColor: active ? '#4a90d9' : canUse ? '#5a6a5a' : '#3a4a3a',
+                  color: canUse ? '#c0d0b0' : '#5a6a5a',
+                  cursor: canUse ? 'pointer' : 'not-allowed',
                 }}
-                disabled={!ready}
-                title={ab.description}
+                disabled={!canUse}
+                title={ab.description + (needsUnit ? ' (requires selected unit)' : '')}
               >
                 [{ab.key.toUpperCase()}] {ab.name}
+                {needsUnit && <span className="ml-1 text-xs" style={{ color: '#6ab0f9' }}>📡</span>}
                 {ab.currentCooldown > 0 && (
                   <span className="ml-1" style={{ color: '#d94a4a' }}>
                     {Math.ceil(ab.currentCooldown)}s
@@ -74,7 +83,9 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onSpawn, onAbility }) => {
       {gameState.activeAbility && (
         <div className="pointer-events-none absolute top-12 left-1/2 -translate-x-1/2 px-4 py-1 text-xs font-mono"
           style={{ background: 'rgba(74,144,217,0.2)', color: '#6ab0f9', border: '1px solid rgba(74,144,217,0.4)' }}>
-          Click to deploy {gameState.activeAbility.replace('_', ' ')} · ESC to cancel
+          {gameState.activeAbility === 'recon_drone' 
+            ? 'Click target area to launch drone from selected unit · ESC to cancel'
+            : `Click to deploy ${gameState.activeAbility.replace('_', ' ')} · ESC to cancel`}
         </div>
       )}
 
@@ -115,15 +126,22 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onSpawn, onAbility }) => {
               Selected: {selected.length} unit{selected.length > 1 ? 's' : ''}
             </div>
             {selected.length === 1 && (
-              <div className="text-xs font-mono grid grid-cols-3 gap-x-4" style={{ color: '#a0b090' }}>
+              <div className="text-xs font-mono grid grid-cols-2 gap-x-4 gap-y-1" style={{ color: '#a0b090' }}>
                 <span>Type: {selected[0].type}</span>
                 <span>HP: {Math.ceil(selected[0].health)}/{selected[0].maxHealth}</span>
-                <span>DMG: {selected[0].damage} | ARM: {selected[0].armor}</span>
+                <span>DMG: {Math.round(selected[0].damage)} | ARM: {selected[0].armor}</span>
+                <span>ACC: {Math.round(selected[0].accuracy * 100)}% | Morale: {Math.round(selected[0].morale * 100)}%</span>
+                <span style={{ color: VETERANCY_NAMES[selected[0].veterancy] === 'Elite' ? '#f0a030' : '#b0c090' }}>
+                  {'★'.repeat(selected[0].veterancy)} {VETERANCY_NAMES[selected[0].veterancy]} ({selected[0].kills} kills)
+                </span>
+                {selected[0].droneActive && (
+                  <span style={{ color: '#6ab0f9' }}>🛸 Drone active</span>
+                )}
               </div>
             )}
             {selected.length > 1 && (
               <div className="text-xs font-mono flex gap-3" style={{ color: '#a0b090' }}>
-                {['infantry', 'tank', 'apc', 'helicopter'].map(t => {
+                {(['infantry', 'tank', 'apc', 'helicopter'] as const).map(t => {
                   const count = selected.filter(u => u.type === t).length;
                   return count > 0 ? <span key={t}>{t}: {count}</span> : null;
                 })}
@@ -133,11 +151,15 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onSpawn, onAbility }) => {
         )}
 
         {/* Event log */}
-        <div className="w-64 max-h-24 overflow-hidden">
-          {gameState.eventLog.slice(0, 4).map((log, i) => (
+        <div className="w-72 max-h-28 overflow-hidden">
+          {gameState.eventLog.slice(0, 5).map((log, i) => (
             <div key={i} className="text-xs font-mono truncate" style={{
-              color: log.type === 'kill' ? '#d94a4a' : log.type === 'ability' ? '#4a90d9' : log.type === 'spawn' ? '#d4c47a' : '#7a8a6a',
-              opacity: 1 - i * 0.2,
+              color: log.type === 'kill' ? '#d94a4a' 
+                : log.type === 'ability' ? '#4a90d9' 
+                : log.type === 'spawn' ? '#d4c47a' 
+                : log.type === 'reward' ? '#f0a030'
+                : '#7a8a6a',
+              opacity: 1 - i * 0.15,
             }}>
               {log.message}
             </div>
@@ -155,6 +177,9 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onSpawn, onAbility }) => {
             }}>
               {gameState.gameResult === 'win' ? 'VICTORY' : 'DEFEAT'}
             </h2>
+            <div className="text-sm font-mono mb-2" style={{ color: '#d4c47a' }}>
+              Total kills: {gameState.totalKills} | Best streak: {gameState.killStreak}
+            </div>
             <p className="text-sm font-mono mb-4" style={{ color: '#a0b090' }}>
               {gameState.gameResult === 'win'
                 ? 'All enemy forces eliminated. Area secured.'

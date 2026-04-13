@@ -7,14 +7,21 @@ export const MAP_WIDTH = MAP_COLS * CELL_SIZE;
 export const MAP_HEIGHT = MAP_ROWS * CELL_SIZE;
 
 export const STARTING_CP = 200;
-export const CP_RATE = 2; // per second
+export const CP_RATE = 2;
 export const CP_PER_KILL = 25;
+export const CP_STREAK_BONUS = 10; // extra per kill in a streak
+export const CP_WAVE_CLEAR_BONUS = 75; // bonus for surviving a wave
+export const CP_VETERANCY_BONUS = 15; // bonus when unit levels up
 
-export const ENEMY_SPAWN_INTERVAL = 30; // seconds between waves
+export const ENEMY_SPAWN_INTERVAL = 30;
 export const MAX_WAVES = 10;
 
 export const FOG_ALPHA = 0.7;
 export const UNEXPLORED_ALPHA = 0.95;
+
+export const VETERANCY_THRESHOLDS = [0, 2, 5, 10]; // kills needed for each level
+export const VETERANCY_NAMES = ['Rookie', 'Regular', 'Veteran', 'Elite'];
+export const VETERANCY_BONUSES = [1.0, 1.1, 1.2, 1.35]; // damage/accuracy multiplier
 
 export const UNIT_STATS: Record<UnitType, UnitStats> = {
   infantry: {
@@ -26,6 +33,8 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
     sightRange: 200,
     attackCooldown: 1.0,
     cost: 50,
+    accuracy: 0.7,
+    critChance: 0.08,
   },
   tank: {
     maxHealth: 250,
@@ -36,6 +45,8 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
     sightRange: 180,
     attackCooldown: 2.5,
     cost: 150,
+    accuracy: 0.85,
+    critChance: 0.05,
   },
   apc: {
     maxHealth: 150,
@@ -46,6 +57,8 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
     sightRange: 190,
     attackCooldown: 0.8,
     cost: 100,
+    accuracy: 0.65,
+    critChance: 0.1,
   },
   helicopter: {
     maxHealth: 100,
@@ -56,10 +69,11 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
     sightRange: 280,
     attackCooldown: 1.5,
     cost: 200,
+    accuracy: 0.75,
+    critChance: 0.12,
   },
 };
 
-// Colors
 export const COLORS = {
   background: '#3d4a3a',
   grid: 'rgba(255,255,255,0.05)',
@@ -87,10 +101,11 @@ export const COLORS = {
     airstrike: 'rgba(217,120,44,0.4)',
     smoke_screen: 'rgba(200,200,200,0.5)',
   },
+  veterancy: ['#8a9a7a', '#b0c090', '#d4c47a', '#f0a030'],
 };
 
 export const NATO_SYMBOLS: Record<UnitType, string> = {
-  infantry: '⬡', // we'll draw custom symbols
+  infantry: '⬡',
   tank: '◆',
   apc: '▬',
   helicopter: '✕',
