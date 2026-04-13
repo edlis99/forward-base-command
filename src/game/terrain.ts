@@ -22,6 +22,7 @@ export function generateTerrain(): TerrainCell[][] {
         y: y * CELL_SIZE,
         coverBonus: 0,
         movementCost: 1,
+        elevation: 1,
       };
     }
   }
