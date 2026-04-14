@@ -9,9 +9,9 @@ export const MAP_HEIGHT = MAP_ROWS * CELL_SIZE;
 export const STARTING_CP = 200;
 export const CP_RATE = 2;
 export const CP_PER_KILL = 25;
-export const CP_STREAK_BONUS = 10; // extra per kill in a streak
-export const CP_WAVE_CLEAR_BONUS = 75; // bonus for surviving a wave
-export const CP_VETERANCY_BONUS = 15; // bonus when unit levels up
+export const CP_STREAK_BONUS = 10;
+export const CP_WAVE_CLEAR_BONUS = 75;
+export const CP_VETERANCY_BONUS = 15;
 
 export const ENEMY_SPAWN_INTERVAL = 30;
 export const MAX_WAVES = 10;
@@ -19,9 +19,9 @@ export const MAX_WAVES = 10;
 export const FOG_ALPHA = 0.7;
 export const UNEXPLORED_ALPHA = 0.95;
 
-export const VETERANCY_THRESHOLDS = [0, 2, 5, 10]; // kills needed for each level
+export const VETERANCY_THRESHOLDS = [0, 2, 5, 10];
 export const VETERANCY_NAMES = ['Rookie', 'Regular', 'Veteran', 'Elite'];
-export const VETERANCY_BONUSES = [1.0, 1.1, 1.2, 1.35]; // damage/accuracy multiplier
+export const VETERANCY_BONUSES = [1.0, 1.1, 1.2, 1.35];
 
 export const UNIT_STATS: Record<UnitType, UnitStats> = {
   infantry: {
@@ -83,6 +83,10 @@ export const COLORS = {
     forest: '#3e5a35',
     road: '#8a8578',
     water: '#3a5a7a',
+    wall: '#5a5550',
+    trench: '#4a4030',
+    rubble: '#6a6560',
+    sandbag: '#7a7260',
   },
   player: '#4a90d9',
   playerLight: '#6ab0f9',
