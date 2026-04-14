@@ -1,6 +1,6 @@
 export type UnitType = 'infantry' | 'tank' | 'apc' | 'helicopter';
 export type Team = 'player' | 'enemy';
-export type TerrainType = 'open' | 'urban' | 'forest' | 'road' | 'water';
+export type TerrainType = 'open' | 'urban' | 'forest' | 'road' | 'water' | 'wall' | 'trench' | 'rubble' | 'sandbag';
 export type AbilityType = 'recon_drone' | 'airstrike' | 'smoke_screen';
 
 export interface Position {
@@ -17,8 +17,8 @@ export interface UnitStats {
   sightRange: number;
   attackCooldown: number;
   cost: number;
-  accuracy: number; // 0-1 base hit chance
-  critChance: number; // 0-1 critical hit chance
+  accuracy: number;
+  critChance: number;
 }
 
 export interface Unit {
@@ -37,18 +37,18 @@ export interface Unit {
   sightRange: number;
   attackCooldown: number;
   attackTimer: number;
-  suppression: number; // 0-1, reduces speed/accuracy
+  suppression: number;
   alive: boolean;
   selected: boolean;
   inCover: boolean;
   accuracy: number;
   critChance: number;
-  morale: number; // 0-1, affects combat effectiveness
-  facing: number; // angle in radians for rotation
-  kills: number; // track kills for veterancy/rewards
-  veterancy: number; // 0=rookie, 1=regular, 2=veteran, 3=elite
-  droneActive: boolean; // whether this unit has launched a drone
-  droneTarget: Position | null; // where the drone is scouting
+  morale: number;
+  facing: number;
+  kills: number;
+  veterancy: number;
+  droneActive: boolean;
+  droneTarget: Position | null;
 }
 
 export interface TerrainCell {
@@ -57,7 +57,9 @@ export interface TerrainCell {
   y: number;
   coverBonus: number;
   movementCost: number;
-  elevation: number; // 0=low, 1=normal, 2=high — affects range/damage
+  elevation: number;
+  blocksLOS: boolean;      // blocks line of sight for shooting
+  blocksMovement: boolean; // completely impassable (walls)
 }
 
 export interface Ability {
@@ -69,7 +71,7 @@ export interface Ability {
   radius: number;
   description: string;
   key: string;
-  requiresUnit: boolean; // drone requires a selected unit to launch
+  requiresUnit: boolean;
 }
 
 export interface ActiveEffect {
@@ -78,7 +80,16 @@ export interface ActiveEffect {
   radius: number;
   timeLeft: number;
   delay: number;
-  sourceUnitId?: string; // which unit launched this (for drones)
+  sourceUnitId?: string;
+}
+
+export interface Projectile {
+  from: Position;
+  to: Position;
+  timer: number;
+  hit: boolean;
+  crit: boolean;
+  team: Team;
 }
 
 export interface Wreckage {
@@ -105,6 +116,7 @@ export interface GameState {
   commandPointRate: number;
   abilities: Ability[];
   activeEffects: ActiveEffect[];
+  projectiles: Projectile[];
   wreckage: Wreckage[];
   eventLog: EventLog[];
   fogOfWar: boolean[][];
@@ -116,9 +128,9 @@ export interface GameState {
   wave: number;
   enemySpawnTimer: number;
   time: number;
-  killStreak: number; // consecutive kills without losing a unit
+  killStreak: number;
   totalKills: number;
-  waveBonus: number; // bonus CP for completing a wave
+  waveBonus: number;
 }
 
 export interface InputState {

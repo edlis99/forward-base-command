@@ -26,6 +26,7 @@ export function createInitialState(): GameState {
     commandPointRate: CP_RATE,
     abilities: createAbilities(),
     activeEffects: [],
+    projectiles: [],
     wreckage: [],
     eventLog: [],
     fogOfWar,
@@ -87,7 +88,6 @@ export function update(state: GameState, input: InputState, dt: number) {
     if (unit.alive) moveUnit(unit, dt, state);
   }
 
-  // Track previous wave enemy count for wave clear bonus
   const prevEnemyCount = state.units.filter(u => u.alive && u.team === 'enemy').length;
 
   // Combat
@@ -97,18 +97,16 @@ export function update(state: GameState, input: InputState, dt: number) {
       state.eventLog.unshift({ message: msg, time: state.time, type: 'kill' });
       if (state.eventLog.length > 20) state.eventLog.pop();
 
-      // Reward system
       const killedUnit = state.units.find(u => !u.alive && u.health <= 0);
       if (killedUnit) {
         if (killedUnit.team === 'enemy') {
           state.totalKills++;
           state.killStreak++;
-          
-          // Base CP + streak bonus
+
           const streakBonus = Math.min(state.killStreak * CP_STREAK_BONUS, 50);
           const totalReward = CP_PER_KILL + streakBonus;
           state.commandPoints += totalReward;
-          
+
           if (state.killStreak >= 3) {
             state.eventLog.unshift({
               message: `Kill streak x${state.killStreak}! +${totalReward} CP`,
@@ -117,13 +115,11 @@ export function update(state: GameState, input: InputState, dt: number) {
             });
           }
 
-          // Veterancy check for the killing unit
           const vetMsg = checkVeterancy(unit, state);
           if (vetMsg) {
             state.eventLog.unshift({ message: vetMsg, time: state.time, type: 'reward' });
           }
         } else {
-          // Player unit died — reset streak
           state.killStreak = 0;
         }
         state.wreckage.push({ pos: { ...killedUnit.pos }, type: killedUnit.type, timer: 60 });
@@ -131,7 +127,7 @@ export function update(state: GameState, input: InputState, dt: number) {
     }
   }
 
-  // Wave clear bonus check
+  // Wave clear bonus
   const currentEnemyCount = state.units.filter(u => u.alive && u.team === 'enemy').length;
   if (prevEnemyCount > 0 && currentEnemyCount === 0 && state.wave > 0) {
     state.commandPoints += CP_WAVE_CLEAR_BONUS;
@@ -144,6 +140,12 @@ export function update(state: GameState, input: InputState, dt: number) {
 
   // Remove dead units
   state.units = state.units.filter(u => u.alive || u.health > -9999);
+
+  // Update projectile timers
+  state.projectiles = state.projectiles.filter(p => {
+    p.timer -= dt;
+    return p.timer > 0;
+  });
 
   // Effects
   const effectMsgs = updateEffects(state, dt);
