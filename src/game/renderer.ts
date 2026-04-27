@@ -179,6 +179,7 @@ function extrusionHeight(cell: TerrainCell): number {
     case 'sandbag': return 6;
     case 'forest': return 14;
     case 'rubble': return 4;
+    case 'hedgerow': return 11;
     default: return 0;
   }
 }
