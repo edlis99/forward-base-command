@@ -135,9 +135,41 @@ function drawTerrainExtrusions(ctx: CanvasRenderingContext2D, state: GameState) 
         case 'rubble':
           drawRubble(ctx, cell, h);
           break;
+        case 'hedgerow':
+          drawHedgerow(ctx, cell, h, state.time);
+          break;
       }
     }
   }
+}
+
+function drawHedgerow(ctx: CanvasRenderingContext2D, cell: TerrainCell, h: number, time: number) {
+  const sx = LIGHT.dx * h;
+  const sy = LIGHT.dy * h;
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(cell.x + 2 + sx, cell.y + 2 + sy, CELL_SIZE - 4, CELL_SIZE - 4);
+  // Hedge mass
+  for (let i = 0; i < 5; i++) {
+    const cx = cell.x + 6 + i * 5 + Math.sin(time + i) * 0.5;
+    const cy = cell.y + CELL_SIZE / 2 - h * 0.5;
+    ctx.fillStyle = '#2c4828';
+    ctx.beginPath();
+    ctx.arc(cx, cy + 4, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#3e6235';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+    ctx.fill();
+    // Highlight
+    ctx.fillStyle = 'rgba(160,200,120,0.3)';
+    ctx.beginPath();
+    ctx.arc(cx - 1, cy - 1, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Base trunk hint
+  ctx.fillStyle = 'rgba(40,30,20,0.5)';
+  ctx.fillRect(cell.x + 4, cell.y + CELL_SIZE - 6, CELL_SIZE - 8, 3);
 }
 
 function extrusionHeight(cell: TerrainCell): number {
