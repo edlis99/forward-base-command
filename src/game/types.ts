@@ -76,11 +76,16 @@ export interface TerrainCell {
   type: TerrainType;
   x: number;
   y: number;
-  coverBonus: number;
-  movementCost: number;
-  elevation: number;
-  blocksLOS: boolean;      // blocks line of sight for shooting
-  blocksMovement: boolean; // completely impassable (walls)
+  coverBonus: number;       // damage reduction (hard cover)
+  concealment: number;      // accuracy reduction without blocking LOS (forest, grass)
+  movementCost: number;     // multiplier
+  elevation: number;        // 0 = low, 1 = normal, 2 = high
+  blocksLOS: boolean;       // physical sight block (walls, buildings)
+  blocksMovement: boolean;  // impassable to ground
+  vehicleImpassable: boolean; // impassable to vehicles only (e.g. hedgerow, dense forest, trench for tanks)
+  trampled: boolean;        // dynamic state for grass/forest after vehicle pass
+  traction: number;         // 0..1, lower = slower & may skid (mud, gravel)
+  fatigueRate: number;      // multiplier on fatigue accrual
 }
 
 export interface Ability {
