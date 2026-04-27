@@ -100,6 +100,70 @@ function drawTerrain(ctx: CanvasRenderingContext2D, state: GameState) {
           ctx.fillRect(cell.x + 4, cell.y + 6, CELL_SIZE - 8, CELL_SIZE - 12);
           break;
         }
+        case 'mud': {
+          // Wet shiny patches
+          ctx.fillStyle = 'rgba(40,30,20,0.55)';
+          ctx.beginPath();
+          ctx.ellipse(cell.x + 10, cell.y + 12, 7, 4, 0.3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(cell.x + 22, cell.y + 22, 6, 4, -0.4, 0, Math.PI * 2);
+          ctx.fill();
+          // Highlight (water sheen)
+          ctx.fillStyle = 'rgba(140,150,140,0.18)';
+          ctx.beginPath();
+          ctx.ellipse(cell.x + 10, cell.y + 11, 4, 1.5, 0.3, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 'crater': {
+          // Bomb crater — radial gradient inset
+          const cx = cell.x + CELL_SIZE / 2;
+          const cy = cell.y + CELL_SIZE / 2;
+          const grad = ctx.createRadialGradient(cx, cy, 2, cx, cy, CELL_SIZE / 2);
+          grad.addColorStop(0, '#1a1612');
+          grad.addColorStop(0.6, '#3a3228');
+          grad.addColorStop(1, '#5a4f3e');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(cx, cy, CELL_SIZE / 2 - 2, 0, Math.PI * 2);
+          ctx.fill();
+          // Rim debris
+          ctx.fillStyle = 'rgba(30,25,20,0.4)';
+          for (let i = 0; i < 5; i++) {
+            const a = (i / 5) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.arc(cx + Math.cos(a) * 12, cy + Math.sin(a) * 12, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          break;
+        }
+        case 'tall_grass': {
+          // Small grass tufts
+          ctx.strokeStyle = 'rgba(140,150,80,0.55)';
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const gx = cell.x + 4 + (i * 5) % (CELL_SIZE - 4);
+            const gy = cell.y + 6 + ((i * 7) % (CELL_SIZE - 8));
+            ctx.moveTo(gx, gy + 4);
+            ctx.lineTo(gx + Math.sin(state.time * 0.6 + i) * 1.5, gy);
+          }
+          ctx.stroke();
+          break;
+        }
+        case 'gravel': {
+          // Pebbles
+          ctx.fillStyle = 'rgba(160,150,130,0.35)';
+          for (let i = 0; i < 6; i++) {
+            const gx = cell.x + 4 + (i * 5 + 3) % (CELL_SIZE - 4);
+            const gy = cell.y + 6 + ((i * 7 + 5) % (CELL_SIZE - 6));
+            ctx.beginPath();
+            ctx.arc(gx, gy, 1 + (i % 2), 0, Math.PI * 2);
+            ctx.fill();
+          }
+          break;
+        }
       }
 
       // Subtle grid
@@ -135,9 +199,41 @@ function drawTerrainExtrusions(ctx: CanvasRenderingContext2D, state: GameState) 
         case 'rubble':
           drawRubble(ctx, cell, h);
           break;
+        case 'hedgerow':
+          drawHedgerow(ctx, cell, h, state.time);
+          break;
       }
     }
   }
+}
+
+function drawHedgerow(ctx: CanvasRenderingContext2D, cell: TerrainCell, h: number, time: number) {
+  const sx = LIGHT.dx * h;
+  const sy = LIGHT.dy * h;
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(cell.x + 2 + sx, cell.y + 2 + sy, CELL_SIZE - 4, CELL_SIZE - 4);
+  // Hedge mass
+  for (let i = 0; i < 5; i++) {
+    const cx = cell.x + 6 + i * 5 + Math.sin(time + i) * 0.5;
+    const cy = cell.y + CELL_SIZE / 2 - h * 0.5;
+    ctx.fillStyle = '#2c4828';
+    ctx.beginPath();
+    ctx.arc(cx, cy + 4, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#3e6235';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+    ctx.fill();
+    // Highlight
+    ctx.fillStyle = 'rgba(160,200,120,0.3)';
+    ctx.beginPath();
+    ctx.arc(cx - 1, cy - 1, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Base trunk hint
+  ctx.fillStyle = 'rgba(40,30,20,0.5)';
+  ctx.fillRect(cell.x + 4, cell.y + CELL_SIZE - 6, CELL_SIZE - 8, 3);
 }
 
 function extrusionHeight(cell: TerrainCell): number {
@@ -147,6 +243,7 @@ function extrusionHeight(cell: TerrainCell): number {
     case 'sandbag': return 6;
     case 'forest': return 14;
     case 'rubble': return 4;
+    case 'hedgerow': return 11;
     default: return 0;
   }
 }
@@ -491,6 +588,32 @@ function drawUnits(ctx: CanvasRenderingContext2D, state: GameState) {
       ctx.fillText('🛸', unit.pos.x + 12, barY);
     }
 
+    // Reload indicator (small orange arc)
+    if (unit.reloadTimer > 0) {
+      const reloadMax = unit.type === 'tank' ? 4 : unit.type === 'helicopter' ? 3.5 : unit.type === 'apc' ? 3 : 2.5;
+      const pct = 1 - unit.reloadTimer / reloadMax;
+      ctx.strokeStyle = 'rgba(255,160,40,0.85)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(unit.pos.x + 14, barY + 2, 4, -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Stance dot (player units only)
+    if (unit.team === 'player') {
+      const stanceColor = unit.stance === 'aggressive' ? '#d94a4a' : unit.stance === 'hold_fire' ? '#888' : '#4ad94a';
+      ctx.fillStyle = stanceColor;
+      ctx.beginPath();
+      ctx.arc(unit.pos.x - 14, barY + 2, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Fatigue tick (small grey bar)
+    if (unit.fatigue > 0.3) {
+      ctx.fillStyle = `rgba(180,180,180,${unit.fatigue * 0.7})`;
+      ctx.fillRect(unit.pos.x - 13, barY + 8, 26 * unit.fatigue, 1);
+    }
+
     if (unit.selected) {
       ctx.strokeStyle = `rgba(74,144,217,0.12)`;
       ctx.setLineDash([4, 4]);
@@ -500,14 +623,27 @@ function drawUnits(ctx: CanvasRenderingContext2D, state: GameState) {
       ctx.setLineDash([]);
 
       if (unit.targetPos) {
-        ctx.strokeStyle = 'rgba(74,144,217,0.3)';
+        ctx.strokeStyle = unit.order === 'attack_move' ? 'rgba(217,74,74,0.5)' : 'rgba(74,144,217,0.4)';
         ctx.lineWidth = 1;
         ctx.setLineDash([3, 3]);
         ctx.beginPath();
         ctx.moveTo(unit.pos.x, unit.pos.y);
         ctx.lineTo(unit.targetPos.x, unit.targetPos.y);
+        // Continue through waypoints
+        let prev = unit.targetPos;
+        for (const wp of unit.waypoints) {
+          ctx.lineTo(wp.x, wp.y);
+          prev = wp;
+        }
         ctx.stroke();
         ctx.setLineDash([]);
+        // Waypoint markers
+        for (const wp of unit.waypoints) {
+          ctx.fillStyle = 'rgba(74,144,217,0.6)';
+          ctx.beginPath();
+          ctx.arc(wp.x, wp.y, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
   }

@@ -83,11 +83,19 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onSpawn, onAbility }) => {
       {gameState.activeAbility && (
         <div className="pointer-events-none absolute top-12 left-1/2 -translate-x-1/2 px-4 py-1 text-xs font-mono"
           style={{ background: 'rgba(74,144,217,0.2)', color: '#6ab0f9', border: '1px solid rgba(74,144,217,0.4)' }}>
-          {gameState.activeAbility === 'recon_drone' 
+          {gameState.activeAbility === 'recon_drone'
             ? 'Click target area to launch drone from selected unit · ESC to cancel'
             : `Click to deploy ${gameState.activeAbility.replace('_', ' ')} · ESC to cancel`}
         </div>
       )}
+
+      {/* Hotkey legend */}
+      <div className="pointer-events-none absolute top-12 right-4 text-[10px] font-mono px-2 py-1"
+        style={{ background: 'rgba(20,25,20,0.7)', color: '#8a9a7a', border: '1px solid #3a4a3a' }}>
+        <div>Shift+RClick: queue waypoint · Ctrl+RClick: attack-move</div>
+        <div>RClick APC: board · H: hold pos · T: retreat</div>
+        <div>F: hold-fire · G: defend · Y: aggressive</div>
+      </div>
 
       {/* Bottom panel */}
       <div className="pointer-events-auto flex items-end gap-4 px-4 py-2"
@@ -131,6 +139,8 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onSpawn, onAbility }) => {
                 <span>HP: {Math.ceil(selected[0].health)}/{selected[0].maxHealth}</span>
                 <span>DMG: {Math.round(selected[0].damage)} | ARM: {selected[0].armor}</span>
                 <span>ACC: {Math.round(selected[0].accuracy * 100)}% | Morale: {Math.round(selected[0].morale * 100)}%</span>
+                <span>Ammo: {selected[0].ammo}/{selected[0].maxAmmo} {selected[0].reloadTimer > 0 ? '⟳' : ''}</span>
+                <span>Stance: {selected[0].stance} | {selected[0].order}</span>
                 <span style={{ color: VETERANCY_NAMES[selected[0].veterancy] === 'Elite' ? '#f0a030' : '#b0c090' }}>
                   {'★'.repeat(selected[0].veterancy)} {VETERANCY_NAMES[selected[0].veterancy]} ({selected[0].kills} kills)
                 </span>

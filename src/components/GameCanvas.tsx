@@ -3,6 +3,7 @@ import { GameState, InputState } from '../game/types';
 import {
   createInitialState, createInputState, update, render,
   screenToWorld, handleLeftClick, handleRightClick, handleBoxSelect,
+  setStanceForSelected, holdPositionForSelected, retreatSelected,
 } from '../game/engine';
 
 interface GameCanvasProps {
@@ -38,7 +39,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ gameStateRef, inputRef, onState
         onStateChange();
       }
     } else if (e.button === 2) {
-      handleRightClick(world.x, world.y, state);
+      handleRightClick(world.x, world.y, state, e.shiftKey, e.ctrlKey || e.metaKey);
       onStateChange();
     }
   }, [gameStateRef, inputRef, onStateChange]);
@@ -103,13 +104,19 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ gameStateRef, inputRef, onState
       // Ability hotkeys
       if (e.key === 'q') state.activeAbility = state.activeAbility === 'recon_drone' ? null : 'recon_drone';
       if (e.key === 'e') state.activeAbility = state.activeAbility === 'smoke_screen' ? null : 'smoke_screen';
+      if (e.key === 'r') state.activeAbility = state.activeAbility === 'airstrike' ? null : 'airstrike';
+
+      // Order/stance hotkeys
+      if (e.key === 'h') holdPositionForSelected(state);
+      if (e.key === 't') retreatSelected(state);
+      if (e.key === 'f') setStanceForSelected(state, 'hold_fire');
+      if (e.key === 'g') setStanceForSelected(state, 'defend');
+      if (e.key === 'y') setStanceForSelected(state, 'aggressive');
+
       if (e.key === 'Escape') {
         state.activeAbility = null;
         state.units.forEach(u => u.selected = false);
       }
-
-      // Avoid 'w' conflict with camera and airstrike — use 'r' for airstrike instead
-      if (e.key === 'r') state.activeAbility = state.activeAbility === 'airstrike' ? null : 'airstrike';
 
       onStateChange();
     };
