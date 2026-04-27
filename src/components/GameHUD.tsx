@@ -131,6 +131,8 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onSpawn, onAbility }) => {
                 <span>HP: {Math.ceil(selected[0].health)}/{selected[0].maxHealth}</span>
                 <span>DMG: {Math.round(selected[0].damage)} | ARM: {selected[0].armor}</span>
                 <span>ACC: {Math.round(selected[0].accuracy * 100)}% | Morale: {Math.round(selected[0].morale * 100)}%</span>
+                <span>Ammo: {selected[0].ammo}/{selected[0].maxAmmo} {selected[0].reloadTimer > 0 ? '⟳' : ''}</span>
+                <span>Stance: {selected[0].stance} | {selected[0].order}</span>
                 <span style={{ color: VETERANCY_NAMES[selected[0].veterancy] === 'Elite' ? '#f0a030' : '#b0c090' }}>
                   {'★'.repeat(selected[0].veterancy)} {VETERANCY_NAMES[selected[0].veterancy]} ({selected[0].kills} kills)
                 </span>
