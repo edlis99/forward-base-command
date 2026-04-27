@@ -99,6 +99,11 @@ export const COLORS = {
     trench: '#4a4030',
     rubble: '#6a6560',
     sandbag: '#7a7260',
+    mud: '#5a4530',
+    crater: '#3a352d',
+    hedgerow: '#4a6a40',
+    tall_grass: '#7a8a4e',
+    gravel: '#807868',
   },
   player: '#4a90d9',
   playerLight: '#6ab0f9',
@@ -119,6 +124,10 @@ export const COLORS = {
   },
   veterancy: ['#8a9a7a', '#b0c090', '#d4c47a', '#f0a030'],
 };
+
+// Detection bonus when stationary or in concealment
+export const STATIONARY_ACC_BONUS = 1.12;
+export const MOVING_ACC_PENALTY = 0.7;
 
 export const NATO_SYMBOLS: Record<UnitType, string> = {
   infantry: '⬡',
