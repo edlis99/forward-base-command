@@ -39,7 +39,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ gameStateRef, inputRef, onState
         onStateChange();
       }
     } else if (e.button === 2) {
-      handleRightClick(world.x, world.y, state);
+      handleRightClick(world.x, world.y, state, e.shiftKey, e.ctrlKey || e.metaKey);
       onStateChange();
     }
   }, [gameStateRef, inputRef, onStateChange]);
