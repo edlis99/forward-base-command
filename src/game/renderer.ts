@@ -1,12 +1,20 @@
-import { GameState, Unit, UnitType } from './types';
+import { GameState, Unit, UnitType, TerrainCell } from './types';
 import { COLORS, CELL_SIZE, MAP_COLS, MAP_ROWS, VETERANCY_NAMES } from './constants';
+
+// Pseudo-3D: shadows are offset down-right; "height" extrudes along same vector.
+const LIGHT = { dx: 0.55, dy: 0.55 };
 
 export function render(ctx: CanvasRenderingContext2D, state: GameState, canvasW: number, canvasH: number) {
   const { camera, zoom } = state;
 
   ctx.save();
   ctx.clearRect(0, 0, canvasW, canvasH);
-  ctx.fillStyle = COLORS.background;
+
+  // Sky-to-ground gradient backdrop for depth
+  const grad = ctx.createLinearGradient(0, 0, 0, canvasH);
+  grad.addColorStop(0, '#2a3528');
+  grad.addColorStop(1, '#1a221a');
+  ctx.fillStyle = grad;
   ctx.fillRect(0, 0, canvasW, canvasH);
 
   ctx.save();
@@ -14,9 +22,11 @@ export function render(ctx: CanvasRenderingContext2D, state: GameState, canvasW:
   ctx.scale(zoom, zoom);
 
   drawTerrain(ctx, state);
+  drawTerrainExtrusions(ctx, state);
   drawWreckage(ctx, state);
   drawEffects(ctx, state);
   drawProjectiles(ctx, state);
+  drawUnitShadows(ctx, state);
   drawUnits(ctx, state);
   drawDroneLinks(ctx, state);
   drawSelectionBox(ctx, state);
@@ -28,172 +38,71 @@ export function render(ctx: CanvasRenderingContext2D, state: GameState, canvasW:
   ctx.restore();
 }
 
+// ---------- TERRAIN (ground layer, flat) ----------
 function drawTerrain(ctx: CanvasRenderingContext2D, state: GameState) {
   const { terrain } = state;
   for (let y = 0; y < MAP_ROWS; y++) {
     for (let x = 0; x < MAP_COLS; x++) {
       const cell = terrain[y][x];
-      ctx.fillStyle = COLORS.terrain[cell.type];
+
+      // Ground base color, modulated by elevation
+      let base = COLORS.terrain[cell.type];
+      ctx.fillStyle = base;
       ctx.fillRect(cell.x, cell.y, CELL_SIZE, CELL_SIZE);
 
-      // Elevation shading
+      // Elevation tint
       if (cell.elevation === 2) {
-        ctx.fillStyle = 'rgba(255,255,200,0.1)';
+        ctx.fillStyle = 'rgba(255,240,200,0.08)';
         ctx.fillRect(cell.x, cell.y, CELL_SIZE, CELL_SIZE);
-        // Contour lines
-        ctx.strokeStyle = 'rgba(255,255,200,0.15)';
-        ctx.lineWidth = 0.5;
-        ctx.strokeRect(cell.x + 2, cell.y + 2, CELL_SIZE - 4, CELL_SIZE - 4);
       } else if (cell.elevation === 0) {
-        ctx.fillStyle = 'rgba(0,0,30,0.1)';
+        ctx.fillStyle = 'rgba(0,0,30,0.18)';
         ctx.fillRect(cell.x, cell.y, CELL_SIZE, CELL_SIZE);
       }
 
-      // Terrain-specific detail rendering
+      // Flat ground details (non-extruded terrain)
       switch (cell.type) {
-        case 'urban': {
-          // Building with walls and windows
-          ctx.fillStyle = 'rgba(90,85,80,0.8)';
-          ctx.fillRect(cell.x + 3, cell.y + 3, CELL_SIZE - 6, CELL_SIZE - 6);
-          ctx.strokeStyle = 'rgba(50,45,40,0.7)';
-          ctx.lineWidth = 1.5;
-          ctx.strokeRect(cell.x + 3, cell.y + 3, CELL_SIZE - 6, CELL_SIZE - 6);
-          // Windows
-          ctx.fillStyle = 'rgba(30,40,50,0.5)';
-          ctx.fillRect(cell.x + 7, cell.y + 7, 4, 4);
-          ctx.fillRect(cell.x + 21, cell.y + 7, 4, 4);
-          ctx.fillRect(cell.x + 7, cell.y + 21, 4, 4);
-          ctx.fillRect(cell.x + 21, cell.y + 21, 4, 4);
-          // Roof detail
-          ctx.fillStyle = 'rgba(70,65,60,0.3)';
-          ctx.fillRect(cell.x + 5, cell.y + 5, CELL_SIZE - 10, CELL_SIZE - 10);
-          break;
-        }
-        case 'forest': {
-          // Multiple trees
-          ctx.fillStyle = 'rgba(30,70,25,0.6)';
+        case 'road': {
+          // Dashed center line
+          ctx.strokeStyle = 'rgba(230,220,170,0.35)';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([5, 5]);
           ctx.beginPath();
-          ctx.arc(cell.x + 16, cell.y + 16, 11, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = 'rgba(20,55,18,0.5)';
-          ctx.beginPath();
-          ctx.arc(cell.x + 10, cell.y + 10, 6, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.arc(cell.x + 23, cell.y + 22, 5, 0, Math.PI * 2);
-          ctx.fill();
-          // Tree trunks
-          ctx.fillStyle = 'rgba(60,40,20,0.4)';
-          ctx.fillRect(cell.x + 15, cell.y + 14, 2, 6);
-          break;
-        }
-        case 'wall': {
-          // Thick wall/barrier
-          ctx.fillStyle = '#4a4540';
-          ctx.fillRect(cell.x + 2, cell.y + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-          ctx.strokeStyle = '#3a3530';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(cell.x + 2, cell.y + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-          // Brick pattern
-          ctx.strokeStyle = 'rgba(80,70,60,0.3)';
-          ctx.lineWidth = 0.5;
-          ctx.beginPath();
-          ctx.moveTo(cell.x + 2, cell.y + 10);
-          ctx.lineTo(cell.x + CELL_SIZE - 2, cell.y + 10);
-          ctx.moveTo(cell.x + 2, cell.y + 20);
-          ctx.lineTo(cell.x + CELL_SIZE - 2, cell.y + 20);
-          ctx.moveTo(cell.x + 16, cell.y + 2);
-          ctx.lineTo(cell.x + 16, cell.y + 10);
-          ctx.moveTo(cell.x + 8, cell.y + 10);
-          ctx.lineTo(cell.x + 8, cell.y + 20);
-          ctx.moveTo(cell.x + 24, cell.y + 10);
-          ctx.lineTo(cell.x + 24, cell.y + 20);
-          ctx.moveTo(cell.x + 16, cell.y + 20);
-          ctx.lineTo(cell.x + 16, cell.y + 30);
+          ctx.moveTo(cell.x + CELL_SIZE / 2, cell.y);
+          ctx.lineTo(cell.x + CELL_SIZE / 2, cell.y + CELL_SIZE);
           ctx.stroke();
-          // X mark for impassable
-          ctx.strokeStyle = 'rgba(200,50,50,0.15)';
-          ctx.lineWidth = 1;
+          ctx.setLineDash([]);
+          break;
+        }
+        case 'water': {
+          // Wave shimmer
+          ctx.strokeStyle = 'rgba(180,220,255,0.25)';
+          ctx.lineWidth = 0.7;
           ctx.beginPath();
-          ctx.moveTo(cell.x + 6, cell.y + 6);
-          ctx.lineTo(cell.x + CELL_SIZE - 6, cell.y + CELL_SIZE - 6);
-          ctx.moveTo(cell.x + CELL_SIZE - 6, cell.y + 6);
-          ctx.lineTo(cell.x + 6, cell.y + CELL_SIZE - 6);
+          const t = state.time * 1.5 + (cell.x + cell.y) * 0.05;
+          for (let i = 0; i < 3; i++) {
+            const wy = cell.y + 8 + i * 9 + Math.sin(t + i) * 1.5;
+            ctx.moveTo(cell.x + 2, wy);
+            ctx.lineTo(cell.x + CELL_SIZE - 2, wy);
+          }
           ctx.stroke();
           break;
         }
         case 'trench': {
-          // Dug-in trench
-          ctx.fillStyle = '#3a3020';
-          ctx.fillRect(cell.x + 4, cell.y + 4, CELL_SIZE - 8, CELL_SIZE - 8);
-          // Inner darker area (the hole)
+          // Trench is dug-down: dark inner pit + raised dirt rim handled in extrusions
           ctx.fillStyle = '#2a2015';
+          ctx.fillRect(cell.x + 5, cell.y + 5, CELL_SIZE - 10, CELL_SIZE - 10);
+          ctx.fillStyle = 'rgba(0,0,0,0.3)';
           ctx.fillRect(cell.x + 7, cell.y + 7, CELL_SIZE - 14, CELL_SIZE - 14);
-          // Edge detail (dirt piles)
-          ctx.fillStyle = 'rgba(90,75,50,0.4)';
-          ctx.fillRect(cell.x + 2, cell.y + 2, CELL_SIZE - 4, 3);
-          ctx.fillRect(cell.x + 2, cell.y + CELL_SIZE - 5, CELL_SIZE - 4, 3);
-          // Sandbag on edges
-          ctx.fillStyle = 'rgba(100,90,70,0.3)';
-          ctx.beginPath();
-          ctx.arc(cell.x + 8, cell.y + 4, 3, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.arc(cell.x + 24, cell.y + 4, 3, 0, Math.PI * 2);
-          ctx.fill();
           break;
         }
         case 'rubble': {
-          // Scattered debris
-          ctx.fillStyle = 'rgba(80,75,65,0.4)';
-          ctx.fillRect(cell.x + 5, cell.y + 8, 8, 5);
-          ctx.fillRect(cell.x + 18, cell.y + 15, 10, 4);
-          ctx.fillRect(cell.x + 8, cell.y + 20, 6, 7);
-          // Broken pieces
-          ctx.fillStyle = 'rgba(100,95,85,0.3)';
-          ctx.beginPath();
-          ctx.moveTo(cell.x + 12, cell.y + 6);
-          ctx.lineTo(cell.x + 20, cell.y + 10);
-          ctx.lineTo(cell.x + 15, cell.y + 14);
-          ctx.closePath();
-          ctx.fill();
-          // Dust dots
-          ctx.fillStyle = 'rgba(120,115,100,0.25)';
-          ctx.beginPath();
-          ctx.arc(cell.x + 10, cell.y + 25, 2, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.arc(cell.x + 22, cell.y + 8, 2, 0, Math.PI * 2);
-          ctx.fill();
-          break;
-        }
-        case 'sandbag': {
-          // Sandbag wall
-          ctx.fillStyle = '#6a6250';
-          // Row of sandbags
-          for (let row = 0; row < 3; row++) {
-            for (let col = 0; col < 3; col++) {
-              const sx = cell.x + 3 + col * 9;
-              const sy = cell.y + 5 + row * 8;
-              ctx.beginPath();
-              ctx.ellipse(sx + 4, sy + 3, 4, 3, 0, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.strokeStyle = 'rgba(50,45,35,0.4)';
-              ctx.lineWidth = 0.5;
-              ctx.stroke();
-            }
-          }
-          // Cover indicator
-          ctx.strokeStyle = 'rgba(100,200,100,0.2)';
-          ctx.lineWidth = 1;
-          ctx.setLineDash([2, 2]);
-          ctx.strokeRect(cell.x + 1, cell.y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
-          ctx.setLineDash([]);
+          ctx.fillStyle = 'rgba(60,55,45,0.35)';
+          ctx.fillRect(cell.x + 4, cell.y + 6, CELL_SIZE - 8, CELL_SIZE - 12);
           break;
         }
       }
 
-      // Grid lines
+      // Subtle grid
       ctx.strokeStyle = COLORS.grid;
       ctx.lineWidth = 0.5;
       ctx.strokeRect(cell.x, cell.y, CELL_SIZE, CELL_SIZE);
@@ -201,24 +110,271 @@ function drawTerrain(ctx: CanvasRenderingContext2D, state: GameState) {
   }
 }
 
+// ---------- TERRAIN EXTRUSIONS (vertical 3D look) ----------
+function drawTerrainExtrusions(ctx: CanvasRenderingContext2D, state: GameState) {
+  const { terrain } = state;
+  for (let y = 0; y < MAP_ROWS; y++) {
+    for (let x = 0; x < MAP_COLS; x++) {
+      const cell = terrain[y][x];
+      const h = extrusionHeight(cell);
+      if (h <= 0) continue;
+
+      switch (cell.type) {
+        case 'urban':
+          drawBuilding(ctx, cell, h);
+          break;
+        case 'wall':
+          drawWall(ctx, cell, h);
+          break;
+        case 'sandbag':
+          drawSandbags(ctx, cell, h);
+          break;
+        case 'forest':
+          drawTree(ctx, cell, h, state.time);
+          break;
+        case 'rubble':
+          drawRubble(ctx, cell, h);
+          break;
+      }
+    }
+  }
+}
+
+function extrusionHeight(cell: TerrainCell): number {
+  switch (cell.type) {
+    case 'urban': return 18 + (cell.elevation === 2 ? 6 : 0);
+    case 'wall': return 12;
+    case 'sandbag': return 6;
+    case 'forest': return 14;
+    case 'rubble': return 4;
+    default: return 0;
+  }
+}
+
+function drawBuilding(ctx: CanvasRenderingContext2D, cell: TerrainCell, h: number) {
+  const px = cell.x + 3;
+  const py = cell.y + 3;
+  const w = CELL_SIZE - 6;
+  const d = CELL_SIZE - 6;
+  const sx = LIGHT.dx * h;
+  const sy = LIGHT.dy * h;
+
+  // Ground shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath();
+  ctx.moveTo(px, py + d);
+  ctx.lineTo(px + w, py + d);
+  ctx.lineTo(px + w + sx, py + d + sy);
+  ctx.lineTo(px + sx, py + d + sy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(px + w, py);
+  ctx.lineTo(px + w, py + d);
+  ctx.lineTo(px + w + sx, py + d + sy);
+  ctx.lineTo(px + w + sx, py + sy);
+  ctx.closePath();
+  ctx.fill();
+
+  // Side walls (extrusion) — drawn as quads going "up" (negative y) to fake height
+  // Right wall
+  ctx.fillStyle = '#5a544c';
+  ctx.beginPath();
+  ctx.moveTo(px + w, py);
+  ctx.lineTo(px + w, py + d);
+  ctx.lineTo(px + w + 0, py + d - h * 0.0); // base
+  ctx.closePath();
+  // Better: draw the extruded box top
+  // Top face (roof) shifted up by h
+  const rx = px;
+  const ry = py - h;
+  ctx.fillStyle = '#7a7268';
+  ctx.fillRect(rx, ry, w, d);
+  // Roof border
+  ctx.strokeStyle = '#3a342e';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(rx, ry, w, d);
+
+  // Front face (facing down)
+  ctx.fillStyle = '#5e574e';
+  ctx.beginPath();
+  ctx.moveTo(px, py + d);
+  ctx.lineTo(px + w, py + d);
+  ctx.lineTo(px + w, py + d - h);
+  ctx.lineTo(px, py + d - h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#2e2a25';
+  ctx.stroke();
+
+  // Right face
+  ctx.fillStyle = '#4a443c';
+  ctx.beginPath();
+  ctx.moveTo(px + w, py);
+  ctx.lineTo(px + w, py + d);
+  ctx.lineTo(px + w, py + d - h);
+  ctx.lineTo(px + w, py - h);
+  ctx.closePath();
+  ctx.fill();
+
+  // Windows on front face
+  ctx.fillStyle = 'rgba(120,160,190,0.55)';
+  const winRows = 2;
+  const winCols = 3;
+  const ww = 4, wh = 4;
+  for (let r = 0; r < winRows; r++) {
+    for (let c = 0; c < winCols; c++) {
+      const wx = px + 4 + c * ((w - 8) / (winCols - 1)) - ww / 2;
+      const wy = py + d - h + 4 + r * 6;
+      ctx.fillRect(wx, wy, ww, wh);
+    }
+  }
+  // Roof detail
+  ctx.fillStyle = 'rgba(40,38,32,0.4)';
+  ctx.fillRect(rx + 4, ry + 4, w - 8, 3);
+  ctx.fillRect(rx + w / 2 - 2, ry + 4, 4, d - 8);
+}
+
+function drawWall(ctx: CanvasRenderingContext2D, cell: TerrainCell, h: number) {
+  const px = cell.x + 2;
+  const py = cell.y + 2;
+  const w = CELL_SIZE - 4;
+  const d = CELL_SIZE - 4;
+  const sx = LIGHT.dx * h;
+  const sy = LIGHT.dy * h;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.moveTo(px, py + d);
+  ctx.lineTo(px + w, py + d);
+  ctx.lineTo(px + w + sx, py + d + sy);
+  ctx.lineTo(px + sx, py + d + sy);
+  ctx.closePath();
+  ctx.fill();
+
+  // Front face
+  ctx.fillStyle = '#4a4540';
+  ctx.fillRect(px, py + d - h, w, h);
+  ctx.strokeStyle = '#2a2520';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px, py + d - h, w, h);
+
+  // Top
+  ctx.fillStyle = '#6a6258';
+  ctx.fillRect(px, py - h + d - h, w, d - (d - h)); // tiny top strip
+  ctx.fillRect(px, py - h, w, d);
+  ctx.strokeStyle = '#2e2a25';
+  ctx.strokeRect(px, py - h, w, d);
+
+  // Brick pattern
+  ctx.strokeStyle = 'rgba(80,70,60,0.4)';
+  ctx.lineWidth = 0.5;
+  for (let i = 1; i < 3; i++) {
+    ctx.beginPath();
+    ctx.moveTo(px, py + d - h + i * 4);
+    ctx.lineTo(px + w, py + d - h + i * 4);
+    ctx.stroke();
+  }
+}
+
+function drawSandbags(ctx: CanvasRenderingContext2D, cell: TerrainCell, h: number) {
+  const sx = LIGHT.dx * h;
+  const sy = LIGHT.dy * h;
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath();
+  ctx.ellipse(cell.x + CELL_SIZE / 2 + sx, cell.y + CELL_SIZE / 2 + sy, CELL_SIZE / 2 - 2, CELL_SIZE / 2 - 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Stacked sandbags (two rows, raised)
+  const colors = ['#7a6f55', '#8a7f65'];
+  for (let row = 0; row < 2; row++) {
+    const yBase = cell.y + 8 + row * 10 - h * 0.4;
+    for (let i = 0; i < 3; i++) {
+      const xBase = cell.x + 4 + i * 9 + (row % 2 ? 4 : 0);
+      ctx.fillStyle = colors[row];
+      ctx.beginPath();
+      ctx.ellipse(xBase + 4, yBase, 5, 3.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(40,35,25,0.5)';
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+    }
+  }
+}
+
+function drawTree(ctx: CanvasRenderingContext2D, cell: TerrainCell, h: number, time: number) {
+  const sx = LIGHT.dx * h;
+  const sy = LIGHT.dy * h;
+  const cx = cell.x + CELL_SIZE / 2;
+  const cy = cell.y + CELL_SIZE / 2;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(cx + sx, cy + sy + 4, 11, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Trunk
+  ctx.fillStyle = '#4a3520';
+  ctx.fillRect(cx - 1.5, cy - 2, 3, 6);
+
+  // Canopy (raised up by h to fake height) — sway
+  const sway = Math.sin(time * 0.8 + cx * 0.05) * 1.2;
+  ctx.fillStyle = '#2a4a22';
+  ctx.beginPath();
+  ctx.arc(cx + sway, cy - h + 2, 11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#3a6230';
+  ctx.beginPath();
+  ctx.arc(cx + sway - 4, cy - h - 1, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx + sway + 5, cy - h + 4, 5, 0, Math.PI * 2);
+  ctx.fill();
+  // Highlight
+  ctx.fillStyle = 'rgba(180,220,140,0.25)';
+  ctx.beginPath();
+  ctx.arc(cx + sway - 3, cy - h, 4, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawRubble(ctx: CanvasRenderingContext2D, cell: TerrainCell, h: number) {
+  const sx = LIGHT.dx * h;
+  const sy = LIGHT.dy * h;
+  // Chunks with shadows
+  const chunks = [
+    { x: 6, y: 10, w: 8, h: 5 },
+    { x: 18, y: 16, w: 9, h: 4 },
+    { x: 9, y: 20, w: 6, h: 6 },
+  ];
+  for (const c of chunks) {
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(cell.x + c.x + sx, cell.y + c.y + sy, c.w, c.h);
+    ctx.fillStyle = '#807870';
+    ctx.fillRect(cell.x + c.x, cell.y + c.y - h * 0.3, c.w, c.h);
+    ctx.strokeStyle = '#3a3530';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(cell.x + c.x, cell.y + c.y - h * 0.3, c.w, c.h);
+  }
+}
+
+// ---------- PROJECTILES ----------
 function drawProjectiles(ctx: CanvasRenderingContext2D, state: GameState) {
   for (const proj of state.projectiles) {
-    const progress = 1 - proj.timer / (proj.timer + 0.1);
     const alpha = Math.min(1, proj.timer * 5);
-    
+
     if (proj.crit) {
-      // Critical hit — bright orange tracer
       ctx.strokeStyle = `rgba(255,180,50,${alpha})`;
       ctx.lineWidth = 3;
     } else if (proj.hit) {
-      // Hit — yellow tracer
       ctx.strokeStyle = proj.team === 'player'
         ? `rgba(200,220,255,${alpha})`
         : `rgba(255,200,150,${alpha})`;
       ctx.lineWidth = 1.5;
     } else {
-      // Miss — dim tracer
-      ctx.strokeStyle = `rgba(200,200,200,${alpha * 0.4})`;
+      ctx.strokeStyle = `rgba(220,220,220,${alpha * 0.4})`;
       ctx.lineWidth = 1;
     }
 
@@ -227,16 +383,14 @@ function drawProjectiles(ctx: CanvasRenderingContext2D, state: GameState) {
     ctx.lineTo(proj.to.x, proj.to.y);
     ctx.stroke();
 
-    // Impact flash
     if (proj.hit && proj.timer < 0.1) {
       const flashSize = proj.crit ? 8 : 4;
-      ctx.fillStyle = proj.crit ? `rgba(255,200,50,${alpha})` : `rgba(255,255,200,${alpha * 0.5})`;
+      ctx.fillStyle = proj.crit ? `rgba(255,200,50,${alpha})` : `rgba(255,255,200,${alpha * 0.6})`;
       ctx.beginPath();
       ctx.arc(proj.to.x, proj.to.y, flashSize, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Muzzle flash
     if (proj.timer > 0.15) {
       ctx.fillStyle = `rgba(255,230,150,${alpha * 0.6})`;
       ctx.beginPath();
@@ -246,10 +400,32 @@ function drawProjectiles(ctx: CanvasRenderingContext2D, state: GameState) {
   }
 }
 
-function drawUnits(ctx: CanvasRenderingContext2D, state: GameState) {
+// ---------- UNIT SHADOWS (drawn separately so all shadows are below all units) ----------
+function drawUnitShadows(ctx: CanvasRenderingContext2D, state: GameState) {
   for (const unit of state.units) {
     if (!unit.alive) continue;
+    if (unit.team === 'enemy') {
+      const gx = Math.floor(unit.pos.x / CELL_SIZE);
+      const gy = Math.floor(unit.pos.y / CELL_SIZE);
+      if (gx >= 0 && gx < MAP_COLS && gy >= 0 && gy < MAP_ROWS && state.fogOfWar[gy][gx]) continue;
+    }
+    const elev = unit.type === 'helicopter' ? 28 : 4;
+    const sx = LIGHT.dx * elev;
+    const sy = LIGHT.dy * elev;
+    ctx.fillStyle = `rgba(0,0,0,${unit.type === 'helicopter' ? 0.28 : 0.4})`;
+    ctx.beginPath();
+    const rx = unit.type === 'tank' ? 14 : unit.type === 'apc' ? 13 : unit.type === 'helicopter' ? 11 : 7;
+    const ry = unit.type === 'tank' ? 8 : unit.type === 'apc' ? 7 : unit.type === 'helicopter' ? 6 : 5;
+    ctx.ellipse(unit.pos.x + sx, unit.pos.y + sy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
 
+// ---------- UNITS ----------
+function drawUnits(ctx: CanvasRenderingContext2D, state: GameState) {
+  // Sort by Y for fake depth
+  const sorted = [...state.units].filter(u => u.alive).sort((a, b) => a.pos.y - b.pos.y);
+  for (const unit of sorted) {
     if (unit.team === 'enemy') {
       const gx = Math.floor(unit.pos.x / CELL_SIZE);
       const gy = Math.floor(unit.pos.y / CELL_SIZE);
@@ -260,76 +436,61 @@ function drawUnits(ctx: CanvasRenderingContext2D, state: GameState) {
     const color = isPlayer ? COLORS.player : COLORS.enemy;
     const lightColor = isPlayer ? COLORS.playerLight : COLORS.enemyLight;
 
-    // Selection ring
     if (unit.selected) {
       ctx.strokeStyle = COLORS.selectionBorder;
       ctx.lineWidth = 2;
+      ctx.setLineDash([3, 3]);
       ctx.beginPath();
-      ctx.arc(unit.pos.x, unit.pos.y, 20, 0, Math.PI * 2);
+      ctx.ellipse(unit.pos.x, unit.pos.y + 3, 18, 9, 0, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.setLineDash([]);
     }
 
-    // Cover indicator
     if (unit.inCover) {
-      ctx.fillStyle = 'rgba(100,200,100,0.15)';
+      ctx.fillStyle = 'rgba(100,200,100,0.18)';
       ctx.beginPath();
-      ctx.arc(unit.pos.x, unit.pos.y, 18, 0, Math.PI * 2);
+      ctx.ellipse(unit.pos.x, unit.pos.y + 3, 16, 7, 0, 0, Math.PI * 2);
       ctx.fill();
-      // Shield icon for heavy cover
-      const terrain = state.terrain[Math.floor(unit.pos.y / CELL_SIZE)]?.[Math.floor(unit.pos.x / CELL_SIZE)];
-      if (terrain && terrain.coverBonus >= 0.4) {
-        ctx.fillStyle = 'rgba(100,200,100,0.25)';
-        ctx.beginPath();
-        ctx.arc(unit.pos.x, unit.pos.y, 22, 0, Math.PI * 2);
-        ctx.fill();
-      }
     }
 
     drawDetailedUnit(ctx, unit, color, lightColor, state);
 
     // Health bar
-    const barW = 26;
-    const barH = 3;
+    const barW = 26, barH = 3;
     const barX = unit.pos.x - barW / 2;
-    const barY = unit.pos.y - 22;
+    const barY = unit.pos.y - (unit.type === 'helicopter' ? 30 : 22);
     const hpRatio = unit.health / unit.maxHealth;
-
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
     ctx.fillStyle = hpRatio > 0.6 ? COLORS.health : hpRatio > 0.3 ? COLORS.healthLow : COLORS.healthCritical;
     ctx.fillRect(barX, barY, barW * hpRatio, barH);
 
-    // Morale bar
     if (unit.morale < 0.8) {
       const moraleW = barW * unit.morale;
       ctx.fillStyle = `rgba(200,180,50,0.6)`;
       ctx.fillRect(barX, barY + barH + 1, moraleW, 2);
     }
 
-    // Veterancy stars
     if (unit.veterancy > 0) {
       const vetColor = COLORS.veterancy[unit.veterancy];
       ctx.fillStyle = vetColor;
       ctx.font = '7px monospace';
       const stars = '★'.repeat(unit.veterancy);
-      ctx.fillText(stars, unit.pos.x - unit.veterancy * 3.5, unit.pos.y - 26);
+      ctx.fillText(stars, unit.pos.x - unit.veterancy * 3.5, barY - 4);
     }
 
-    // Suppression indicator
     if (unit.suppression > 0.2) {
       ctx.fillStyle = `rgba(255,200,0,${unit.suppression * 0.7})`;
       ctx.font = '9px monospace';
-      ctx.fillText('⚡', unit.pos.x - 4, unit.pos.y - 30);
+      ctx.fillText('⚡', unit.pos.x - 4, barY - 10);
     }
 
-    // Drone indicator
     if (unit.droneActive) {
       ctx.fillStyle = 'rgba(74,144,217,0.8)';
       ctx.font = '8px monospace';
-      ctx.fillText('🛸', unit.pos.x + 12, unit.pos.y - 14);
+      ctx.fillText('🛸', unit.pos.x + 12, barY);
     }
 
-    // Range circle and move line for selected units
     if (unit.selected) {
       ctx.strokeStyle = `rgba(74,144,217,0.12)`;
       ctx.setLineDash([4, 4]);
@@ -352,130 +513,290 @@ function drawUnits(ctx: CanvasRenderingContext2D, state: GameState) {
   }
 }
 
+// Helper: lighten/darken a hex color
+function shade(hex: string, amt: number): string {
+  const c = hex.replace('#', '');
+  const r = Math.max(0, Math.min(255, parseInt(c.substring(0, 2), 16) + amt));
+  const g = Math.max(0, Math.min(255, parseInt(c.substring(2, 4), 16) + amt));
+  const b = Math.max(0, Math.min(255, parseInt(c.substring(4, 6), 16) + amt));
+  return `rgb(${r},${g},${b})`;
+}
+
 function drawDetailedUnit(ctx: CanvasRenderingContext2D, unit: Unit, color: string, lightColor: string, state: GameState) {
   const { x, y } = unit.pos;
+  const dark = shade(color, -50);
+  const mid = shade(color, -20);
+  const hi = shade(color, 30);
 
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(unit.facing);
-
-  ctx.fillStyle = color;
-  ctx.strokeStyle = lightColor;
-  ctx.lineWidth = 1.5;
 
   switch (unit.type) {
     case 'infantry': {
+      // Body (faces movement direction). Top-down 3/4 view.
+      ctx.rotate(unit.facing);
+      // Backpack
+      ctx.fillStyle = dark;
       ctx.beginPath();
-      ctx.ellipse(0, 0, 8, 6, 0, 0, Math.PI * 2);
+      ctx.ellipse(-3, 0, 3, 4, 0, 0, Math.PI * 2);
       ctx.fill();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(5, 0, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.strokeStyle = lightColor;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(8, -1);
-      ctx.lineTo(15, -1);
-      ctx.stroke();
-      ctx.strokeStyle = lightColor;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(-4, -3);
-      ctx.lineTo(2, 3);
-      ctx.moveTo(2, -3);
-      ctx.lineTo(-4, 3);
-      ctx.stroke();
-      break;
-    }
-    case 'tank': {
-      ctx.fillStyle = 'rgba(60,70,55,0.8)';
-      ctx.fillRect(-12, -9, 24, 5);
-      ctx.fillRect(-12, 4, 24, 5);
-      ctx.fillStyle = color;
-      ctx.fillRect(-10, -6, 20, 12);
-      ctx.strokeRect(-10, -6, 20, 12);
-      ctx.fillStyle = lightColor;
+      // Torso
+      ctx.fillStyle = mid;
       ctx.beginPath();
       ctx.ellipse(0, 0, 6, 5, 0, 0, Math.PI * 2);
       ctx.fill();
-      ctx.stroke();
-      ctx.strokeStyle = lightColor;
-      ctx.lineWidth = 3;
+      // Shoulder highlight
+      ctx.fillStyle = hi;
       ctx.beginPath();
-      ctx.moveTo(6, 0);
-      ctx.lineTo(18, 0);
-      ctx.stroke();
-      ctx.lineWidth = 4;
+      ctx.ellipse(0, -2, 5, 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Helmet
+      ctx.fillStyle = shade(color, -30);
       ctx.beginPath();
-      ctx.moveTo(17, 0);
-      ctx.lineTo(19, 0);
+      ctx.arc(3, 0, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+      // Helmet shine
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.beginPath();
+      ctx.arc(4, -1, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+      // Rifle
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(5, -1);
+      ctx.lineTo(13, -2);
+      ctx.stroke();
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(12, -2.5, 2, 1);
+      break;
+    }
+
+    case 'tank': {
+      ctx.rotate(unit.facing);
+      // Tracks (left/right) with segmented look
+      ctx.fillStyle = '#1f231d';
+      ctx.fillRect(-13, -10, 26, 4);
+      ctx.fillRect(-13, 6, 26, 4);
+      ctx.strokeStyle = '#0e110d';
+      ctx.lineWidth = 0.5;
+      for (let i = -12; i < 13; i += 3) {
+        ctx.beginPath();
+        ctx.moveTo(i, -10); ctx.lineTo(i, -6);
+        ctx.moveTo(i, 6); ctx.lineTo(i, 10);
+        ctx.stroke();
+      }
+      // Hull (lower)
+      ctx.fillStyle = dark;
+      ctx.fillRect(-11, -7, 22, 14);
+      // Hull top with bevel
+      ctx.fillStyle = mid;
+      ctx.beginPath();
+      ctx.moveTo(-9, -6);
+      ctx.lineTo(9, -6);
+      ctx.lineTo(11, 0);
+      ctx.lineTo(9, 6);
+      ctx.lineTo(-9, 6);
+      ctx.lineTo(-11, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // Hull highlight
+      ctx.fillStyle = hi;
+      ctx.fillRect(-8, -5, 16, 2);
+
+      // Turret base shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.beginPath();
+      ctx.ellipse(0, 1, 8, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Turret
+      ctx.fillStyle = mid;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 7, 5.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = dark;
+      ctx.stroke();
+      // Turret hatch
+      ctx.fillStyle = dark;
+      ctx.beginPath();
+      ctx.arc(-2, 0, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      // Cannon
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(4, -1.2, 16, 2.4);
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(19, -1.6, 2, 3.2);
+      // Antenna
+      ctx.strokeStyle = '#222';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(-5, -3);
+      ctx.lineTo(-9, -8);
       ctx.stroke();
       break;
     }
+
     case 'apc': {
-      ctx.fillStyle = 'rgba(50,60,45,0.7)';
-      for (const wx of [-8, 0, 8]) {
+      ctx.rotate(unit.facing);
+      // Wheels
+      ctx.fillStyle = '#181a16';
+      for (const wx of [-9, -3, 3, 9]) {
         for (const wy of [-7, 7]) {
           ctx.beginPath();
-          ctx.arc(wx, wy, 3, 0, Math.PI * 2);
+          ctx.ellipse(wx, wy, 2.5, 3, 0, 0, Math.PI * 2);
           ctx.fill();
         }
       }
-      ctx.fillStyle = color;
+      // Hull lower
+      ctx.fillStyle = dark;
       ctx.beginPath();
-      ctx.moveTo(-11, -5);
+      ctx.moveTo(-12, -5);
       ctx.lineTo(11, -5);
-      ctx.lineTo(13, -2);
-      ctx.lineTo(13, 2);
+      ctx.lineTo(14, 0);
       ctx.lineTo(11, 5);
-      ctx.lineTo(-11, 5);
-      ctx.lineTo(-13, 2);
-      ctx.lineTo(-13, -2);
+      ctx.lineTo(-12, 5);
+      ctx.lineTo(-14, 0);
       ctx.closePath();
       ctx.fill();
-      ctx.stroke();
-      ctx.lineWidth = 2;
+      // Hull top
+      ctx.fillStyle = mid;
       ctx.beginPath();
-      ctx.moveTo(4, 0);
-      ctx.lineTo(14, 0);
+      ctx.moveTo(-10, -4);
+      ctx.lineTo(9, -4);
+      ctx.lineTo(12, 0);
+      ctx.lineTo(9, 4);
+      ctx.lineTo(-10, 4);
+      ctx.lineTo(-12, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 1;
       ctx.stroke();
+      // Highlight strip
+      ctx.fillStyle = hi;
+      ctx.fillRect(-9, -3, 17, 1.5);
+      // Mini turret
+      ctx.fillStyle = dark;
+      ctx.beginPath();
+      ctx.arc(2, 0, 3, 0, Math.PI * 2);
+      ctx.fill();
+      // Gun
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(4, -0.8, 10, 1.6);
+      // Rear hatch
+      ctx.fillStyle = dark;
+      ctx.fillRect(-12, -2, 2, 4);
       break;
     }
+
     case 'helicopter': {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
+      // Helicopter is "in the air" — its ground shadow already drawn separately.
+      // Render slightly larger and with parallax offset to fake altitude.
+      const altOffset = -6;
+      ctx.translate(0, altOffset);
+      ctx.rotate(unit.facing);
+
+      // Tail boom
+      ctx.fillStyle = mid;
       ctx.beginPath();
-      ctx.moveTo(-4, 0);
-      ctx.lineTo(-16, 0);
+      ctx.moveTo(-4, -1.5);
+      ctx.lineTo(-18, -0.8);
+      ctx.lineTo(-18, 0.8);
+      ctx.lineTo(-4, 1.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 0.8;
       ctx.stroke();
-      ctx.strokeStyle = lightColor;
+
+      // Tail fin
+      ctx.fillStyle = dark;
+      ctx.beginPath();
+      ctx.moveTo(-18, -1);
+      ctx.lineTo(-21, -4);
+      ctx.lineTo(-19, 0);
+      ctx.lineTo(-21, 4);
+      ctx.lineTo(-18, 1);
+      ctx.closePath();
+      ctx.fill();
+
+      // Tail rotor
+      const tailRot = state.time * 30;
+      ctx.strokeStyle = 'rgba(180,180,180,0.6)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(-21 + Math.cos(tailRot) * 4, -2 + Math.sin(tailRot) * 4);
+      ctx.lineTo(-21 - Math.cos(tailRot) * 4, -2 - Math.sin(tailRot) * 4);
+      ctx.stroke();
+
+      // Main body
+      ctx.fillStyle = mid;
+      ctx.beginPath();
+      ctx.ellipse(2, 0, 9, 5.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Top highlight
+      ctx.fillStyle = hi;
+      ctx.beginPath();
+      ctx.ellipse(2, -2.5, 7, 1.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Cockpit canopy
+      const grad = ctx.createLinearGradient(4, -3, 10, 3);
+      grad.addColorStop(0, 'rgba(180,220,255,0.85)');
+      grad.addColorStop(1, 'rgba(60,90,130,0.7)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.ellipse(7, 0, 4.5, 3.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+
+      // Skids
+      ctx.strokeStyle = '#1a1a1a';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(-16, -5);
-      ctx.lineTo(-16, 5);
+      ctx.moveTo(-3, -6); ctx.lineTo(8, -6);
+      ctx.moveTo(-3, 6); ctx.lineTo(8, 6);
       ctx.stroke();
-      ctx.fillStyle = color;
+
+      // Rotor wash blur (under)
+      ctx.fillStyle = 'rgba(255,255,255,0.04)';
       ctx.beginPath();
-      ctx.ellipse(2, 0, 8, 5, 0, 0, Math.PI * 2);
+      ctx.arc(0, 0, 16, 0, Math.PI * 2);
       ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(100,180,255,0.4)';
+
+      // Spinning main rotor (motion blur disc)
+      const rotorAngle = state.time * 18;
+      ctx.fillStyle = 'rgba(180,180,180,0.18)';
       ctx.beginPath();
-      ctx.ellipse(7, 0, 4, 3, 0, -Math.PI / 2, Math.PI / 2);
+      ctx.ellipse(0, 0, 16, 4, 0, 0, Math.PI * 2);
       ctx.fill();
-      const rotorAngle = state.time * 12;
-      ctx.strokeStyle = `rgba(200,200,200,0.5)`;
-      ctx.lineWidth = 1;
+      // Two crossed blades
+      ctx.strokeStyle = `rgba(220,220,220,0.55)`;
+      ctx.lineWidth = 1.2;
+      for (let i = 0; i < 2; i++) {
+        const a = rotorAngle + i * Math.PI / 2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * -16, Math.sin(a) * -16 * 0.25);
+        ctx.lineTo(Math.cos(a) * 16, Math.sin(a) * 16 * 0.25);
+        ctx.stroke();
+      }
+      // Rotor hub
+      ctx.fillStyle = '#222';
       ctx.beginPath();
-      ctx.moveTo(Math.cos(rotorAngle) * -14, Math.sin(rotorAngle) * -14);
-      ctx.lineTo(Math.cos(rotorAngle) * 14, Math.sin(rotorAngle) * 14);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(rotorAngle + Math.PI / 2) * -14, Math.sin(rotorAngle + Math.PI / 2) * -14);
-      ctx.lineTo(Math.cos(rotorAngle + Math.PI / 2) * 14, Math.sin(rotorAngle + Math.PI / 2) * 14);
-      ctx.stroke();
+      ctx.arc(0, 0, 1.5, 0, Math.PI * 2);
+      ctx.fill();
       break;
     }
   }
@@ -483,12 +804,13 @@ function drawDetailedUnit(ctx: CanvasRenderingContext2D, unit: Unit, color: stri
   ctx.restore();
 }
 
+// ---------- DRONE LINKS ----------
 function drawDroneLinks(ctx: CanvasRenderingContext2D, state: GameState) {
   for (const effect of state.activeEffects) {
     if (effect.type === 'recon_drone' && effect.sourceUnitId) {
       const unit = state.units.find(u => u.id === effect.sourceUnitId);
       if (unit && unit.alive) {
-        ctx.strokeStyle = 'rgba(74,144,217,0.2)';
+        ctx.strokeStyle = 'rgba(74,144,217,0.25)';
         ctx.lineWidth = 1;
         ctx.setLineDash([2, 4]);
         ctx.beginPath();
@@ -501,6 +823,7 @@ function drawDroneLinks(ctx: CanvasRenderingContext2D, state: GameState) {
   }
 }
 
+// ---------- EFFECTS ----------
 function drawEffects(ctx: CanvasRenderingContext2D, state: GameState) {
   for (const effect of state.activeEffects) {
     if (effect.type === 'recon_drone') {
@@ -511,17 +834,47 @@ function drawEffects(ctx: CanvasRenderingContext2D, state: GameState) {
       ctx.arc(effect.pos.x, effect.pos.y, effect.radius, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
-      const bobY = Math.sin(state.time * 3) * 3;
-      ctx.fillStyle = 'rgba(74,144,217,0.7)';
+
+      // Drone shadow on ground
+      const droneAlt = 18;
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.beginPath();
-      ctx.moveTo(effect.pos.x, effect.pos.y + bobY - 5);
-      ctx.lineTo(effect.pos.x + 6, effect.pos.y + bobY);
-      ctx.lineTo(effect.pos.x, effect.pos.y + bobY + 3);
-      ctx.lineTo(effect.pos.x - 6, effect.pos.y + bobY);
-      ctx.closePath();
+      ctx.ellipse(effect.pos.x + LIGHT.dx * droneAlt, effect.pos.y + LIGHT.dy * droneAlt, 5, 2, 0, 0, Math.PI * 2);
       ctx.fill();
+
+      const bobY = Math.sin(state.time * 3) * 2 - droneAlt;
+      // Drone body (quadcopter top-down)
+      ctx.save();
+      ctx.translate(effect.pos.x, effect.pos.y + bobY);
+      ctx.rotate(state.time * 0.5);
+      // Arms
+      ctx.strokeStyle = '#222';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-6, -6); ctx.lineTo(6, 6);
+      ctx.moveTo(-6, 6); ctx.lineTo(6, -6);
+      ctx.stroke();
+      // Rotors
+      ctx.fillStyle = 'rgba(150,180,220,0.5)';
+      for (const [px, py] of [[-6, -6], [6, -6], [-6, 6], [6, 6]] as const) {
+        ctx.beginPath();
+        ctx.arc(px, py, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Body
+      ctx.fillStyle = '#3a4a5a';
+      ctx.beginPath();
+      ctx.arc(0, 0, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(74,144,217,0.9)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Scan lines
       const scanAngle = state.time * 2;
-      ctx.strokeStyle = 'rgba(74,144,217,0.15)';
+      ctx.strokeStyle = 'rgba(74,144,217,0.18)';
       ctx.lineWidth = 1;
       for (let i = 0; i < 3; i++) {
         const a = scanAngle + i * Math.PI * 2 / 3;
@@ -546,21 +899,34 @@ function drawEffects(ctx: CanvasRenderingContext2D, state: GameState) {
       } else {
         const progress = 1 - effect.timeLeft;
         const alpha = Math.max(0, effect.timeLeft);
-        ctx.fillStyle = `rgba(255,150,50,${alpha * 0.5})`;
+        // Shockwave ring
+        ctx.strokeStyle = `rgba(255,200,100,${alpha})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(effect.pos.x, effect.pos.y, effect.radius * (0.5 + progress * 0.7), 0, Math.PI * 2);
+        ctx.stroke();
+        // Fireball
+        const grad = ctx.createRadialGradient(effect.pos.x, effect.pos.y, 2, effect.pos.x, effect.pos.y, effect.radius);
+        grad.addColorStop(0, `rgba(255,255,200,${alpha})`);
+        grad.addColorStop(0.4, `rgba(255,150,50,${alpha * 0.8})`);
+        grad.addColorStop(1, `rgba(80,40,20,0)`);
+        ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.arc(effect.pos.x, effect.pos.y, effect.radius * (0.5 + progress * 0.5), 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = `rgba(255,230,100,${alpha * 0.7})`;
-        ctx.beginPath();
-        ctx.arc(effect.pos.x, effect.pos.y, effect.radius * 0.4, 0, Math.PI * 2);
-        ctx.fill();
       }
     } else if (effect.type === 'smoke_screen') {
-      for (let i = 0; i < 5; i++) {
-        const offsetX = Math.sin(state.time * 0.5 + i * 1.3) * 15;
-        const offsetY = Math.cos(state.time * 0.7 + i * 0.9) * 10;
-        const r = effect.radius * (0.4 + i * 0.12);
-        ctx.fillStyle = `rgba(180,180,180,${0.12 - i * 0.015})`;
+      for (let i = 0; i < 7; i++) {
+        const offsetX = Math.sin(state.time * 0.5 + i * 1.3) * 18;
+        const offsetY = Math.cos(state.time * 0.7 + i * 0.9) * 12;
+        const r = effect.radius * (0.4 + i * 0.1);
+        const grad = ctx.createRadialGradient(
+          effect.pos.x + offsetX, effect.pos.y + offsetY, 0,
+          effect.pos.x + offsetX, effect.pos.y + offsetY, r
+        );
+        grad.addColorStop(0, `rgba(220,220,220,${0.18 - i * 0.018})`);
+        grad.addColorStop(1, `rgba(180,180,180,0)`);
+        ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.arc(effect.pos.x + offsetX, effect.pos.y + offsetY, r, 0, Math.PI * 2);
         ctx.fill();
@@ -569,6 +935,7 @@ function drawEffects(ctx: CanvasRenderingContext2D, state: GameState) {
   }
 }
 
+// ---------- FOG ----------
 function drawFog(ctx: CanvasRenderingContext2D, state: GameState) {
   for (let y = 0; y < MAP_ROWS; y++) {
     for (let x = 0; x < MAP_COLS; x++) {
@@ -580,26 +947,59 @@ function drawFog(ctx: CanvasRenderingContext2D, state: GameState) {
   }
 }
 
+// ---------- WRECKAGE ----------
 function drawWreckage(ctx: CanvasRenderingContext2D, state: GameState) {
   for (const w of state.wreckage) {
     ctx.save();
     ctx.translate(w.pos.x, w.pos.y);
-    ctx.globalAlpha = Math.min(0.5, w.timer / 10);
-    ctx.fillStyle = '#444';
-    ctx.fillRect(-10, -6, 20, 12);
-    ctx.strokeStyle = '#333';
-    ctx.strokeRect(-10, -6, 20, 12);
-    if (w.timer > 5) {
-      const smokeY = -8 - Math.sin(w.timer * 2) * 3;
-      ctx.fillStyle = 'rgba(100,100,100,0.3)';
+    const fade = Math.min(1, w.timer / 1.2);
+    ctx.globalAlpha = Math.max(0.2, 1 - w.timer / 30);
+
+    // Scorched ground
+    ctx.fillStyle = 'rgba(20,15,10,0.5)';
+    ctx.beginPath();
+    ctx.ellipse(0, 2, 16, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Hulk
+    ctx.fillStyle = '#3a342e';
+    ctx.fillRect(-11, -7, 22, 14);
+    ctx.strokeStyle = '#1a1612';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-11, -7, 22, 14);
+    // Burnt detail
+    ctx.fillStyle = '#1a1612';
+    ctx.fillRect(-6, -3, 12, 6);
+
+    // Smoke plumes
+    for (let i = 0; i < 3; i++) {
+      const t = w.timer * 1.2 + i;
+      const sy = -8 - t * 2;
+      const sx = Math.sin(t) * 3;
+      const r = 3 + i * 1.5 + t * 0.3;
+      const a = Math.max(0, 0.4 - t * 0.04 - i * 0.05);
+      ctx.fillStyle = `rgba(60,55,50,${a})`;
       ctx.beginPath();
-      ctx.arc(0, smokeY, 4, 0, Math.PI * 2);
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Flame flicker (early)
+    if (w.timer < 4) {
+      const fa = (4 - w.timer) / 4;
+      ctx.fillStyle = `rgba(255,150,40,${fa * 0.7})`;
+      ctx.beginPath();
+      ctx.arc(Math.sin(w.timer * 8) * 2, -3, 3 + Math.sin(w.timer * 6), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(255,230,120,${fa * 0.6})`;
+      ctx.beginPath();
+      ctx.arc(0, -3, 1.5, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
   }
 }
 
+// ---------- SELECTION BOX ----------
 function drawSelectionBox(ctx: CanvasRenderingContext2D, state: GameState) {
   if (!state.selectionBox) return;
   const { start, end } = state.selectionBox;
@@ -614,6 +1014,7 @@ function drawSelectionBox(ctx: CanvasRenderingContext2D, state: GameState) {
   ctx.strokeRect(x, y, w, h);
 }
 
+// ---------- MINIMAP ----------
 function drawMinimap(ctx: CanvasRenderingContext2D, state: GameState, canvasW: number, canvasH: number) {
   const mmW = 180;
   const mmH = 120;
@@ -622,7 +1023,7 @@ function drawMinimap(ctx: CanvasRenderingContext2D, state: GameState, canvasW: n
   const scaleX = mmW / (MAP_COLS * CELL_SIZE);
   const scaleY = mmH / (MAP_ROWS * CELL_SIZE);
 
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
   ctx.fillRect(mmX, mmY, mmW, mmH);
   ctx.strokeStyle = 'rgba(255,255,255,0.3)';
   ctx.strokeRect(mmX, mmY, mmW, mmH);
