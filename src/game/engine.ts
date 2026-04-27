@@ -83,9 +83,37 @@ export function update(state: GameState, input: InputState, dt: number) {
   // Command points
   state.commandPoints += state.commandPointRate * dt;
 
-  // Move units
+  // Process boarding intents (infantry → APC)
+  for (const unit of state.units) {
+    if (!unit.alive) continue;
+    const intent = (unit as any)._boardTarget;
+    if (intent) {
+      const apc = state.units.find(u => u.id === intent && u.alive && u.type === 'apc');
+      if (!apc) { (unit as any)._boardTarget = null; continue; }
+      if (Math.hypot(apc.pos.x - unit.pos.x, apc.pos.y - unit.pos.y) < 25 && apc.passengers.length < 4) {
+        unit.insideOf = apc.id;
+        apc.passengers.push(unit.id);
+        unit.targetPos = null;
+        unit.attackTarget = null;
+        (unit as any)._boardTarget = null;
+        state.eventLog.unshift({ message: `${unit.type} boarded APC`, time: state.time, type: 'info' });
+      } else {
+        // Keep moving toward APC
+        unit.targetPos = { x: apc.pos.x, y: apc.pos.y };
+      }
+    }
+  }
+
+  // Move units (skip passengers — handled implicitly: moveUnit returns early)
   for (const unit of state.units) {
     if (unit.alive) moveUnit(unit, dt, state);
+  }
+
+  // Hold position: drift back if pushed off
+  for (const unit of state.units) {
+    if (!unit.alive || unit.order !== 'hold_position') continue;
+    const d = Math.hypot(unit.pos.x - unit.homePos.x, unit.pos.y - unit.homePos.y);
+    if (d > 40 && !unit.targetPos) unit.targetPos = { ...unit.homePos };
   }
 
   const prevEnemyCount = state.units.filter(u => u.alive && u.team === 'enemy').length;
