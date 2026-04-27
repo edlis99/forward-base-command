@@ -588,6 +588,32 @@ function drawUnits(ctx: CanvasRenderingContext2D, state: GameState) {
       ctx.fillText('🛸', unit.pos.x + 12, barY);
     }
 
+    // Reload indicator (small orange arc)
+    if (unit.reloadTimer > 0) {
+      const reloadMax = unit.type === 'tank' ? 4 : unit.type === 'helicopter' ? 3.5 : unit.type === 'apc' ? 3 : 2.5;
+      const pct = 1 - unit.reloadTimer / reloadMax;
+      ctx.strokeStyle = 'rgba(255,160,40,0.85)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(unit.pos.x + 14, barY + 2, 4, -Math.PI / 2, -Math.PI / 2 + pct * Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Stance dot (player units only)
+    if (unit.team === 'player') {
+      const stanceColor = unit.stance === 'aggressive' ? '#d94a4a' : unit.stance === 'hold_fire' ? '#888' : '#4ad94a';
+      ctx.fillStyle = stanceColor;
+      ctx.beginPath();
+      ctx.arc(unit.pos.x - 14, barY + 2, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Fatigue tick (small grey bar)
+    if (unit.fatigue > 0.3) {
+      ctx.fillStyle = `rgba(180,180,180,${unit.fatigue * 0.7})`;
+      ctx.fillRect(unit.pos.x - 13, barY + 8, 26 * unit.fatigue, 1);
+    }
+
     if (unit.selected) {
       ctx.strokeStyle = `rgba(74,144,217,0.12)`;
       ctx.setLineDash([4, 4]);
@@ -597,14 +623,27 @@ function drawUnits(ctx: CanvasRenderingContext2D, state: GameState) {
       ctx.setLineDash([]);
 
       if (unit.targetPos) {
-        ctx.strokeStyle = 'rgba(74,144,217,0.3)';
+        ctx.strokeStyle = unit.order === 'attack_move' ? 'rgba(217,74,74,0.5)' : 'rgba(74,144,217,0.4)';
         ctx.lineWidth = 1;
         ctx.setLineDash([3, 3]);
         ctx.beginPath();
         ctx.moveTo(unit.pos.x, unit.pos.y);
         ctx.lineTo(unit.targetPos.x, unit.targetPos.y);
+        // Continue through waypoints
+        let prev = unit.targetPos;
+        for (const wp of unit.waypoints) {
+          ctx.lineTo(wp.x, wp.y);
+          prev = wp;
+        }
         ctx.stroke();
         ctx.setLineDash([]);
+        // Waypoint markers
+        for (const wp of unit.waypoints) {
+          ctx.fillStyle = 'rgba(74,144,217,0.6)';
+          ctx.beginPath();
+          ctx.arc(wp.x, wp.y, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
   }
