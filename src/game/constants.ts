@@ -23,7 +23,7 @@ export const VETERANCY_THRESHOLDS = [0, 2, 5, 10];
 export const VETERANCY_NAMES = ['Rookie', 'Regular', 'Veteran', 'Elite'];
 export const VETERANCY_BONUSES = [1.0, 1.1, 1.2, 1.35];
 
-export const UNIT_STATS: Record<UnitType, UnitStats> = {
+export const UNIT_STATS: Record<UnitType, UnitStats & { turnRate: number; ammo: number; reloadTime: number }> = {
   infantry: {
     maxHealth: 80,
     speed: 50,
@@ -35,6 +35,9 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
     cost: 50,
     accuracy: 0.7,
     critChance: 0.08,
+    turnRate: 6,        // rad/s — infantry pivots quickly
+    ammo: 30,
+    reloadTime: 2.5,
   },
   tank: {
     maxHealth: 250,
@@ -47,6 +50,9 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
     cost: 150,
     accuracy: 0.85,
     critChance: 0.05,
+    turnRate: 1.4,      // tanks rotate slowly
+    ammo: 6,
+    reloadTime: 4.0,
   },
   apc: {
     maxHealth: 150,
@@ -59,6 +65,9 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
     cost: 100,
     accuracy: 0.65,
     critChance: 0.1,
+    turnRate: 2.2,
+    ammo: 50,
+    reloadTime: 3.0,
   },
   helicopter: {
     maxHealth: 100,
@@ -71,6 +80,9 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
     cost: 200,
     accuracy: 0.75,
     critChance: 0.12,
+    turnRate: 3.0,
+    ammo: 8,
+    reloadTime: 3.5,
   },
 };
 
