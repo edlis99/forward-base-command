@@ -210,10 +210,11 @@ export function handleLeftClick(worldX: number, worldY: number, state: GameState
   }
 }
 
-export function handleRightClick(worldX: number, worldY: number, state: GameState) {
+export function handleRightClick(worldX: number, worldY: number, state: GameState, shiftKey: boolean = false, ctrlKey: boolean = false) {
   const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player');
   if (selected.length === 0) return;
 
+  // Right-click on enemy = attack order
   for (const unit of state.units) {
     if (!unit.alive || unit.team !== 'enemy') continue;
     const dx = unit.pos.x - worldX;
@@ -222,19 +223,50 @@ export function handleRightClick(worldX: number, worldY: number, state: GameStat
       selected.forEach(u => {
         u.attackTarget = unit.id;
         u.targetPos = { x: worldX, y: worldY };
+        u.waypoints = [];
+        u.order = 'attack';
       });
       return;
     }
   }
 
+  // Right-click on friendly APC = enter as passenger (infantry only)
+  for (const unit of state.units) {
+    if (!unit.alive || unit.team !== 'player' || unit.type !== 'apc') continue;
+    const dx = unit.pos.x - worldX;
+    const dy = unit.pos.y - worldY;
+    if (Math.sqrt(dx * dx + dy * dy) < 22) {
+      selected.forEach(u => {
+        if (u.type === 'infantry' && u.id !== unit.id && unit.passengers.length < 4) {
+          u.targetPos = { x: unit.pos.x, y: unit.pos.y };
+          u.attackTarget = null;
+          u.order = 'move';
+          // mark intent — actual board occurs in engine update on proximity
+          (u as any)._boardTarget = unit.id;
+        }
+      });
+      return;
+    }
+  }
+
+  // Move / attack-move / formation
   const centerX = selected.reduce((s, u) => s + u.pos.x, 0) / selected.length;
   const centerY = selected.reduce((s, u) => s + u.pos.y, 0) / selected.length;
 
   selected.forEach(u => {
     const offsetX = u.pos.x - centerX;
     const offsetY = u.pos.y - centerY;
-    u.targetPos = { x: worldX + offsetX, y: worldY + offsetY };
-    u.attackTarget = null;
+    const dest = { x: worldX + offsetX, y: worldY + offsetY };
+    if (shiftKey) {
+      // Queue waypoint
+      u.waypoints.push(dest);
+      if (!u.targetPos) u.targetPos = u.waypoints.shift()!;
+    } else {
+      u.waypoints = [];
+      u.targetPos = dest;
+      u.attackTarget = null;
+      u.order = ctrlKey ? 'attack_move' : 'move';
+    }
   });
 }
 
@@ -242,6 +274,30 @@ export function handleBoxSelect(x1: number, y1: number, x2: number, y2: number, 
   if (!shiftKey) state.units.forEach(u => u.selected = false);
   const units = getUnitsInRect(state.units, x1, y1, x2, y2, 'player');
   units.forEach(u => u.selected = true);
+}
+
+export function setStanceForSelected(state: GameState, stance: 'hold_fire' | 'defend' | 'aggressive') {
+  state.units.filter(u => u.alive && u.selected && u.team === 'player').forEach(u => u.stance = stance);
+}
+
+export function holdPositionForSelected(state: GameState) {
+  state.units.filter(u => u.alive && u.selected && u.team === 'player').forEach(u => {
+    u.targetPos = null;
+    u.waypoints = [];
+    u.order = 'hold_position';
+    u.homePos = { ...u.pos };
+  });
+}
+
+export function retreatSelected(state: GameState) {
+  // Retreat = move back toward player spawn
+  const sel = state.units.filter(u => u.alive && u.selected && u.team === 'player');
+  for (const u of sel) {
+    u.targetPos = { x: PLAYER_SPAWN.x * CELL_SIZE, y: PLAYER_SPAWN.y * CELL_SIZE };
+    u.waypoints = [];
+    u.attackTarget = null;
+    u.order = 'retreat';
+  }
 }
 
 export function spawnUnit(type: 'infantry' | 'tank' | 'apc' | 'helicopter', state: GameState) {
