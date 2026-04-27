@@ -3,6 +3,7 @@ import { GameState, InputState } from '../game/types';
 import {
   createInitialState, createInputState, update, render,
   screenToWorld, handleLeftClick, handleRightClick, handleBoxSelect,
+  setStanceForSelected, holdPositionForSelected, retreatSelected,
 } from '../game/engine';
 
 interface GameCanvasProps {
