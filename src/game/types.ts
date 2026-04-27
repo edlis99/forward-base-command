@@ -31,7 +31,9 @@ export interface Unit {
   type: UnitType;
   team: Team;
   pos: Position;
+  vel: Position;            // current velocity (for inertia)
   targetPos: Position | null;
+  waypoints: Position[];    // queued movement points (shift-click)
   attackTarget: string | null;
   health: number;
   maxHealth: number;
@@ -42,6 +44,9 @@ export interface Unit {
   sightRange: number;
   attackCooldown: number;
   attackTimer: number;
+  reloadTimer: number;      // mid-burst reload (separate from cycle)
+  ammo: number;             // ammo per magazine/clip
+  maxAmmo: number;
   suppression: number;
   alive: boolean;
   selected: boolean;
@@ -50,10 +55,21 @@ export interface Unit {
   critChance: number;
   morale: number;
   facing: number;
+  turnRate: number;         // rad/s
   kills: number;
   veterancy: number;
   droneActive: boolean;
   droneTarget: Position | null;
+  // Behavior
+  stance: Stance;
+  order: OrderType;
+  homePos: Position;        // hold-position anchor
+  fatigue: number;          // 0..1, builds with movement, slows speed
+  stuckTimer: number;       // anti-stuck recovery
+  lastDamageTime: number;
+  // Vehicle / passenger
+  passengers: string[];     // unit ids inside (APC)
+  insideOf: string | null;  // id of vehicle this unit is in
 }
 
 export interface TerrainCell {
