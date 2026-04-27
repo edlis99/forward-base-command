@@ -1,7 +1,12 @@
 export type UnitType = 'infantry' | 'tank' | 'apc' | 'helicopter';
 export type Team = 'player' | 'enemy';
-export type TerrainType = 'open' | 'urban' | 'forest' | 'road' | 'water' | 'wall' | 'trench' | 'rubble' | 'sandbag';
+export type TerrainType =
+  | 'open' | 'urban' | 'forest' | 'road' | 'water'
+  | 'wall' | 'trench' | 'rubble' | 'sandbag'
+  | 'mud' | 'crater' | 'hedgerow' | 'tall_grass' | 'gravel';
 export type AbilityType = 'recon_drone' | 'airstrike' | 'smoke_screen';
+export type Stance = 'hold_fire' | 'defend' | 'aggressive';
+export type OrderType = 'idle' | 'move' | 'attack_move' | 'attack' | 'hold_position' | 'retreat';
 
 export interface Position {
   x: number;
