@@ -100,6 +100,70 @@ function drawTerrain(ctx: CanvasRenderingContext2D, state: GameState) {
           ctx.fillRect(cell.x + 4, cell.y + 6, CELL_SIZE - 8, CELL_SIZE - 12);
           break;
         }
+        case 'mud': {
+          // Wet shiny patches
+          ctx.fillStyle = 'rgba(40,30,20,0.55)';
+          ctx.beginPath();
+          ctx.ellipse(cell.x + 10, cell.y + 12, 7, 4, 0.3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(cell.x + 22, cell.y + 22, 6, 4, -0.4, 0, Math.PI * 2);
+          ctx.fill();
+          // Highlight (water sheen)
+          ctx.fillStyle = 'rgba(140,150,140,0.18)';
+          ctx.beginPath();
+          ctx.ellipse(cell.x + 10, cell.y + 11, 4, 1.5, 0.3, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 'crater': {
+          // Bomb crater — radial gradient inset
+          const cx = cell.x + CELL_SIZE / 2;
+          const cy = cell.y + CELL_SIZE / 2;
+          const grad = ctx.createRadialGradient(cx, cy, 2, cx, cy, CELL_SIZE / 2);
+          grad.addColorStop(0, '#1a1612');
+          grad.addColorStop(0.6, '#3a3228');
+          grad.addColorStop(1, '#5a4f3e');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(cx, cy, CELL_SIZE / 2 - 2, 0, Math.PI * 2);
+          ctx.fill();
+          // Rim debris
+          ctx.fillStyle = 'rgba(30,25,20,0.4)';
+          for (let i = 0; i < 5; i++) {
+            const a = (i / 5) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.arc(cx + Math.cos(a) * 12, cy + Math.sin(a) * 12, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          break;
+        }
+        case 'tall_grass': {
+          // Small grass tufts
+          ctx.strokeStyle = 'rgba(140,150,80,0.55)';
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const gx = cell.x + 4 + (i * 5) % (CELL_SIZE - 4);
+            const gy = cell.y + 6 + ((i * 7) % (CELL_SIZE - 8));
+            ctx.moveTo(gx, gy + 4);
+            ctx.lineTo(gx + Math.sin(state.time * 0.6 + i) * 1.5, gy);
+          }
+          ctx.stroke();
+          break;
+        }
+        case 'gravel': {
+          // Pebbles
+          ctx.fillStyle = 'rgba(160,150,130,0.35)';
+          for (let i = 0; i < 6; i++) {
+            const gx = cell.x + 4 + (i * 5 + 3) % (CELL_SIZE - 4);
+            const gy = cell.y + 6 + ((i * 7 + 5) % (CELL_SIZE - 6));
+            ctx.beginPath();
+            ctx.arc(gx, gy, 1 + (i % 2), 0, Math.PI * 2);
+            ctx.fill();
+          }
+          break;
+        }
       }
 
       // Subtle grid
