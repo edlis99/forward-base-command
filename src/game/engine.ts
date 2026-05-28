@@ -1,18 +1,14 @@
-import { GameState, InputState, AbilityType } from './types';
+import { GameState, InputState, MissionDef, Position } from './types';
 import { generateTerrain } from './terrain';
-import { createUnit, moveUnit, updateCombat, getUnitsInRect, checkVeterancy } from './units';
-import { createAbilities, activateAbility, updateEffects, updateFogOfWar } from './abilities';
-import { updateAI, checkGameOver } from './ai';
-import { render } from './renderer';
-import {
-  CELL_SIZE, MAP_COLS, MAP_ROWS, STARTING_CP, CP_RATE, CP_PER_KILL,
-  PLAYER_SPAWN, ENEMY_SPAWN, ENEMY_SPAWN_INTERVAL, CP_STREAK_BONUS, CP_WAVE_CLEAR_BONUS,
-} from './constants';
+import { setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
+import { updateAI } from './ai';
+import { updateAwareness } from './awareness';
+import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './constants';
+import { getMission } from './missions';
 
-export function createInitialState(): GameState {
+export function createInitialState(mission: MissionDef): GameState {
   const terrain = generateTerrain();
-  const fogOfWar = Array.from({ length: MAP_ROWS }, () => Array(MAP_COLS).fill(true));
-  const revealed = Array.from({ length: MAP_ROWS }, () => Array(MAP_COLS).fill(false));
+  const initial = mission.init();
 
   const state: GameState = {
     units: [],
@@ -20,37 +16,28 @@ export function createInitialState(): GameState {
     mapWidth: MAP_COLS * CELL_SIZE,
     mapHeight: MAP_ROWS * CELL_SIZE,
     cellSize: CELL_SIZE,
-    camera: { x: PLAYER_SPAWN.x * CELL_SIZE - 400, y: PLAYER_SPAWN.y * CELL_SIZE - 300 },
+    camera: { x: 200, y: 200 },
     zoom: 1,
-    commandPoints: STARTING_CP,
-    commandPointRate: CP_RATE,
-    abilities: createAbilities(),
-    activeEffects: [],
     projectiles: [],
     wreckage: [],
+    explosions: [],
     eventLog: [],
-    fogOfWar,
-    revealed,
+    ghostContacts: [],
     selectionBox: null,
-    activeAbility: null,
     gameOver: false,
     gameResult: null,
-    wave: 0,
-    enemySpawnTimer: 5,
     time: 0,
-    killStreak: 0,
-    totalKills: 0,
-    waveBonus: 0,
+    paused: false,
+    mission,
+    objectives: initial.objectives ?? [],
+    capturePoints: initial.capturePoints ?? [],
+    reinforcementBudget: initial.reinforcementBudget ?? 0,
+    rewardCP: initial.rewardCP ?? 0,
+    script: initial.script ?? {},
+    detectionMultiplier: initial.detectionMultiplier ?? 1,
   };
-
-  const px = PLAYER_SPAWN.x * CELL_SIZE;
-  const py = PLAYER_SPAWN.y * CELL_SIZE;
-  state.units.push(createUnit('infantry', 'player', px, py - 60));
-  state.units.push(createUnit('infantry', 'player', px, py - 20));
-  state.units.push(createUnit('infantry', 'player', px, py + 20));
-  state.units.push(createUnit('tank', 'player', px + 40, py));
-  state.units.push(createUnit('apc', 'player', px - 30, py + 40));
-
+  state.units = initial.units ?? [];
+  state.eventLog.unshift({ message: `Mission: ${mission.name}`, time: 0, type: 'objective' });
   return state;
 }
 
@@ -59,218 +46,119 @@ export function createInputState(): InputState {
     keys: new Set(),
     mousePos: { x: 0, y: 0 },
     mouseWorldPos: { x: 0, y: 0 },
-    isDragging: false,
-    isPanning: false,
-    dragStart: null,
+    isDragging: false, isPanning: false, dragStart: null,
   };
 }
 
 export function update(state: GameState, input: InputState, dt: number) {
   if (state.gameOver) return;
+  if (state.paused) return;
 
   state.time += dt;
 
-  // Camera movement
-  const camSpeed = 400 * dt;
-  if (input.keys.has('w') || input.keys.has('arrowup')) state.camera.y -= camSpeed;
-  if (input.keys.has('s') || input.keys.has('arrowdown')) state.camera.y += camSpeed;
-  if (input.keys.has('a') || input.keys.has('arrowleft')) state.camera.x -= camSpeed;
-  if (input.keys.has('d') || input.keys.has('arrowright')) state.camera.x += camSpeed;
-
-  state.camera.x = Math.max(0, Math.min(state.mapWidth - 800, state.camera.x));
-  state.camera.y = Math.max(0, Math.min(state.mapHeight - 600, state.camera.y));
-
-  // Command points
-  state.commandPoints += state.commandPointRate * dt;
-
-  // Process boarding intents (infantry → APC)
+  // Boarding intents
   for (const unit of state.units) {
     if (!unit.alive) continue;
-    const intent = (unit as any)._boardTarget;
+    const intent = (unit as { _boardTarget?: string | null })._boardTarget;
     if (intent) {
       const apc = state.units.find(u => u.id === intent && u.alive && u.type === 'apc');
-      if (!apc) { (unit as any)._boardTarget = null; continue; }
+      if (!apc) { (unit as { _boardTarget?: string | null })._boardTarget = null; continue; }
       if (Math.hypot(apc.pos.x - unit.pos.x, apc.pos.y - unit.pos.y) < 25 && apc.passengers.length < 4) {
         unit.insideOf = apc.id;
         apc.passengers.push(unit.id);
-        unit.targetPos = null;
-        unit.attackTarget = null;
-        (unit as any)._boardTarget = null;
+        unit.targetPos = null; unit.path = []; unit.attackTarget = null;
+        (unit as { _boardTarget?: string | null })._boardTarget = null;
         state.eventLog.unshift({ message: `${unit.type} boarded APC`, time: state.time, type: 'info' });
-      } else {
-        // Keep moving toward APC
-        unit.targetPos = { x: apc.pos.x, y: apc.pos.y };
       }
     }
   }
 
-  // Move units (skip passengers — handled implicitly: moveUnit returns early)
-  for (const unit of state.units) {
-    if (unit.alive) moveUnit(unit, dt, state);
-  }
+  for (const unit of state.units) if (unit.alive) moveUnit(unit, dt, state);
 
-  // Hold position: drift back if pushed off
   for (const unit of state.units) {
     if (!unit.alive || unit.order !== 'hold_position') continue;
     const d = Math.hypot(unit.pos.x - unit.homePos.x, unit.pos.y - unit.homePos.y);
-    if (d > 40 && !unit.targetPos) unit.targetPos = { ...unit.homePos };
+    if (d > 60 && !unit.targetPos && unit.path.length === 0) setDestination(unit, state, unit.homePos);
   }
 
-  const prevEnemyCount = state.units.filter(u => u.alive && u.team === 'enemy').length;
+  // Awareness BEFORE combat so visibility gates engagement
+  const awarenessMsgs = updateAwareness(state, dt);
+  for (const m of awarenessMsgs) state.eventLog.unshift({ message: m, time: state.time, type: 'contact' });
 
   // Combat
   for (const unit of state.units) {
-    const msg = updateCombat(unit, dt, state);
-    if (msg) {
-      state.eventLog.unshift({ message: msg, time: state.time, type: 'kill' });
-      if (state.eventLog.length > 20) state.eventLog.pop();
+    const result = updateCombat(unit, dt, state);
+    if (result.killMsg) {
+      state.eventLog.unshift({ message: result.killMsg, time: state.time, type: 'kill' });
+      if (result.killedTeam === 'enemy' && state.mission.rewardKills) {
+        state.rewardCP += CP_PER_KILL;
+      }
+      const vetMsg = checkVeterancy(unit);
+      if (vetMsg) state.eventLog.unshift({ message: vetMsg, time: state.time, type: 'reward' });
+    }
+  }
 
-      const killedUnit = state.units.find(u => !u.alive && u.health <= 0);
-      if (killedUnit) {
-        if (killedUnit.team === 'enemy') {
-          state.totalKills++;
-          state.killStreak++;
+  if (state.eventLog.length > 30) state.eventLog.length = 30;
 
-          const streakBonus = Math.min(state.killStreak * CP_STREAK_BONUS, 50);
-          const totalReward = CP_PER_KILL + streakBonus;
-          state.commandPoints += totalReward;
+  // Remove fully dead
+  state.units = state.units.filter(u => u.alive || u.health > -9999);
 
-          if (state.killStreak >= 3) {
-            state.eventLog.unshift({
-              message: `Kill streak x${state.killStreak}! +${totalReward} CP`,
-              time: state.time,
-              type: 'reward',
-            });
-          }
+  // Tick projectiles, explosions, wreckage
+  state.projectiles = state.projectiles.filter(p => { p.timer -= dt; return p.timer > 0; });
+  state.explosions = state.explosions.filter(e => { e.timer -= dt; return e.timer > 0; });
+  state.wreckage = state.wreckage.filter(w => { w.timer -= dt; return w.timer > 0; });
 
-          const vetMsg = checkVeterancy(unit, state);
-          if (vetMsg) {
-            state.eventLog.unshift({ message: vetMsg, time: state.time, type: 'reward' });
-          }
-        } else {
-          state.killStreak = 0;
-        }
-        state.wreckage.push({ pos: { ...killedUnit.pos }, type: killedUnit.type, timer: 60 });
+  // AI
+  updateAI(state, dt);
+
+  // Mission script
+  state.mission.update(state, dt);
+}
+
+export function handleLeftClickWorld(worldX: number, worldY: number, state: GameState, shiftKey: boolean) {
+  if (!shiftKey) state.units.forEach(u => u.selected = false);
+  for (const unit of state.units) {
+    if (!unit.alive || unit.team !== 'player') continue;
+    const dx = unit.pos.x - worldX, dy = unit.pos.y - worldY;
+    if (Math.sqrt(dx * dx + dy * dy) < 22) {
+      unit.selected = !unit.selected || !shiftKey;
+      return true;
+    }
+  }
+  return false;
+}
+
+export function handleRightClickWorld(worldX: number, worldY: number, state: GameState, shiftKey = false, ctrlKey = false) {
+  const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player');
+  if (selected.length === 0) return;
+
+  // Click on enemy unit
+  for (const unit of state.units) {
+    if (!unit.alive || unit.team !== 'player') {
+      const dx = unit.pos.x - worldX, dy = unit.pos.y - worldY;
+      if (unit.alive && unit.team !== 'player' && Math.sqrt(dx * dx + dy * dy) < 22) {
+        selected.forEach(u => {
+          u.attackTarget = unit.id;
+          setDestination(u, state, { x: worldX, y: worldY });
+          u.waypoints = [];
+          u.order = 'attack';
+        });
+        return;
       }
     }
   }
 
-  // Wave clear bonus
-  const currentEnemyCount = state.units.filter(u => u.alive && u.team === 'enemy').length;
-  if (prevEnemyCount > 0 && currentEnemyCount === 0 && state.wave > 0) {
-    state.commandPoints += CP_WAVE_CLEAR_BONUS;
-    state.eventLog.unshift({
-      message: `Wave cleared! +${CP_WAVE_CLEAR_BONUS} CP bonus`,
-      time: state.time,
-      type: 'reward',
-    });
-  }
-
-  // Remove dead units
-  state.units = state.units.filter(u => u.alive || u.health > -9999);
-
-  // Update projectile timers
-  state.projectiles = state.projectiles.filter(p => {
-    p.timer -= dt;
-    return p.timer > 0;
-  });
-
-  // Effects
-  const effectMsgs = updateEffects(state, dt);
-  for (const msg of effectMsgs) {
-    state.eventLog.unshift({ message: msg, time: state.time, type: 'ability' });
-  }
-
-  // AI
-  const aiMsgs = updateAI(state, dt);
-  for (const msg of aiMsgs) {
-    state.eventLog.unshift({ message: msg, time: state.time, type: 'spawn' });
-  }
-
-  // Fog of war
-  updateFogOfWar(state);
-
-  // Wreckage timer
-  state.wreckage = state.wreckage.filter(w => { w.timer -= dt; return w.timer > 0; });
-
-  // Game over check
-  const result = checkGameOver(state);
-  if (result.over) {
-    state.gameOver = true;
-    state.gameResult = result.result;
-  }
-}
-
-export function screenToWorld(screenX: number, screenY: number, state: GameState): { x: number; y: number } {
-  return {
-    x: screenX / state.zoom + state.camera.x,
-    y: screenY / state.zoom + state.camera.y,
-  };
-}
-
-export function handleLeftClick(worldX: number, worldY: number, state: GameState, shiftKey: boolean) {
-  if (state.activeAbility) {
-    const effect = activateAbility(state.activeAbility, { x: worldX, y: worldY }, state.abilities, state);
-    if (effect) {
-      state.activeEffects.push(effect);
-      state.eventLog.unshift({
-        message: `${state.activeAbility.replace('_', ' ')} deployed`,
-        time: state.time,
-        type: 'ability',
-      });
-    }
-    state.activeAbility = null;
-    return;
-  }
-
-  if (!shiftKey) {
-    state.units.forEach(u => u.selected = false);
-  }
-
-  for (const unit of state.units) {
-    if (!unit.alive || unit.team !== 'player') continue;
-    const dx = unit.pos.x - worldX;
-    const dy = unit.pos.y - worldY;
-    if (Math.sqrt(dx * dx + dy * dy) < 18) {
-      unit.selected = !unit.selected || !shiftKey;
-      return;
-    }
-  }
-}
-
-export function handleRightClick(worldX: number, worldY: number, state: GameState, shiftKey: boolean = false, ctrlKey: boolean = false) {
-  const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player');
-  if (selected.length === 0) return;
-
-  // Right-click on enemy = attack order
-  for (const unit of state.units) {
-    if (!unit.alive || unit.team !== 'enemy') continue;
-    const dx = unit.pos.x - worldX;
-    const dy = unit.pos.y - worldY;
-    if (Math.sqrt(dx * dx + dy * dy) < 18) {
-      selected.forEach(u => {
-        u.attackTarget = unit.id;
-        u.targetPos = { x: worldX, y: worldY };
-        u.waypoints = [];
-        u.order = 'attack';
-      });
-      return;
-    }
-  }
-
-  // Right-click on friendly APC = enter as passenger (infantry only)
+  // Friendly APC = board
   for (const unit of state.units) {
     if (!unit.alive || unit.team !== 'player' || unit.type !== 'apc') continue;
-    const dx = unit.pos.x - worldX;
-    const dy = unit.pos.y - worldY;
-    if (Math.sqrt(dx * dx + dy * dy) < 22) {
+    const dx = unit.pos.x - worldX, dy = unit.pos.y - worldY;
+    if (Math.sqrt(dx * dx + dy * dy) < 24) {
       selected.forEach(u => {
         if (u.type === 'infantry' && u.id !== unit.id && unit.passengers.length < 4) {
-          u.targetPos = { x: unit.pos.x, y: unit.pos.y };
+          setDestination(u, state, { x: unit.pos.x, y: unit.pos.y });
           u.attackTarget = null;
           u.order = 'move';
-          // mark intent — actual board occurs in engine update on proximity
-          (u as any)._boardTarget = unit.id;
+          (u as { _boardTarget?: string | null })._boardTarget = unit.id;
         }
       });
       return;
@@ -284,14 +172,13 @@ export function handleRightClick(worldX: number, worldY: number, state: GameStat
   selected.forEach(u => {
     const offsetX = u.pos.x - centerX;
     const offsetY = u.pos.y - centerY;
-    const dest = { x: worldX + offsetX, y: worldY + offsetY };
+    const dest: Position = { x: worldX + offsetX, y: worldY + offsetY };
     if (shiftKey) {
-      // Queue waypoint
       u.waypoints.push(dest);
-      if (!u.targetPos) u.targetPos = u.waypoints.shift()!;
+      if (!u.targetPos && u.path.length === 0) setDestination(u, state, u.waypoints.shift()!);
     } else {
       u.waypoints = [];
-      u.targetPos = dest;
+      setDestination(u, state, dest);
       u.attackTarget = null;
       u.order = ctrlKey ? 'attack_move' : 'move';
     }
@@ -304,40 +191,40 @@ export function handleBoxSelect(x1: number, y1: number, x2: number, y2: number, 
   units.forEach(u => u.selected = true);
 }
 
-export function setStanceForSelected(state: GameState, stance: 'hold_fire' | 'defend' | 'aggressive') {
+export function setStanceForSelected(state: GameState, stance: import('./types').Stance) {
   state.units.filter(u => u.alive && u.selected && u.team === 'player').forEach(u => u.stance = stance);
 }
 
 export function holdPositionForSelected(state: GameState) {
   state.units.filter(u => u.alive && u.selected && u.team === 'player').forEach(u => {
-    u.targetPos = null;
-    u.waypoints = [];
-    u.order = 'hold_position';
-    u.homePos = { ...u.pos };
+    u.targetPos = null; u.path = []; u.waypoints = [];
+    u.order = 'hold_position'; u.homePos = { ...u.pos };
   });
 }
 
-export function retreatSelected(state: GameState) {
-  // Retreat = move back toward player spawn
-  const sel = state.units.filter(u => u.alive && u.selected && u.team === 'player');
-  for (const u of sel) {
-    u.targetPos = { x: PLAYER_SPAWN.x * CELL_SIZE, y: PLAYER_SPAWN.y * CELL_SIZE };
-    u.waypoints = [];
-    u.attackTarget = null;
-    u.order = 'retreat';
+export function spawnReinforcement(type: import('./types').UnitType, state: GameState) {
+  const cost = UNIT_STATS[type].cost;
+  const pool = state.reinforcementBudget + (state.mission.rewardKills ? state.rewardCP : 0);
+  if (pool < cost) return false;
+  // Deduct
+  if (state.reinforcementBudget >= cost) state.reinforcementBudget -= cost;
+  else {
+    const rem = cost - state.reinforcementBudget;
+    state.reinforcementBudget = 0;
+    state.rewardCP -= rem;
   }
+  // Spawn at edge nearest first surviving friendly
+  const friendly = state.units.find(u => u.alive && u.team === 'player');
+  const spawn = friendly ? { x: friendly.pos.x - 80, y: friendly.pos.y } : { x: 60, y: 600 };
+  // import lazily to avoid cycle
+  const { createUnit } = require('./units') as typeof import('./units');
+  const u = createUnit(type, 'player', spawn.x, spawn.y);
+  state.units.push(u);
+  state.eventLog.unshift({ message: `Reinforcement: ${type}`, time: state.time, type: 'spawn' });
+  return true;
 }
 
-export function spawnUnit(type: 'infantry' | 'tank' | 'apc' | 'helicopter', state: GameState) {
-  const { cost } = { infantry: { cost: 50 }, tank: { cost: 150 }, apc: { cost: 100 }, helicopter: { cost: 200 } }[type];
-  if (state.commandPoints < cost) return;
-
-  state.commandPoints -= cost;
-  const px = PLAYER_SPAWN.x * CELL_SIZE + (Math.random() - 0.5) * 60;
-  const py = PLAYER_SPAWN.y * CELL_SIZE + (Math.random() - 0.5) * 60;
-  const unit = createUnit(type, 'player', px, py);
-  state.units.push(unit);
-  state.eventLog.unshift({ message: `${type} deployed`, time: state.time, type: 'spawn' });
+export function togglePause(state: GameState) {
+  state.paused = !state.paused;
+  state.eventLog.unshift({ message: state.paused ? 'PAUSED — issue orders' : 'Resumed', time: state.time, type: 'info' });
 }
-
-export { render };
