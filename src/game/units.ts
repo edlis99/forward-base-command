@@ -1,6 +1,8 @@
-import { Unit, UnitType, Team, Position, GameState, Projectile, Stance, OrderType } from './types';
-import { UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, CP_VETERANCY_BONUS, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS } from './constants';
+import { Unit, UnitType, Team, Position, GameState, Stance } from './types';
+import { UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS } from './constants';
 import { getTerrainAt, hasLineOfSight, losInfo, isPassable } from './terrain';
+import { findPath } from './pathfinding';
+import { isVisibleTo } from './awareness';
 
 let nextId = 1;
 
@@ -8,46 +10,30 @@ export function createUnit(type: UnitType, team: Team, x: number, y: number): Un
   const stats = UNIT_STATS[type];
   return {
     id: `unit_${nextId++}`,
-    type,
-    team,
+    type, team,
     pos: { x, y },
     vel: { x: 0, y: 0 },
     targetPos: null,
+    path: [],
     waypoints: [],
     attackTarget: null,
-    health: stats.maxHealth,
-    maxHealth: stats.maxHealth,
-    speed: stats.speed,
-    range: stats.range,
-    damage: stats.damage,
-    armor: stats.armor,
+    health: stats.maxHealth, maxHealth: stats.maxHealth,
+    speed: stats.speed, range: stats.range, damage: stats.damage, armor: stats.armor,
     sightRange: stats.sightRange,
-    attackCooldown: stats.attackCooldown,
-    attackTimer: 0,
-    reloadTimer: 0,
-    ammo: stats.ammo,
-    maxAmmo: stats.ammo,
-    suppression: 0,
-    alive: true,
-    selected: false,
-    inCover: false,
-    accuracy: stats.accuracy,
-    critChance: stats.critChance,
+    attackCooldown: stats.attackCooldown, attackTimer: 0,
+    reloadTimer: 0, ammo: stats.ammo, maxAmmo: stats.ammo,
+    suppression: 0, alive: true, selected: false, inCover: false,
+    accuracy: stats.accuracy, critChance: stats.critChance,
     morale: 1.0,
     facing: team === 'player' ? 0 : Math.PI,
     turnRate: stats.turnRate,
-    kills: 0,
-    veterancy: 0,
-    droneActive: false,
-    droneTarget: null,
-    stance: 'defend',
-    order: 'idle',
+    kills: 0, veterancy: 0,
+    stance: 'defend', order: 'idle',
     homePos: { x, y },
-    fatigue: 0,
-    stuckTimer: 0,
-    lastDamageTime: -999,
-    passengers: [],
-    insideOf: null,
+    fatigue: 0, stuckTimer: 0, lastDamageTime: -999,
+    passengers: [], insideOf: null,
+    spottedByEnemy: false, detectionLevel: 0,
+    lastKnownPos: null, lastKnownTime: -999,
   };
 }
 
@@ -73,7 +59,7 @@ export function getFlankingBonus(attacker: Unit, target: Unit): number {
   return 0;
 }
 
-export function checkVeterancy(unit: Unit, state: GameState): string | null {
+export function checkVeterancy(unit: Unit): string | null {
   const newLevel = VETERANCY_THRESHOLDS.findIndex((threshold, i) =>
     i === VETERANCY_THRESHOLDS.length - 1 || unit.kills < VETERANCY_THRESHOLDS[i + 1]
   );
@@ -83,8 +69,7 @@ export function checkVeterancy(unit: Unit, state: GameState): string | null {
     unit.accuracy = Math.min(0.95, UNIT_STATS[unit.type].accuracy * bonus);
     unit.damage = UNIT_STATS[unit.type].damage * bonus;
     if (unit.team === 'player') {
-      state.commandPoints += CP_VETERANCY_BONUS;
-      return `${unit.type} promoted to ${['Rookie', 'Regular', 'Veteran', 'Elite'][newLevel]}! +${CP_VETERANCY_BONUS} CP`;
+      return `${unit.type} promoted to ${['Rookie', 'Regular', 'Veteran', 'Elite'][newLevel]}`;
     }
   }
   return null;
@@ -92,34 +77,25 @@ export function checkVeterancy(unit: Unit, state: GameState): string | null {
 
 function isVehicle(u: Unit) { return u.type === 'tank' || u.type === 'apc'; }
 
-/** Steer around blocked terrain by sampling perpendicular offsets. */
-function chooseSteer(unit: Unit, dx: number, dy: number, state: GameState): { x: number; y: number } {
-  const len = Math.hypot(dx, dy) || 1;
-  const nx = dx / len, ny = dy / len;
-  const heli = unit.type === 'helicopter';
-  const veh = isVehicle(unit);
-  // Try forward, +30°, -30°, +60°, -60°
-  const offsets = [0, Math.PI / 6, -Math.PI / 6, Math.PI / 3, -Math.PI / 3, Math.PI / 2, -Math.PI / 2];
-  const probeDist = CELL_SIZE * 1.2;
-  for (const off of offsets) {
-    const a = Math.atan2(ny, nx) + off;
-    const px = unit.pos.x + Math.cos(a) * probeDist;
-    const py = unit.pos.y + Math.sin(a) * probeDist;
-    const t = getTerrainAt(state.terrain, px, py);
-    if (isPassable(t, veh, heli)) {
-      return { x: Math.cos(a), y: Math.sin(a) };
-    }
+/** Set destination using A* pathfinding. */
+export function setDestination(unit: Unit, state: GameState, dest: Position) {
+  const path = findPath(state.terrain, unit.pos, dest, unit.type);
+  if (path.length === 0) {
+    // unreachable: do nothing
+    unit.targetPos = null;
+    unit.path = [];
+    return;
   }
-  return { x: nx, y: ny };
+  unit.path = path;
+  unit.targetPos = path[0];
 }
 
-/** Simple separation force from nearby allies to prevent stacking. */
 function separation(unit: Unit, state: GameState): { x: number; y: number } {
   let sx = 0, sy = 0;
   const radius = unit.type === 'tank' ? 30 : unit.type === 'apc' ? 28 : 18;
   for (const o of state.units) {
     if (!o.alive || o === unit) continue;
-    if (o.type === 'helicopter' !== (unit.type === 'helicopter')) continue; // air vs ground separate layers
+    if ((o.type === 'helicopter') !== (unit.type === 'helicopter')) continue;
     const dx = unit.pos.x - o.pos.x;
     const dy = unit.pos.y - o.pos.y;
     const d = Math.hypot(dx, dy);
@@ -134,68 +110,60 @@ function separation(unit: Unit, state: GameState): { x: number; y: number } {
 
 export function moveUnit(unit: Unit, dt: number, state: GameState) {
   if (!unit.alive) return;
-  if (unit.insideOf) return; // passenger doesn't move on its own
+  if (unit.insideOf) return;
 
-  // Pop waypoint when current target reached
-  if (!unit.targetPos && unit.waypoints.length > 0) {
-    unit.targetPos = unit.waypoints.shift()!;
-    if (unit.order === 'idle') unit.order = 'move';
-  }
-
+  // Pop user waypoint when current target reached
   if (!unit.targetPos) {
-    // Decelerate
-    unit.vel.x *= 0.85;
-    unit.vel.y *= 0.85;
-    // Recover fatigue
-    unit.fatigue = Math.max(0, unit.fatigue - dt * 0.15);
-    return;
+    if (unit.path.length > 0) {
+      unit.targetPos = unit.path.shift()!;
+    } else if (unit.waypoints.length > 0) {
+      const next = unit.waypoints.shift()!;
+      setDestination(unit, state, next);
+      if (!unit.targetPos) return;
+    } else {
+      unit.vel.x *= 0.85; unit.vel.y *= 0.85;
+      unit.fatigue = Math.max(0, unit.fatigue - dt * 0.15);
+      return;
+    }
   }
+
+  if (!unit.targetPos) return;
 
   const distToTarget = distance(unit.pos, unit.targetPos);
-  if (distToTarget < 6) {
-    unit.targetPos = null;
-    if (unit.waypoints.length === 0) unit.order = unit.order === 'attack_move' ? 'idle' : 'idle';
-    unit.vel.x *= 0.5;
-    unit.vel.y *= 0.5;
-    return;
+  // Pop intermediate path waypoint
+  if (distToTarget < (unit.path.length > 0 ? 18 : 8)) {
+    if (unit.path.length > 0) {
+      unit.targetPos = unit.path.shift()!;
+    } else {
+      unit.targetPos = null;
+      if (unit.waypoints.length === 0 && unit.order !== 'hold_position' && unit.order !== 'patrol') {
+        unit.order = 'idle';
+      }
+      unit.vel.x *= 0.4; unit.vel.y *= 0.4;
+      return;
+    }
   }
 
   const heli = unit.type === 'helicopter';
   const veh = isVehicle(unit);
   const terrain = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
 
-  // Block if destination terrain is impassable
-  if (!heli) {
-    const destT = getTerrainAt(state.terrain, unit.targetPos.x, unit.targetPos.y);
-    if (!isPassable(destT, veh, false)) {
-      unit.targetPos = null;
-      return;
-    }
-  }
-
-  // Compute desired direction (with steering around obstacles)
   const dx = unit.targetPos.x - unit.pos.x;
   const dy = unit.targetPos.y - unit.pos.y;
-  const steer = heli ? { x: dx / Math.hypot(dx, dy || 1), y: dy / Math.hypot(dx, dy || 1) } : chooseSteer(unit, dx, dy, state);
+  const dlen = Math.hypot(dx, dy) || 1;
+  const dirX = dx / dlen, dirY = dy / dlen;
 
-  // Add separation
   const sep = separation(unit, state);
-  const desiredAngle = Math.atan2(steer.y + sep.y * 0.7, steer.x + sep.x * 0.7);
+  const desiredAngle = Math.atan2(dirY + sep.y * 0.5, dirX + sep.x * 0.5);
 
-  // Turn-rate limit
   const facingDelta = normalizeAngle(desiredAngle - unit.facing);
   const maxTurn = unit.turnRate * dt;
-  if (Math.abs(facingDelta) > maxTurn) {
-    unit.facing += Math.sign(facingDelta) * maxTurn;
-  } else {
-    unit.facing = desiredAngle;
-  }
+  if (Math.abs(facingDelta) > maxTurn) unit.facing += Math.sign(facingDelta) * maxTurn;
+  else unit.facing = desiredAngle;
 
-  // Tanks slow drastically when not aligned with travel
   const alignment = Math.cos(facingDelta);
   const alignFactor = veh ? Math.max(0.15, alignment) : (alignment > 0 ? 1 : 0.6);
 
-  // Speed modifiers
   const moveCost = terrain ? terrain.movementCost : 1;
   const traction = terrain ? terrain.traction : 1;
   const effectiveCost = heli ? 1 : moveCost;
@@ -204,7 +172,6 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const fatiguePenalty = 1 - unit.fatigue * 0.4;
   const speed = (unit.speed / effectiveCost) * suppressionPenalty * moralePenalty * fatiguePenalty * traction * alignFactor;
 
-  // Acceleration toward facing direction
   const targetVx = Math.cos(unit.facing) * speed;
   const targetVy = Math.sin(unit.facing) * speed;
   const accel = veh ? 3 : 8;
@@ -213,75 +180,64 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
 
   const nextX = unit.pos.x + unit.vel.x * dt;
   const nextY = unit.pos.y + unit.vel.y * dt;
-
-  // Collision check at next position
   const nextT = getTerrainAt(state.terrain, nextX, nextY);
   if (heli || isPassable(nextT, veh, false)) {
-    unit.pos.x = nextX;
-    unit.pos.y = nextY;
+    unit.pos.x = nextX; unit.pos.y = nextY;
     unit.stuckTimer = 0;
-
-    // Trample tall grass when vehicles or many units pass
     if (!heli && nextT && (nextT.type === 'tall_grass' || (nextT.type === 'forest' && veh))) {
-      // not destructive — just mark trampled briefly
       nextT.trampled = true;
     }
   } else {
-    // Stuck: drain velocity, increment timer, abort if persistent
-    unit.vel.x *= 0.3;
-    unit.vel.y *= 0.3;
+    unit.vel.x *= 0.3; unit.vel.y *= 0.3;
     unit.stuckTimer += dt;
-    if (unit.stuckTimer > 1.5) {
-      unit.targetPos = null;
+    if (unit.stuckTimer > 1.0) {
+      // Re-path
+      const dest = unit.path.length > 0 ? unit.path[unit.path.length - 1] : unit.targetPos;
+      setDestination(unit, state, dest);
       unit.stuckTimer = 0;
     }
   }
 
-  // Fatigue accrues when moving
   const fatigueGain = (terrain ? terrain.fatigueRate : 1) * (heli ? 0.05 : veh ? 0.08 : 0.12) * dt;
   unit.fatigue = Math.min(1, unit.fatigue + fatigueGain);
 
-  // Update cover state
-  const currentTerrain = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
-  unit.inCover = currentTerrain ? currentTerrain.coverBonus > 0 : false;
+  const cur = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
+  unit.inCover = cur ? cur.coverBonus > 0 : false;
 }
 
-/** Speed magnitude (for "moving" accuracy penalty). */
-function speedMagnitude(unit: Unit) {
-  return Math.hypot(unit.vel.x, unit.vel.y);
-}
+function speedMagnitude(unit: Unit) { return Math.hypot(unit.vel.x, unit.vel.y); }
 
-export function updateCombat(unit: Unit, dt: number, state: GameState): string | null {
-  if (!unit.alive) return null;
-  if (unit.insideOf) return null;
+export function updateCombat(unit: Unit, dt: number, state: GameState): { killMsg: string | null; killedTeam: Team | null } {
+  if (!unit.alive || unit.insideOf) return { killMsg: null, killedTeam: null };
 
   unit.attackTimer = Math.max(0, unit.attackTimer - dt);
   unit.reloadTimer = Math.max(0, unit.reloadTimer - dt);
   unit.suppression = Math.max(0, unit.suppression - dt * 0.18);
   unit.morale = Math.min(1, unit.morale + dt * 0.05);
+  if (unit.ammo <= 0 && unit.reloadTimer <= 0) unit.ammo = unit.maxAmmo;
 
-  // Reload completes
-  if (unit.ammo <= 0 && unit.reloadTimer <= 0) {
-    unit.ammo = unit.maxAmmo;
-  }
-
-  // Hold-fire stance: don't pick targets unless ordered
-  const canAcquire = unit.stance !== 'hold_fire';
+  // Engagement rules
+  // hold_fire: never shoots
+  // tight: only return fire (must have been damaged recently and ordered attack)
+  // defend/aggressive: auto-acquire
+  const canAcquire =
+    unit.stance === 'aggressive' || unit.stance === 'defend' ||
+    (unit.stance === 'tight' && state.time - unit.lastDamageTime < 5);
+  if (unit.stance === 'hold_fire') return { killMsg: null, killedTeam: null };
 
   const enemies = state.units.filter(u => u.alive && u.team !== unit.team && !u.insideOf);
 
   let target: Unit | undefined;
   if (unit.attackTarget) {
     target = enemies.find(e => e.id === unit.attackTarget);
-    if (!target || distance(unit.pos, target.pos) > unit.range) {
-      // keep target if attack-moving, else drop
-      if (!target) unit.attackTarget = null;
-    }
+    if (!target) unit.attackTarget = null;
   }
 
   if (!target && canAcquire) {
     let closest = Infinity;
     for (const enemy of enemies) {
+      // Engagement requires the enemy to be visible to our team (awareness gate)
+      if (!isVisibleTo(enemy, unit.team)) continue;
       const dist = distance(unit.pos, enemy.pos);
       if (dist <= unit.range && dist <= unit.sightRange && dist < closest) {
         if (hasLineOfSight(state.terrain, unit.pos.x, unit.pos.y, enemy.pos.x, enemy.pos.y, unit.type === 'helicopter')) {
@@ -293,16 +249,14 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): string |
   }
 
   if (target) {
-    // Always face target when about to shoot
     const desired = angleBetween(unit.pos, target.pos);
     const delta = normalizeAngle(desired - unit.facing);
     const maxTurn = unit.turnRate * dt;
     if (Math.abs(delta) > maxTurn) unit.facing += Math.sign(delta) * maxTurn;
     else unit.facing = desired;
 
-    // Defensive stance: stop moving when engaging
     if (unit.stance === 'defend' && unit.order !== 'attack_move' && unit.order !== 'move') {
-      unit.targetPos = null;
+      unit.targetPos = null; unit.path = [];
     }
   }
 
@@ -310,51 +264,37 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): string |
     if (target && unit.ammo <= 0 && unit.reloadTimer <= 0) {
       unit.reloadTimer = UNIT_STATS[unit.type].reloadTime;
     }
-    return null;
+    return { killMsg: null, killedTeam: null };
   }
 
-  // LOS check
+  const targDist = distance(unit.pos, target.pos);
+  if (targDist > unit.range) return { killMsg: null, killedTeam: null };
+
   const losData = losInfo(state.terrain, unit.pos.x, unit.pos.y, target.pos.x, target.pos.y, unit.type === 'helicopter');
-  if (!losData.clear) return null;
+  if (!losData.clear) return { killMsg: null, killedTeam: null };
 
-  // Smoke check
-  for (const effect of state.activeEffects) {
-    if (effect.type === 'smoke_screen' && effect.delay <= 0) {
-      const stu = distance(effect.pos, unit.pos);
-      const stt = distance(effect.pos, target.pos);
-      if (stu < effect.radius || stt < effect.radius) return null;
-    }
-  }
-
-  // Facing check — must be roughly aimed (within ~25° for vehicles, ~45° for infantry)
   const aimDiff = Math.abs(normalizeAngle(angleBetween(unit.pos, target.pos) - unit.facing));
   const aimCone = isVehicle(unit) ? 0.45 : 0.8;
-  if (aimDiff > aimCone) return null;
+  if (aimDiff > aimCone) return { killMsg: null, killedTeam: null };
 
-  // --- Combat calculations ---
   const vetBonus = VETERANCY_BONUSES[unit.veterancy];
   const suppressionAccPenalty = 1 - unit.suppression * 0.4;
   const moraleAccBonus = 0.8 + unit.morale * 0.2;
-  const distancePenalty = 1 - (distance(unit.pos, target.pos) / unit.range) * 0.3;
-
-  // Movement penalty: shooting on the move is worse
+  const distancePenalty = 1 - (targDist / unit.range) * 0.3;
   const speedMag = speedMagnitude(unit);
-  const movingFactor = speedMag > 5 ? MOVING_ACC_PENALTY + (1 - MOVING_ACC_PENALTY) * Math.max(0, 1 - speedMag / unit.speed) : STATIONARY_ACC_BONUS;
-
-  // Concealment along sight line reduces hit chance even with clear LOS
+  const movingFactor = speedMag > 5
+    ? MOVING_ACC_PENALTY + (1 - MOVING_ACC_PENALTY) * Math.max(0, 1 - speedMag / unit.speed)
+    : STATIONARY_ACC_BONUS;
   const concealmentPenalty = 1 / (1 + losData.concealmentSum * 0.6);
 
-  // Terrain accuracy modifiers
   const attackerTerrain = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
   const targetTerrain = getTerrainAt(state.terrain, target.pos.x, target.pos.y);
-
   let positionBonus = 1.0;
   if (attackerTerrain) {
     if (attackerTerrain.type === 'trench') positionBonus = 1.15;
     else if (attackerTerrain.type === 'sandbag') positionBonus = 1.1;
     else if (attackerTerrain.type === 'urban') positionBonus = 1.05;
   }
-
   let coverPenalty = 1.0;
   if (targetTerrain) {
     if (targetTerrain.type === 'trench') coverPenalty = 0.55;
@@ -364,62 +304,44 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): string |
     else if (targetTerrain.type === 'forest' || targetTerrain.type === 'hedgerow') coverPenalty = 0.7;
     else if (targetTerrain.type === 'tall_grass' && target.type === 'infantry') coverPenalty = 0.85;
   }
-
   let hitChance = unit.accuracy * suppressionAccPenalty * moraleAccBonus * distancePenalty * vetBonus *
                   positionBonus * coverPenalty * movingFactor * concealmentPenalty;
-
   const flankBonus = getFlankingBonus(unit, target);
   hitChance = Math.min(0.95, hitChance + flankBonus * 0.1);
 
-  // Burst fire / shot — uses one ammo
   unit.ammo -= 1;
   const isHit = Math.random() <= hitChance;
   const isCrit = isHit && Math.random() < unit.critChance * (1 + flankBonus);
-
   const projTarget = isHit
     ? { ...target.pos }
     : { x: target.pos.x + (Math.random() - 0.5) * 30, y: target.pos.y + (Math.random() - 0.5) * 30 };
 
   state.projectiles.push({
-    from: { ...unit.pos },
-    to: projTarget,
+    from: { ...unit.pos }, to: projTarget,
     timer: unit.type === 'tank' ? 0.4 : 0.2,
-    hit: isHit,
-    crit: isCrit,
-    team: unit.team,
+    hit: isHit, crit: isCrit, team: unit.team,
   });
-
   unit.attackTimer = unit.attackCooldown;
-
-  // Trigger reload if mag empty
-  if (unit.ammo <= 0) {
-    unit.reloadTimer = UNIT_STATS[unit.type].reloadTime;
-  }
+  if (unit.ammo <= 0) unit.reloadTimer = UNIT_STATS[unit.type].reloadTime;
 
   if (!isHit) {
-    // Near-miss still suppresses
     target.suppression = Math.min(1, target.suppression + 0.08);
-    return null;
+    return { killMsg: null, killedTeam: null };
   }
 
   let dmg = unit.damage * vetBonus;
   if (isCrit) dmg *= 1.8;
-  dmg *= (1 + flankBonus);
-
+  dmg *= 1 + flankBonus;
   const elevDiff = (attackerTerrain?.elevation ?? 1) - (targetTerrain?.elevation ?? 1);
   if (elevDiff > 0) dmg *= 1.15;
   if (elevDiff < 0) dmg *= 0.9;
-
   const coverBonus = target.inCover ? targetTerrain?.coverBonus ?? 0 : 0;
   const effectiveArmor = target.armor * (1 + coverBonus);
   dmg = Math.max(dmg * (1 - effectiveArmor / (effectiveArmor + 50)), 1);
-
-  // Type effectiveness
   if (unit.type === 'infantry' && target.type === 'infantry') dmg *= 1.2;
   if (unit.type === 'tank' && (target.type === 'tank' || target.type === 'apc')) dmg *= 1.3;
   if (unit.type === 'helicopter') dmg *= 1.1;
   if (target.type === 'helicopter' && unit.type === 'infantry') dmg *= 0.5;
-
   if (targetTerrain?.type === 'trench') dmg *= 0.55;
   if (targetTerrain?.type === 'sandbag') dmg *= 0.75;
   if (targetTerrain?.type === 'crater') dmg *= 0.7;
@@ -427,16 +349,12 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): string |
   target.health -= dmg;
   target.lastDamageTime = state.time;
   target.suppression = Math.min(1, target.suppression + 0.3);
-
-  // Morale shock to nearby allies
   for (const ally of state.units) {
     if (ally.alive && ally.team === target.team && ally.id !== target.id) {
       const allyDist = distance(ally.pos, target.pos);
       if (allyDist < 100) ally.morale = Math.max(0.2, ally.morale - 0.05);
     }
   }
-
-  // Reactive return-fire: if a defending unit is hit and not yet engaged, snap target
   if (target.alive && !target.attackTarget && target.stance !== 'hold_fire') {
     target.attackTarget = unit.id;
   }
@@ -444,31 +362,32 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): string |
   if (target.health <= 0) {
     target.alive = false;
     unit.kills++;
-
-    // Killed APC dumps passengers
     if (target.passengers.length > 0) {
       for (const pid of target.passengers) {
         const p = state.units.find(u => u.id === pid);
         if (p) {
           p.insideOf = null;
           p.pos = { x: target.pos.x + (Math.random() - 0.5) * 20, y: target.pos.y + (Math.random() - 0.5) * 20 };
-          p.health *= 0.6; // injured by destruction
+          p.health *= 0.6;
         }
       }
       target.passengers = [];
     }
-
     for (const ally of state.units) {
       if (ally.alive && ally.team === target.team) {
         const allyDist = distance(ally.pos, target.pos);
         if (allyDist < 150) ally.morale = Math.max(0.1, ally.morale - 0.15);
       }
     }
-
-    const critText = isCrit ? ' (CRITICAL)' : '';
-    return `${unit.team === 'player' ? 'Friendly' : 'Enemy'} ${unit.type} destroyed enemy ${target.type}${critText}`;
+    state.explosions.push({ pos: { ...target.pos }, radius: 24, timer: 0.6, maxTimer: 0.6 });
+    state.wreckage.push({ pos: { ...target.pos }, type: target.type, timer: 90, team: target.team });
+    const critText = isCrit ? ' (CRIT)' : '';
+    return {
+      killMsg: `${unit.team === 'player' ? 'Friendly' : 'Enemy'} ${unit.type} killed ${target.team} ${target.type}${critText}`,
+      killedTeam: target.team,
+    };
   }
-  return null;
+  return { killMsg: null, killedTeam: null };
 }
 
 export function getUnitsInRect(units: Unit[], x1: number, y1: number, x2: number, y2: number, team: Team): Unit[] {
