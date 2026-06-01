@@ -7,7 +7,7 @@ import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './consta
 import { getMission } from './missions';
 
 export function createInitialState(mission: MissionDef): GameState {
-  const terrain = generateTerrain();
+  const terrain = generateTerrain(mission.mapLayout, mission.mapSeed);
   const initial = mission.init();
 
   const state: GameState = {
