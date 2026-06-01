@@ -289,8 +289,10 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
     if (Math.abs(delta) > maxTurn) unit.facing += Math.sign(delta) * maxTurn;
     else unit.facing = desired;
 
-    if (unit.stance === 'defend' && unit.order !== 'attack_move' && unit.order !== 'move') {
-      unit.targetPos = null; unit.path = [];
+    // Only abandon current path if unit was idle/holding/patrolling — never override a player order.
+    if ((unit.order === 'hold_position' || unit.order === 'idle' || unit.order === 'patrol')
+        && (unit.stance === 'defend' || unit.stance === 'aggressive')) {
+      unit.targetPos = null; unit.path = []; unit.finalDest = null;
     }
   }
 
