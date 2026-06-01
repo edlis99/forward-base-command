@@ -8,6 +8,7 @@ export type Stance = 'hold_fire' | 'tight' | 'defend' | 'aggressive';
 export type OrderType = 'idle' | 'move' | 'attack_move' | 'attack' | 'hold_position' | 'retreat' | 'patrol';
 export type MissionId = 'assault' | 'defend' | 'recon' | 'ambush';
 export type ObjectiveStatus = 'active' | 'complete' | 'failed';
+export type MapLayoutId = 'farmhouse_complex' | 'village_crossroads' | 'forest_outpost' | 'desert_road';
 
 export interface Position { x: number; y: number; }
 
@@ -47,6 +48,15 @@ export interface Unit {
   stuckTimer: number;
   lastDamageTime: number;
   passengers: string[]; insideOf: string | null;
+  // movement
+  finalDest: Position | null;        // true destination for re-path
+  lastProgressDist: number;          // distance to current targetPos at last progress check
+  lastProgressTime: number;          // sim time of last progress
+  // behavior
+  reactionDelay: number;             // seconds until allowed to act on new contact
+  prone: boolean;                    // suppressed/pinned visual + accuracy
+  ambushReady: boolean;              // hold-fire ambush trigger consumed?
+  rallyUntil: number;                // sim time until rally complete
   // awareness
   spottedByEnemy: boolean;    // is this unit currently visible to opposing team
   detectionLevel: number;     // 0..1 builds toward 1 = fully spotted
@@ -86,6 +96,8 @@ export interface MissionDef {
   summary: string;
   briefing: string;
   rewardKills: boolean;        // only defense mission true
+  mapLayout: MapLayoutId;
+  mapSeed?: number;
   init: () => Partial<GameState>; // returns starting units, objectives, captures, etc.
   update: (state: GameState, dt: number) => void; // mission script tick
 }

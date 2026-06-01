@@ -19,6 +19,8 @@ export const assaultMission: MissionDef = {
   summary: 'Eliminate the enemy garrison holding the central farmhouse.',
   briefing: 'A reinforced platoon holds the farmhouse complex at the center of the map. No reinforcements — make every soldier count. Use cover, flank, and reduce the position.',
   rewardKills: false,
+  mapLayout: 'farmhouse_complex',
+  mapSeed: 7,
   init: () => {
     const s: Partial<GameState> = { units: [], objectives: [], capturePoints: [], reinforcementBudget: 0, rewardCP: 0, detectionMultiplier: 1, script: {} };
     // Player force: 4 infantry, 1 tank, 1 APC at west
@@ -69,6 +71,8 @@ export const defendMission: MissionDef = {
   summary: 'Defend two capture points against scripted enemy advances.',
   briefing: 'Enemy forces are pushing west toward the village. Hold both objective points until command lifts the order. Kill rewards are authorized — call in reinforcements as needed.',
   rewardKills: true,
+  mapLayout: 'village_crossroads',
+  mapSeed: 11,
   init: () => {
     const s: Partial<GameState> = { units: [], objectives: [], capturePoints: [], reinforcementBudget: 200, rewardCP: 100, detectionMultiplier: 1, script: { wave: 0, waveTimer: 8, totalWaves: 4 } };
     // Player force at center
@@ -154,6 +158,8 @@ export const reconMission: MissionDef = {
   summary: 'Photograph 3 enemy positions and reach the extraction point. Avoid contact.',
   briefing: 'A small recon team must observe three enemy positions and exfil. Detection raises an alarm and brings hunters down on you. Use hold-fire stance and concealment.',
   rewardKills: false,
+  mapLayout: 'forest_outpost',
+  mapSeed: 23,
   init: () => {
     const s: Partial<GameState> = { units: [], objectives: [], capturePoints: [], reinforcementBudget: 0, rewardCP: 0, detectionMultiplier: 0.7, script: { alarmed: false, recons: [false, false, false] } };
     // Recon team: 3 infantry, hold-fire
@@ -249,6 +255,8 @@ export const ambushMission: MissionDef = {
   summary: 'Set up positions and destroy an enemy convoy before it exits the map.',
   briefing: 'An enemy supply convoy will travel west-to-east along the central road. Pre-position your forces in concealment. Detection multiplier is reduced — your units are hard to spot until you fire. Destroy the entire convoy.',
   rewardKills: false,
+  mapLayout: 'desert_road',
+  mapSeed: 31,
   init: () => {
     const s: Partial<GameState> = { units: [], objectives: [], capturePoints: [], reinforcementBudget: 0, rewardCP: 0, detectionMultiplier: 0.4, script: { spawned: false, convoyTimer: 12 } };
     // Player force around the road

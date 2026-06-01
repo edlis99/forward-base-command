@@ -32,6 +32,8 @@ export function createUnit(type: UnitType, team: Team, x: number, y: number): Un
     homePos: { x, y },
     fatigue: 0, stuckTimer: 0, lastDamageTime: -999,
     passengers: [], insideOf: null,
+    finalDest: null, lastProgressDist: Infinity, lastProgressTime: 0,
+    reactionDelay: 0, prone: false, ambushReady: false, rallyUntil: 0,
     spottedByEnemy: false, detectionLevel: 0,
     lastKnownPos: null, lastKnownTime: -999,
   };
@@ -77,17 +79,19 @@ export function checkVeterancy(unit: Unit): string | null {
 
 function isVehicle(u: Unit) { return u.type === 'tank' || u.type === 'apc'; }
 
-/** Set destination using A* pathfinding. */
+/** Set destination using A* pathfinding. Stores `finalDest` for re-paths. */
 export function setDestination(unit: Unit, state: GameState, dest: Position) {
+  unit.finalDest = { x: dest.x, y: dest.y };
   const path = findPath(state.terrain, unit.pos, dest, unit.type);
   if (path.length === 0) {
-    // unreachable: do nothing
     unit.targetPos = null;
     unit.path = [];
     return;
   }
   unit.path = path;
   unit.targetPos = path[0];
+  unit.lastProgressDist = distance(unit.pos, unit.targetPos);
+  unit.lastProgressTime = state.time;
 }
 
 function separation(unit: Unit, state: GameState): { x: number; y: number } {
@@ -112,10 +116,18 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   if (!unit.alive) return;
   if (unit.insideOf) return;
 
+  // Suppressed/pinned units don't move
+  if (unit.prone && unit.suppression > 0.5) {
+    unit.vel.x *= 0.7; unit.vel.y *= 0.7;
+    return;
+  }
+
   // Pop user waypoint when current target reached
   if (!unit.targetPos) {
     if (unit.path.length > 0) {
       unit.targetPos = unit.path.shift()!;
+      unit.lastProgressDist = distance(unit.pos, unit.targetPos);
+      unit.lastProgressTime = state.time;
     } else if (unit.waypoints.length > 0) {
       const next = unit.waypoints.shift()!;
       setDestination(unit, state, next);
@@ -129,13 +141,22 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
 
   if (!unit.targetPos) return;
 
+  const veh = isVehicle(unit);
+  const heli = unit.type === 'helicopter';
+  const popRadius = unit.path.length > 0
+    ? (veh ? CELL_SIZE * 0.9 : CELL_SIZE * 0.6)
+    : (veh ? 14 : 8);
+
   const distToTarget = distance(unit.pos, unit.targetPos);
   // Pop intermediate path waypoint
-  if (distToTarget < (unit.path.length > 0 ? 18 : 8)) {
+  if (distToTarget < popRadius) {
     if (unit.path.length > 0) {
       unit.targetPos = unit.path.shift()!;
+      unit.lastProgressDist = distance(unit.pos, unit.targetPos);
+      unit.lastProgressTime = state.time;
     } else {
       unit.targetPos = null;
+      unit.finalDest = null;
       if (unit.waypoints.length === 0 && unit.order !== 'hold_position' && unit.order !== 'patrol') {
         unit.order = 'idle';
       }
@@ -144,8 +165,6 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     }
   }
 
-  const heli = unit.type === 'helicopter';
-  const veh = isVehicle(unit);
   const terrain = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
 
   const dx = unit.targetPos.x - unit.pos.x;
@@ -153,8 +172,12 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const dlen = Math.hypot(dx, dy) || 1;
   const dirX = dx / dlen, dirY = dy / dlen;
 
+  // separation as small positional nudge, weaker close to final dest
   const sep = separation(unit, state);
-  const desiredAngle = Math.atan2(dirY + sep.y * 0.5, dirX + sep.x * 0.5);
+  const finalDist = unit.finalDest ? distance(unit.pos, unit.finalDest) : 999;
+  const sepWeight = finalDist < CELL_SIZE * 1.2 ? 0.05 : 0.25;
+
+  const desiredAngle = Math.atan2(dirY + sep.y * sepWeight, dirX + sep.x * sepWeight);
 
   const facingDelta = normalizeAngle(desiredAngle - unit.facing);
   const maxTurn = unit.turnRate * dt;
@@ -190,11 +213,22 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   } else {
     unit.vel.x *= 0.3; unit.vel.y *= 0.3;
     unit.stuckTimer += dt;
-    if (unit.stuckTimer > 1.0) {
-      // Re-path
-      const dest = unit.path.length > 0 ? unit.path[unit.path.length - 1] : unit.targetPos;
-      setDestination(unit, state, dest);
+    if (unit.stuckTimer > 0.6) {
+      const dest = unit.finalDest ?? unit.targetPos;
+      if (dest) setDestination(unit, state, dest);
       unit.stuckTimer = 0;
+    }
+  }
+
+  // No-progress detector: if dist to target hasn't shrunk in ~0.7s, re-path to final dest.
+  if (state.time - unit.lastProgressTime > 0.7) {
+    const newDist = distance(unit.pos, unit.targetPos);
+    if (newDist + 2 >= unit.lastProgressDist) {
+      const dest = unit.finalDest ?? unit.targetPos;
+      if (dest) setDestination(unit, state, dest);
+    } else {
+      unit.lastProgressDist = newDist;
+      unit.lastProgressTime = state.time;
     }
   }
 
@@ -255,8 +289,10 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
     if (Math.abs(delta) > maxTurn) unit.facing += Math.sign(delta) * maxTurn;
     else unit.facing = desired;
 
-    if (unit.stance === 'defend' && unit.order !== 'attack_move' && unit.order !== 'move') {
-      unit.targetPos = null; unit.path = [];
+    // Only abandon current path if unit was idle/holding/patrolling — never override a player order.
+    if ((unit.order === 'hold_position' || unit.order === 'idle' || unit.order === 'patrol')
+        && (unit.stance === 'defend' || unit.stance === 'aggressive')) {
+      unit.targetPos = null; unit.path = []; unit.finalDest = null;
     }
   }
 
