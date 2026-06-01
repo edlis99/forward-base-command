@@ -19,6 +19,8 @@ export const assaultMission: MissionDef = {
   summary: 'Eliminate the enemy garrison holding the central farmhouse.',
   briefing: 'A reinforced platoon holds the farmhouse complex at the center of the map. No reinforcements — make every soldier count. Use cover, flank, and reduce the position.',
   rewardKills: false,
+  mapLayout: 'farmhouse_complex',
+  mapSeed: 7,
   init: () => {
     const s: Partial<GameState> = { units: [], objectives: [], capturePoints: [], reinforcementBudget: 0, rewardCP: 0, detectionMultiplier: 1, script: {} };
     // Player force: 4 infantry, 1 tank, 1 APC at west
