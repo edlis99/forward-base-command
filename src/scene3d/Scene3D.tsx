@@ -330,6 +330,43 @@ function CapturePoints({ gameStateRef }: { gameStateRef: React.MutableRefObject<
   return <group ref={groupRef} />;
 }
 
+// ---- Selected-unit path lines ----
+function PathsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
+  const ref = useRef<THREE.LineSegments>(null);
+  const posBuf = useRef<Float32Array>(new Float32Array(3000));
+  useFrame(() => {
+    const state = gameStateRef.current;
+    const positions = posBuf.current;
+    let count = 0;
+    const push = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+      if (count + 2 > 500) return;
+      const i = count * 3;
+      positions[i] = a.x / S; positions[i + 1] = 0.2; positions[i + 2] = a.y / S;
+      positions[i + 3] = b.x / S; positions[i + 4] = 0.2; positions[i + 5] = b.y / S;
+      count += 2;
+    };
+    for (const u of state.units) {
+      if (!u.alive || !u.selected || u.team !== 'player') continue;
+      let prev = u.pos;
+      if (u.targetPos) { push(prev, u.targetPos); prev = u.targetPos; }
+      for (const wp of u.path) { push(prev, wp); prev = wp; }
+      for (const wp of u.waypoints) { push(prev, wp); prev = wp; }
+    }
+    if (ref.current) {
+      const geo = ref.current.geometry as THREE.BufferGeometry;
+      geo.setAttribute('position', new THREE.BufferAttribute(positions.slice(0, count * 3), 3));
+      geo.setDrawRange(0, count);
+      geo.attributes.position.needsUpdate = true;
+    }
+  });
+  return (
+    <lineSegments ref={ref}>
+      <bufferGeometry />
+      <lineBasicMaterial color="#7ec0ff" transparent opacity={0.55} />
+    </lineSegments>
+  );
+}
+
 // ---- Ground click handler ----
 function Ground({ gameStateRef, inputRef, onChange }: SceneProps) {
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -458,6 +495,7 @@ const Scene3D: React.FC<SceneProps> = ({ gameStateRef, inputRef, onChange }) => 
       <TerrainMesh terrain={terrain} />
       <CapturePoints gameStateRef={gameStateRef} />
       <UnitsLayer gameStateRef={gameStateRef} />
+      <PathsLayer gameStateRef={gameStateRef} />
       <EffectsLayer gameStateRef={gameStateRef} />
       <SelectionBox gameStateRef={gameStateRef} />
       <Ground gameStateRef={gameStateRef} inputRef={inputRef} onChange={onChange} />
