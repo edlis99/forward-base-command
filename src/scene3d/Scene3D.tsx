@@ -225,9 +225,16 @@ function UnitsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<Gam
           {unitModel(u)}
           {/* selection ring */}
           {u.selected && (
-            <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
               <ringGeometry args={[0.55, 0.7, 24]} />
               <meshBasicMaterial color={u.team === 'player' ? '#7ec0ff' : '#ff7e7e'} transparent opacity={0.9} />
+            </mesh>
+          )}
+          {/* digging ring */}
+          {u.order === 'entrench' && (
+            <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
+              <ringGeometry args={[0.4, 0.48, 24, 1, 0, Math.min(Math.PI * 2, (u.digTimer / 6) * Math.PI * 2)]} />
+              <meshBasicMaterial color="#d4c47a" transparent opacity={0.9} side={2} />
             </mesh>
           )}
           {/* health bar */}
