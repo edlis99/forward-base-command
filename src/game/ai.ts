@@ -34,6 +34,34 @@ function findNearestCover(state: GameState, unit: Unit, near?: Position, minBonu
   return best?.pos ?? null;
 }
 
+/** Find a cover cell within `radius` cells that still has LOS to target. */
+function pickCoverFiringPosition(state: GameState, unit: Unit, target: Unit, radius = 5): Position | null {
+  const gx = Math.floor(unit.pos.x / CELL_SIZE);
+  const gy = Math.floor(unit.pos.y / CELL_SIZE);
+  const veh = unit.type === 'tank' || unit.type === 'apc';
+  const heli = unit.type === 'helicopter';
+  let best: { score: number; pos: Position } | null = null;
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const tx = gx + dx, ty = gy + dy;
+      if (tx < 0 || tx >= MAP_COLS || ty < 0 || ty >= MAP_ROWS) continue;
+      const cell = state.terrain[ty][tx];
+      if (!isPassable(cell, veh, heli)) continue;
+      const cover = cell.coverBonus + cell.concealment * 0.5;
+      if (cover < 0.2) continue;
+      const cx = tx * CELL_SIZE + CELL_SIZE / 2;
+      const cy = ty * CELL_SIZE + CELL_SIZE / 2;
+      const d = Math.hypot(cx - target.pos.x, cy - target.pos.y);
+      if (d > unit.range) continue;
+      if (!hasLineOfSight(state.terrain, cx, cy, target.pos.x, target.pos.y, heli)) continue;
+      const distFromMe = Math.hypot(dx, dy);
+      const score = cover * 3 - distFromMe * 0.15 - (d / unit.range) * 0.5;
+      if (!best || score > best.score) best = { score, pos: { x: cx, y: cy } };
+    }
+  }
+  return best?.pos ?? null;
+}
+
 /** Compute a flanking approach: perpendicular offset toward better cover near target. */
 function flankApproach(unit: Unit, target: Unit, state: GameState): Position {
   const dx = target.pos.x - unit.pos.x;
