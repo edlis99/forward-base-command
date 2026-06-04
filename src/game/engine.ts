@@ -1,10 +1,11 @@
-import { GameState, InputState, MissionDef, Position } from './types';
-import { generateTerrain } from './terrain';
+import { GameState, InputState, MissionDef, Position, FormationType, Unit } from './types';
+import { generateTerrain, getTerrainAt, canDigHere, digTrench } from './terrain';
 import { setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
 import { updateAI } from './ai';
 import { updateAwareness } from './awareness';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './constants';
 import { getMission } from './missions';
+import { computeFormation, pickFormation } from './formations';
 
 export function createInitialState(mission: MissionDef): GameState {
   const terrain = generateTerrain(mission.mapLayout, mission.mapSeed);
@@ -74,6 +75,23 @@ export function update(state: GameState, input: InputState, dt: number) {
   }
 
   for (const unit of state.units) if (unit.alive) moveUnit(unit, dt, state);
+
+  // Dig progress
+  for (const unit of state.units) {
+    if (!unit.alive || unit.order !== 'entrench' || unit.type !== 'infantry') continue;
+    if (unit.suppression > 0.4) continue;
+    const cell = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
+    if (!canDigHere(cell)) { unit.order = 'idle'; unit.digTimer = 0; continue; }
+    unit.digTimer += dt * (1 - unit.fatigue * 0.4);
+    if (unit.digTimer >= 6) {
+      digTrench(state.terrain, unit.pos.x, unit.pos.y);
+      unit.digTimer = 0;
+      unit.order = 'hold_position';
+      unit.homePos = { ...unit.pos };
+      unit.prone = true;
+      state.eventLog.unshift({ message: `${unit.team} ${unit.type} entrenched`, time: state.time, type: 'info' });
+    }
+  }
 
   for (const unit of state.units) {
     if (!unit.alive || unit.order !== 'hold_position') continue;
