@@ -258,7 +258,7 @@ function placeForest(grid: TerrainCell[][], rand: () => number, cx: number, cy: 
   }
 }
 
-function setTerrain(grid: TerrainCell[][], x: number, y: number, type: TerrainType) {
+export function setTerrain(grid: TerrainCell[][], x: number, y: number, type: TerrainType) {
   if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return;
   const c = grid[y][x];
   c.type = type;
@@ -316,6 +316,21 @@ export function getTerrainAt(terrain: TerrainCell[][], worldX: number, worldY: n
   const gy = Math.floor(worldY / CELL_SIZE);
   if (gx < 0 || gx >= MAP_COLS || gy < 0 || gy >= MAP_ROWS) return null;
   return terrain[gy][gx];
+}
+
+/** Returns true if a unit standing here can dig a trench (open-ish ground). */
+export function canDigHere(cell: TerrainCell | null): boolean {
+  if (!cell) return false;
+  return cell.type === 'open' || cell.type === 'tall_grass' || cell.type === 'mud' || cell.type === 'gravel' || cell.type === 'crater';
+}
+
+export function digTrench(terrain: TerrainCell[][], worldX: number, worldY: number): boolean {
+  const gx = Math.floor(worldX / CELL_SIZE);
+  const gy = Math.floor(worldY / CELL_SIZE);
+  if (gx < 0 || gx >= MAP_COLS || gy < 0 || gy >= MAP_ROWS) return false;
+  if (!canDigHere(terrain[gy][gx])) return false;
+  setTerrain(terrain, gx, gy, 'trench');
+  return true;
 }
 
 export function isPassable(cell: TerrainCell | null, isVehicle: boolean, isHelicopter: boolean): boolean {
