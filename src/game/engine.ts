@@ -183,24 +183,48 @@ export function handleRightClickWorld(worldX: number, worldY: number, state: Gam
     }
   }
 
-  // Move / attack-move / formation
+  // Move with formation
   const centerX = selected.reduce((s, u) => s + u.pos.x, 0) / selected.length;
   const centerY = selected.reduce((s, u) => s + u.pos.y, 0) / selected.length;
+  const facing = Math.atan2(worldY - centerY, worldX - centerX);
+  const dest: Position = { x: worldX, y: worldY };
+  const formationType: FormationType = state.preferredFormation ?? pickFormation(selected);
+  // Auto-column if landing on a road
+  const destCell = getTerrainAt(state.terrain, worldX, worldY);
+  const formType: FormationType = (destCell?.type === 'road' && !state.preferredFormation) ? 'column' : formationType;
+  const slots = computeFormation(selected, dest, facing, formType);
 
-  selected.forEach(u => {
-    const offsetX = u.pos.x - centerX;
-    const offsetY = u.pos.y - centerY;
-    const dest: Position = { x: worldX + offsetX, y: worldY + offsetY };
+  for (const slot of slots) {
+    const u = selected.find(x => x.id === slot.id);
+    if (!u) continue;
     if (shiftKey) {
-      u.waypoints.push(dest);
+      u.waypoints.push(slot.pos);
       if (!u.targetPos && u.path.length === 0) setDestination(u, state, u.waypoints.shift()!);
     } else {
       u.waypoints = [];
-      setDestination(u, state, dest);
+      setDestination(u, state, slot.pos);
       u.attackTarget = null;
       u.order = ctrlKey ? 'attack_move' : 'move';
     }
-  });
+  }
+}
+
+export function setFormation(state: GameState, type: FormationType | null) {
+  state.preferredFormation = type ?? undefined;
+}
+
+export function digInForSelected(state: GameState) {
+  for (const u of state.units.filter(x => x.alive && x.selected && x.team === 'player' && x.type === 'infantry')) {
+    const cell = getTerrainAt(state.terrain, u.pos.x, u.pos.y);
+    if (!canDigHere(cell)) {
+      state.eventLog.unshift({ message: `${u.type} cannot dig here`, time: state.time, type: 'info' });
+      continue;
+    }
+    u.order = 'entrench';
+    u.digTimer = 0;
+    u.targetPos = null; u.path = []; u.waypoints = []; u.finalDest = null;
+    u.attackTarget = null;
+  }
 }
 
 export function handleBoxSelect(x1: number, y1: number, x2: number, y2: number, state: GameState, shiftKey: boolean) {
