@@ -5,7 +5,8 @@ export type TerrainType =
   | 'wall' | 'trench' | 'rubble' | 'sandbag'
   | 'mud' | 'crater' | 'hedgerow' | 'tall_grass' | 'gravel';
 export type Stance = 'hold_fire' | 'tight' | 'defend' | 'aggressive';
-export type OrderType = 'idle' | 'move' | 'attack_move' | 'attack' | 'hold_position' | 'retreat' | 'patrol';
+export type OrderType = 'idle' | 'move' | 'attack_move' | 'attack' | 'hold_position' | 'retreat' | 'patrol' | 'entrench';
+export type FormationType = 'line' | 'wedge' | 'column';
 export type MissionId = 'assault' | 'defend' | 'recon' | 'ambush';
 export type ObjectiveStatus = 'active' | 'complete' | 'failed';
 export type MapLayoutId = 'farmhouse_complex' | 'village_crossroads' | 'forest_outpost' | 'desert_road';
@@ -57,6 +58,9 @@ export interface Unit {
   prone: boolean;                    // suppressed/pinned visual + accuracy
   ambushReady: boolean;              // hold-fire ambush trigger consumed?
   rallyUntil: number;                // sim time until rally complete
+  digTimer: number;                  // seconds spent digging trench
+  coverSeekCooldown: number;         // throttle cover repositioning
+  lastAllyDeathTime: number;         // fear timer
   // awareness
   spottedByEnemy: boolean;    // is this unit currently visible to opposing team
   detectionLevel: number;     // 0..1 builds toward 1 = fully spotted
