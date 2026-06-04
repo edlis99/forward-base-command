@@ -93,6 +93,7 @@ export function updateAI(state: GameState, dt: number) {
   for (const u of state.units) {
     if (!u.alive) continue;
     if (u.reactionDelay > 0) u.reactionDelay = Math.max(0, u.reactionDelay - dt);
+    if (u.coverSeekCooldown > 0) u.coverSeekCooldown = Math.max(0, u.coverSeekCooldown - dt);
     // prone if suppressed; recover when calm
     if (u.suppression > 0.55) u.prone = true;
     else if (u.suppression < 0.2) u.prone = false;
