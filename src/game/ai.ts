@@ -203,6 +203,20 @@ function runEnemyBehavior(unit: Unit, state: GameState, dt: number) {
       unit.order = 'attack_move';
       return;
     }
+    // Infantry cover-seek: if standing in the open, move to nearby cover that still has LOS.
+    if (!veh && unit.coverSeekCooldown <= 0) {
+      unit.coverSeekCooldown = 1.5 + Math.random();
+      const curCell = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
+      const inCover = curCell ? (curCell.coverBonus + curCell.concealment * 0.5) >= 0.25 : false;
+      if (!inCover) {
+        const spot = pickCoverFiringPosition(state, unit, engageable, 5);
+        if (spot) {
+          setDestination(unit, state, spot);
+          unit.order = 'attack_move';
+          return;
+        }
+      }
+    }
     if (unit.stance === 'defend' && unit.order !== 'patrol') {
       unit.targetPos = null; unit.path = []; unit.finalDest = null;
     }
