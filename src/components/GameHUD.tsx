@@ -1,5 +1,5 @@
 import React from 'react';
-import { GameState, UnitType, Stance } from '../game/types';
+import { GameState, UnitType, Stance, FormationType } from '../game/types';
 import { UNIT_STATS, VETERANCY_NAMES } from '../game/constants';
 
 interface Props {
@@ -9,9 +9,11 @@ interface Props {
   onHold: () => void;
   onTogglePause: () => void;
   onExit: () => void;
+  onDig: () => void;
+  onFormation: (f: FormationType | null) => void;
 }
 
-const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogglePause, onExit }) => {
+const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogglePause, onExit, onDig, onFormation }) => {
   const selected = gameState.units.filter(u => u.alive && u.selected && u.team === 'player');
   const pool = gameState.reinforcementBudget + (gameState.mission.rewardKills ? gameState.rewardCP : 0);
 
@@ -82,6 +84,7 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
         <div>LClick: select · Drag: box-select · Shift: add</div>
         <div>RClick: move/attack · Shift+R: queue · Ctrl+R: attack-move</div>
         <div>H: hold · F: hold-fire · X: tight · G: defend · Y: aggressive</div>
+        <div>T: dig-in · 1/2/3: line/wedge/column · 0: auto</div>
       </div>
 
       {/* Bottom bar */}
@@ -122,6 +125,25 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
             ))}
             <button onClick={onHold} className="px-2 py-0.5 border" style={{ background: 'rgba(40,50,40,0.8)', borderColor: '#5a6a5a' }}>
               hold-pos
+            </button>
+            <button onClick={onDig} className="px-2 py-0.5 border" style={{ background: 'rgba(60,55,30,0.8)', borderColor: '#7a6a3a', color: '#e4d488' }}>
+              dig-in [T]
+            </button>
+          </div>
+          <div className="flex gap-1 mt-1">
+            <span style={{ color: '#7a8a6a' }}>Form:</span>
+            {(['line', 'wedge', 'column'] as FormationType[]).map(f => (
+              <button key={f} onClick={() => onFormation(f)} className="px-2 py-0.5 border"
+                style={{
+                  background: gameState.preferredFormation === f ? 'rgba(80,100,60,0.9)' : 'rgba(40,50,40,0.8)',
+                  borderColor: '#5a6a5a',
+                }}>
+                {f}
+              </button>
+            ))}
+            <button onClick={() => onFormation(null)} className="px-2 py-0.5 border"
+              style={{ background: !gameState.preferredFormation ? 'rgba(80,100,60,0.9)' : 'rgba(40,50,40,0.8)', borderColor: '#5a6a5a' }}>
+              auto
             </button>
           </div>
         </div>

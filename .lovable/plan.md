@@ -1,63 +1,81 @@
-## v3 — Unique Maps, Reliable Movement, Real Combat Behavior
+## v4 — Selection accuracy, trenches, bigger maps, real tactical behavior
 
-Three concrete problems to solve:
+Six issues to address from this round:
 
-1. Every mission currently shares the same `generateTerrain()` map — they should feel like distinct battlefields.
-2. Units get stuck on trees/walls/wreckage and ignore the drawn path while shooting.
-3. Both sides just push forward and trade shots — no suppression-driven behavior, no flanking, no bounding overwatch.
+1. Box-select drags the wrong rectangle and feels unstable.
+2. Combat still feels like RNG — terrain doesn't visibly matter.
+3. No trenches as a usable mechanic; player can't dig them.
+4. Maps too small for real maneuver.
+5. Units charge in instead of reacting to threats.
+6. Multi-select doesn't form coherent formations.
 
 ---
 
-### 1. Per-mission maps
+### 1. Fix drag-select (Scene3D.tsx + engine.ts)
 
-Refactor `terrain.ts` so map layout is data, not a single hard-coded function.
+Root cause: `Ground` uses R3F `onPointerDown/Move/Up`, but when the cursor moves over a unit or terrain box, those events stop propagating to the ground plane — drag rectangle then jumps. Also the ground plane is small and tilted, so screen→world mapping skews near the camera edges.
 
-- Expose `generateTerrain(layoutId: MapLayoutId, seed: number)`.
-- Add a `MissionDef.mapLayout` field. Each mission picks its own layout + seed.
-- Provide 4 hand-tuned layouts that match mission intent:
-  - `farmhouse_complex` — Assault. Walled compound at center, approach lanes through hedgerows and a creek, sandbag firing positions inside.
-  - `village_crossroads` — Defend. Two capture points on a T-junction, ruined buildings, sandbags pre-placed for the player, attack corridors from the east through open fields.
-  - `forest_outpost` — Recon. Dense forest belt, narrow trails, scattered enemy posts in clearings, river that funnels paths, extract by the bridge.
-  - `desert_road` — Ambush. Long straight road through low dunes, sparse cover, elevated ridgelines on both flanks for the player to pre-position.
-- Each layout uses the same `TerrainCell` primitives — only placement changes. Seed makes per-mission variation reproducible.
-- Mission init can also drop layout-specific decorations (destroyed vehicles, craters) for flavor.
+Fix:
+- Move pointer handling to a **DOM overlay** (`<div>` sized to the canvas with `pointerEvents: auto`) and raycast manually using `useThree().raycaster` against a single huge invisible ground plane (Y=0). This removes the "hit a unit, lose the drag" problem entirely.
+- Track drag in screen pixels first; only convert to world coords on `pointermove`. Use a 6 px threshold before promoting click → box-select (prevents jitter on tap).
+- Render the selection box as a screen-space `<div>` overlay (crisp rectangle) instead of a 3D ground quad — what you see is exactly what gets selected.
+- `handleBoxSelect` already filters by team; keep as-is. Add inclusive AABB check using each unit's screen-projected position so selection matches the rectangle the player drew, not the raw world AABB (this matters because of the tilted camera).
 
-### 2. Movement that actually follows the drawn path
+### 2. Bigger maps (constants.ts + terrain layouts)
 
-Pathing issues come from three places in `units.ts` / `pathfinding.ts`:
+- Increase `MAP_COLS` 60→96 and `MAP_ROWS` 40→64 (~2.5× area). Cell size stays 32 so existing units/ranges feel the same.
+- Re-tune each of the 4 layouts to fill the new space: longer approach lanes, real flank routes around the objective, multiple cover belts between spawn and goal. Place player spawn ~15 cells from first cover so the player must maneuver, not brawl on contact.
+- Camera: raise default zoom-out cap and add edge-pan + middle-mouse drag-pan so the bigger map is navigable.
 
-- Waypoint pop radius is too tight: a unit going around a tree often slides past the node and loops. Change pop radius to scale with unit size (~`CELL_SIZE * 0.6` for infantry, `CELL_SIZE * 0.9` for vehicles) and use look-ahead (pop next node when within radius AND next node is also reachable in straight line).
-- Separation steering currently rotates the desired facing; when two units overlap they spin in place. Apply separation as a positional nudge only, capped, and disable it once the unit is within 1 cell of its final target.
-- `stuckTimer` only triggers when the next cell is blocked. Add a "no progress" check: if distance to current `targetPos` hasn't decreased by >2 units in 0.6s, force a re-path from the *current* position to the *final destination* (`unit.path[unit.path.length - 1]`), not the current sub-waypoint.
-- When `setDestination` is called, store the final goal on the unit (`unit.finalDest`) so re-pathing always knows the true destination instead of the next intermediate node.
-- Combat code currently sets `unit.targetPos = null; unit.path = []` whenever a `defend`-stance unit acquires a target — this is what causes units to abandon a player's drawn path mid-move. Gate that clear so it only happens when `order === 'hold_position'` or `order === 'idle'`. If the player issued `move`/`attack_move`, the path is sacred — the unit can still shoot on the move but does not stop.
-- Pathfinding: add wreckage and unit footprints (other vehicles) as soft obstacles via an `extraBlocked` set passed into `findPath`. Avoids tanks parking on the path line.
+### 3. Trenches — terrain + dig action
 
-### 3. Combat that feels like combat
+Trenches already exist as a `TerrainCell` type with the strongest cover (×0.55 damage) — wire them into gameplay:
 
-Right now AI either holds-position or runs straight at the nearest enemy. Replace `runEnemyBehavior` and tighten friendly auto-engagement so both sides show recognizable tactical behavior.
+- **Pre-placed trenches** on Defend and Ambush layouts (player firing line + ambush positions) so the mechanic is visible immediately.
+- **Dig action for infantry:**
+  - New stance/order `entrench`. UI button "Dig In (T)" with selected infantry.
+  - Unit stops, plays a 6 s dig timer (progress bar), then converts the cell it stands on from `open`/`mud`/`gravel`/`tall_grass` → `trench` (no dig on roads, water, urban, forest, walls).
+  - Dig speed scales with `fatigue` (tired units dig slower) and requires `suppression < 0.4`.
+  - Once finished, the unit auto-takes the `prone` pose and gets the trench's cover/concealment bonuses (`coverBonus 0.7`, `concealment 0.4`, `-0.25` elevation).
+  - Engineering ammo not modeled — free, but only infantry, and only when not under fire.
+- Renderer: `Scene3D` already draws trenches as inset boxes; add a "digging" ring above the unit while in progress.
 
-Behaviors to add (all per-unit, no global director):
+### 4. Cover-seeking, threat-aware combat (ai.ts + new behaviors)
 
-- **Suppression-driven pinning.** When `suppression > 0.5`, infantry stop advancing, drop prone (visual: smaller capsule, slower turn), and only return fire from current cover. Already have the stat — wire it into AI decisions.
-- **Cover-bound advance.** When ordered to attack-move or when enemy AI chooses to push, units move in 2–4 cell bounds between cover cells (`coverBonus >= 0.25`) instead of a straight line to the target. Implemented by post-processing the A* path: insert pauses at cover nodes proportional to threat (any enemy with LOS to next bound).
-- **Bounding overwatch for squads.** Group nearby friendly infantry into informal "fireteams" (proximity-based, recomputed every 2s). At any time half the team holds and shoots while the other half moves one bound, then swap. Pure local rule — no central planner.
-- **Flanking AI.** Enemy attackers pick an approach offset perpendicular to the line between them and the target's last known position, biased toward terrain with `concealment > 0.3` or `coverBonus > 0.25`. Removes the "everyone walks down the road" feel.
-- **Hold-fire ambush trigger.** Units on `hold_fire` automatically switch to `aggressive` when an enemy enters their range AND an allied unit within 200 also has LOS (coordinated first volley). This makes the Ambush mission play correctly without manual stance toggles.
-- **Break and rally.** When `morale < 0.25`, unit retreats to the nearest cover behind its `homePos`; recovers morale and rejoins after 8s if it survives.
-- **Vehicles keep standoff.** Tanks/APCs target a position at ~80% of their `range` from the target, not the target itself. Stops them from driving into infantry AT range.
-- **Reaction time.** Add a small `reactionDelay` (0.3–0.8s) before a unit acts on a newly spotted contact. Removes the instant-snap-aim feel.
-- **Mission-specific AI flavor:**
-  - Assault garrison: never leaves its `homePos` ring (radius 4 cells), shoots and retreats to interior cover when wounded.
-  - Defend wave attackers: form a loose line and bound forward; if a vehicle is destroyed, infantry around it pin and call for the next wave to flank.
-  - Recon patrols: stay on patrol path unless detection occurs, then search last-known position before chasing.
-  - Convoy: keep formation on the road; if a vehicle is hit, the rest accelerate and the trailing one dismounts infantry (if APC) into nearest cover instead of pushing into the kill zone.
+Replace the current "engage nearest visible" loop with a per-unit **threat field** evaluated every ~0.5 s:
 
-### 4. Small UX/feedback so the player can see it working
+- For each unit, score every cell within `sightRange` by `coverBonus + concealment*0.5 - distanceToTargetLOS*penalty - exposureToEnemies`.
+- When a friendly auto-engages (defend/aggressive) and the unit is not on a player `move`/`attack_move` order, pick the **best cover cell within 3–6 cells** that still has LOS to the target. Walk there in a 2-cell bound, fire, repeat.
+- On taking damage with `suppression > 0.4` or `morale < 0.6`, infantry execute a **"break contact" hop**: nearest cover cell behind their last facing, drop prone, return fire.
+- Vehicles use the existing standoff but also score reverse-positions when an AT-capable enemy gains LOS at <0.5×range.
+- Add a per-unit **fear timer**: after a nearby ally dies, +0.3 suppression and skip one engagement cycle (no instant trading).
+- Mission-specific flavor stays in `runEnemyBehavior` (Assault garrison, Defend wave bounding, Recon patrol, Convoy formation) but all now route through the same cover-scorer for destination selection.
 
-- HUD contact log already exists — add a "Suppressed" / "Bounding" / "Pinned" badge under each selected unit's portrait so the new behaviors are legible.
-- Draw the unit's current full path (not just next leg) when selected, in `Scene3D`, so movement issues are visible.
-- Speed up path repair: when re-path returns empty (truly unreachable), show a brief red marker at the destination instead of silently doing nothing.
+This is the change that makes terrain *visible* — units will physically move to trees/sandbags/trenches before shooting, instead of stopping in the open.
+
+### 5. Formations for multi-select (engine.ts handleRightClick + new formations.ts)
+
+Today multi-select offsets units by their pre-existing position, so groups stay in whatever blob they were standing in. Replace with explicit formations:
+
+- New module `src/game/formations.ts` exposing `computeFormation(units, anchor, facing, type)` returning `{unitId → Position}`.
+- Formation types:
+  - **Line** (default for infantry-heavy): one rank, spaced 1.5× radius, perpendicular to move direction.
+  - **Wedge** (default for mixed armor): tanks at point, APCs and infantry trailing in V.
+  - **Column** (default on roads): file along the move vector, 2× spacing.
+  - **Echelon Left / Right** (modifier with Q / E held during right-click).
+- Auto-pick formation:
+  - On roads (destination cell or path passes through road) → Column.
+  - Selection contains tank/APC → Wedge.
+  - Else → Line.
+- Facing: orient the formation toward the destination from the current group centroid. Each unit's `homePos` gets set to its formation slot so `hold_position` keeps the shape.
+- Shift-queue waypoints reuse the same formation (each waypoint = same shape, re-oriented).
+- HUD shows the current formation icon next to the selected-unit panel; keys 1/2/3 force Line/Wedge/Column.
+
+### 6. UI / feedback
+
+- HUD: add badges "Digging", "Bounding", "Pinned", "Routed" under each selected unit's portrait.
+- Cursor changes to a shovel when hovering a diggable cell with infantry selected and `T` armed.
+- Mini contact log already shows hits; add a "first contact" sound-less flash on the ghost contact marker so the player notices spotting events.
 
 ---
 
@@ -65,26 +83,21 @@ Behaviors to add (all per-unit, no global director):
 
 ```text
 src/game/
-  terrain/
-    index.ts                 // generateTerrain(layoutId, seed)
-    layouts/
-      farmhouse-complex.ts
-      village-crossroads.ts
-      forest-outpost.ts
-      desert-road.ts
-    primitives.ts            // placeUrbanCluster, placeForest, etc. (moved out)
-  pathfinding.ts             // + extraBlocked, finalDest-aware re-path
-  units.ts                   // pop radius, separation fix, no-progress repath
-  ai/
-    index.ts                 // dispatch by mission/unit
-    behaviors.ts             // suppress, bound, flank, standoff, react
-    fireteam.ts              // proximity grouping + overwatch
-  missions/*.ts              // each sets mapLayout + seed + mission-specific AI flavor
+  constants.ts            // MAP_COLS=96, MAP_ROWS=64
+  formations.ts           // computeFormation, formation picker
+  units.ts                // entrench order, dig timer, cover-bound advance helper
+  ai.ts                   // threat-field scorer, break-contact hop, fear timer
+  terrain/layouts/*.ts    // retuned for the bigger map; pre-placed trenches
+src/scene3d/
+  Scene3D.tsx             // DOM-overlay pointer handling, screen-space selection box, digging ring
+src/components/
+  GameHUD.tsx             // Dig button, formation icons, new status badges
+  GameUI.tsx              // 1/2/3 formation keys, T dig key
 ```
 
 ### Out of scope
 
-- New unit types or weapon classes.
-- Reworked 3D models.
-- Animation rig changes beyond a prone-pose scale tweak.
-- Saving/loading, multiplayer.
+- New unit classes, weapon types, animations beyond the prone scale tweak and dig-ring.
+- Fortification building beyond trenches (no sandbag/wall placement yet).
+- Pathfinding rewrite — current A* stays; only the destination *choice* changes.
+- Multiplayer / save-load.

@@ -34,6 +34,7 @@ export function createUnit(type: UnitType, team: Team, x: number, y: number): Un
     passengers: [], insideOf: null,
     finalDest: null, lastProgressDist: Infinity, lastProgressTime: 0,
     reactionDelay: 0, prone: false, ambushReady: false, rallyUntil: 0,
+    digTimer: 0, coverSeekCooldown: 0, lastAllyDeathTime: -999,
     spottedByEnemy: false, detectionLevel: 0,
     lastKnownPos: null, lastKnownTime: -999,
   };
@@ -115,6 +116,13 @@ function separation(unit: Unit, state: GameState): { x: number; y: number } {
 export function moveUnit(unit: Unit, dt: number, state: GameState) {
   if (!unit.alive) return;
   if (unit.insideOf) return;
+
+  // Entrenching: stay still, accrue dig progress
+  if (unit.order === 'entrench') {
+    unit.vel.x *= 0.6; unit.vel.y *= 0.6;
+    unit.targetPos = null; unit.path = []; unit.finalDest = null;
+    return;
+  }
 
   // Suppressed/pinned units don't move
   if (unit.prone && unit.suppression > 0.5) {

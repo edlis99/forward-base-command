@@ -78,7 +78,7 @@ function InstancedTerrainGroup({ type, positions, sizes }: { type: string; posit
     ref.current.instanceMatrix.needsUpdate = true;
   }, [positions, sizes, count]);
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, count]} castShadow receiveShadow>
+    <instancedMesh ref={ref} args={[undefined, undefined, count]} castShadow receiveShadow raycast={() => null}>
       <boxGeometry args={[1, 1, 1]} />
       <meshStandardMaterial color={TERRAIN_COLORS[type] ?? '#666'} flatShading roughness={0.85} />
     </instancedMesh>
@@ -116,7 +116,7 @@ function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
   }, [positions]);
 
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, positions.length]} castShadow>
+    <instancedMesh ref={ref} args={[undefined, undefined, positions.length]} castShadow raycast={() => null}>
       <coneGeometry args={[0.45, 1.6, 6]} />
       <meshStandardMaterial color="#2d4a25" flatShading />
     </instancedMesh>
@@ -225,9 +225,16 @@ function UnitsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<Gam
           {unitModel(u)}
           {/* selection ring */}
           {u.selected && (
-            <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
               <ringGeometry args={[0.55, 0.7, 24]} />
               <meshBasicMaterial color={u.team === 'player' ? '#7ec0ff' : '#ff7e7e'} transparent opacity={0.9} />
+            </mesh>
+          )}
+          {/* digging ring */}
+          {u.order === 'entrench' && (
+            <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
+              <ringGeometry args={[0.4, 0.48, 24, 1, 0, Math.min(Math.PI * 2, (u.digTimer / 6) * Math.PI * 2)]} />
+              <meshBasicMaterial color="#d4c47a" transparent opacity={0.9} side={2} />
             </mesh>
           )}
           {/* health bar */}
@@ -449,17 +456,17 @@ function SelectionBox({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
 function CameraRig({ inputRef }: { inputRef: React.MutableRefObject<InputState> }) {
   const { camera } = useThree();
   const targetRef = useRef({ x: W / 2, z: H / 2 });
-  const distRef = useRef(40);
+  const distRef = useRef(70);
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
-      distRef.current = Math.max(15, Math.min(80, distRef.current + (e.deltaY > 0 ? 3 : -3)));
+      distRef.current = Math.max(20, Math.min(140, distRef.current + (e.deltaY > 0 ? 4 : -4)));
     };
     window.addEventListener('wheel', onWheel);
     return () => window.removeEventListener('wheel', onWheel);
   }, []);
   useFrame((_, dt) => {
     const keys = inputRef.current.keys;
-    const sp = 30 * dt;
+    const sp = (40 + distRef.current * 0.6) * dt;
     if (keys.has('w') || keys.has('arrowup')) targetRef.current.z -= sp;
     if (keys.has('s') || keys.has('arrowdown')) targetRef.current.z += sp;
     if (keys.has('a') || keys.has('arrowleft')) targetRef.current.x -= sp;
@@ -484,7 +491,7 @@ const Scene3D: React.FC<SceneProps> = ({ gameStateRef, inputRef, onChange }) => 
       gl={{ antialias: true }}
       style={{ background: '#1a201a' }}
     >
-      <fog attach="fog" args={['#1a201a', 60, 110]} />
+      <fog attach="fog" args={['#1a201a', 100, 220]} />
       <ambientLight intensity={0.55} />
       <directionalLight
         position={[40, 60, 20]} intensity={1.1}
