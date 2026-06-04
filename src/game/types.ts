@@ -138,6 +138,7 @@ export interface GameState {
   script: Record<string, unknown>;
   // detection-bonus zone (ambush)
   detectionMultiplier: number; // applied to enemy detection of player units
+  preferredFormation?: FormationType;
 }
 
 export interface InputState {
