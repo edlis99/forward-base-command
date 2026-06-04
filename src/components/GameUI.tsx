@@ -114,6 +114,8 @@ const GameUI: React.FC = () => {
         onHold={() => { holdPositionForSelected(gameStateRef.current!); triggerHudUpdate(); }}
         onTogglePause={() => { togglePause(gameStateRef.current!); triggerHudUpdate(); }}
         onExit={exitMission}
+        onDig={() => { digInForSelected(gameStateRef.current!); triggerHudUpdate(); }}
+        onFormation={(f) => { setFormation(gameStateRef.current!, f); triggerHudUpdate(); }}
       />
     </div>
   );
