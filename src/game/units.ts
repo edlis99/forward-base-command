@@ -117,6 +117,13 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   if (!unit.alive) return;
   if (unit.insideOf) return;
 
+  // Entrenching: stay still, accrue dig progress
+  if (unit.order === 'entrench') {
+    unit.vel.x *= 0.6; unit.vel.y *= 0.6;
+    unit.targetPos = null; unit.path = []; unit.finalDest = null;
+    return;
+  }
+
   // Suppressed/pinned units don't move
   if (unit.prone && unit.suppression > 0.5) {
     unit.vel.x *= 0.7; unit.vel.y *= 0.7;
