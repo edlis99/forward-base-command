@@ -1,7 +1,7 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import { Canvas, useFrame, useThree, ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
-import { GameState, InputState, Unit, TerrainCell, CommandMarker } from '../game/types';
+import { GameState, InputState, Unit, TerrainCell } from '../game/types';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../game/constants';
 import {
   handleLeftClickWorld, handleRightClickWorld, handleBoxSelect,
