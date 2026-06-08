@@ -1,13 +1,17 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import { Canvas, useFrame, useThree, ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
-import { GameState, InputState, Unit, TerrainCell } from '../game/types';
+import { GameState, InputState, Unit, TerrainCell, CommandMarker } from '../game/types';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../game/constants';
-import { handleLeftClickWorld, handleRightClickWorld, handleBoxSelect } from '../game/engine';
+import {
+  handleLeftClickWorld, handleRightClickWorld, handleBoxSelect,
+  updatePreviewSelection, updateCommandPreview, clearCommandPreview,
+} from '../game/engine';
 
-const S = CELL_SIZE; // game-to-world: divide by S → world units = grid cells
+const S = CELL_SIZE;
 const W = MAP_COLS;
 const H = MAP_ROWS;
+const DRAG_THRESHOLD_PX = 5;
 
 const TERRAIN_COLORS: Record<string, string> = {
   open: '#6b7f5a', urban: '#8a847a', forest: '#3e5a35', road: '#56524a',
@@ -23,15 +27,21 @@ const TERRAIN_HEIGHT: Record<string, number> = {
   tall_grass: 0.15, gravel: 0.02,
 };
 
+const MARKER_COLOR: Record<string, string> = {
+  move: '#7ec0ff', attack: '#ff6a4a', capture: '#f0d04a',
+  board: '#7adc7a', hold: '#e8e8e8', attack_move: '#ffb070',
+};
+
 interface SceneProps {
   gameStateRef: React.MutableRefObject<GameState>;
   inputRef: React.MutableRefObject<InputState>;
   onChange: () => void;
+  /** Ref to the HTML overlay div used to draw the screen-space selection rectangle. */
+  overlayRef: React.MutableRefObject<HTMLDivElement | null>;
 }
 
-// ---- Terrain ----
+// ---------- Terrain ----------
 function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
-  // Per-cell colored box. Two big merged meshes would be ideal; for simplicity use instancedMesh per type.
   const groups = useMemo(() => {
     const byType: Record<string, { positions: [number, number, number][]; sizes: [number, number, number][] }> = {};
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -47,7 +57,6 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
 
   return (
     <group>
-      {/* base ground plane */}
       <mesh position={[W / 2, -0.5, H / 2]} receiveShadow>
         <boxGeometry args={[W, 1, H]} />
         <meshStandardMaterial color="#3a4a32" />
@@ -55,7 +64,6 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
       {Object.entries(groups).map(([type, g]) => (
         <InstancedTerrainGroup key={type} type={type} positions={g.positions} sizes={g.sizes} />
       ))}
-      {/* trees on forest cells */}
       <TreeInstances terrain={terrain} />
     </group>
   );
@@ -91,7 +99,6 @@ function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const c = terrain[y][x];
       if (c.type === 'forest' || c.type === 'hedgerow') {
-        // a couple of trees per cell deterministically
         const seed = (x * 73 + y * 31) % 100;
         out.push([x + 0.25 + (seed % 5) * 0.1, y + 0.25 + ((seed * 7) % 5) * 0.1]);
         if (seed > 50) out.push([x + 0.75 - (seed % 4) * 0.08, y + 0.7 - ((seed * 3) % 4) * 0.08]);
@@ -123,14 +130,13 @@ function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
   );
 }
 
-// ---- Unit Models ----
+// ---------- Unit models ----------
 function InfantryModel({ team }: { team: 'player' | 'enemy' }) {
   const c = team === 'player' ? '#3b6db8' : '#b84a3b';
   return (
     <group scale={0.5}>
       <mesh position={[0, 0.6, 0]} castShadow><capsuleGeometry args={[0.18, 0.5, 4, 8]} /><meshStandardMaterial color={c} flatShading /></mesh>
       <mesh position={[0, 1.05, 0]} castShadow><sphereGeometry args={[0.2, 8, 6]} /><meshStandardMaterial color="#2a2a25" flatShading /></mesh>
-      {/* rifle */}
       <mesh position={[0.25, 0.7, 0]} rotation={[0, 0, -0.2]} castShadow><boxGeometry args={[0.5, 0.08, 0.08]} /><meshStandardMaterial color="#202020" /></mesh>
     </group>
   );
@@ -182,15 +188,17 @@ function unitModel(u: Unit) {
   }
 }
 
-// ---- Units (live updated) ----
-function UnitsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
-  // Track refs per unit id; rebuild list when units change
+// ---------- Units layer (with selection/preview/hover rings) ----------
+function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRefObject<GameState>; inputRef: React.MutableRefObject<InputState> }) {
   const groupRef = useRef<THREE.Group>(null);
   const unitRefs = useRef<Map<string, THREE.Group>>(new Map());
+  const selRefs = useRef<Map<string, THREE.Mesh>>(new Map());
+  const previewRefs = useRef<Map<string, THREE.Mesh>>(new Map());
+  const hoverRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const [, forceRender] = React.useReducer((n) => n + 1, 0);
   const knownIdsRef = useRef<string>('');
 
-  useFrame(() => {
+  useFrame((_, dt) => {
     const state = gameStateRef.current;
     const ids = state.units.filter(u => u.alive).map(u => u.id).join(',');
     if (ids !== knownIdsRef.current) {
@@ -198,16 +206,40 @@ function UnitsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<Gam
       forceRender();
       return;
     }
+    const t = performance.now() * 0.001;
+    const pulse = 1.0 + Math.sin(t * 6) * 0.08;
+    const mw = inputRef.current.mouseWorldPos;
+
+    // find best hover candidate (single closest friendly within radius)
+    let hoverId: string | null = null;
+    if (mw) {
+      let bestD = 24 * 24;
+      for (const u of state.units) {
+        if (!u.alive || u.team !== 'player' || u.insideOf) continue;
+        const dx = u.pos.x - mw.x, dy = u.pos.y - mw.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD) { bestD = d2; hoverId = u.id; }
+      }
+    }
+
     for (const u of state.units) {
       if (!u.alive || u.insideOf) continue;
       const ref = unitRefs.current.get(u.id);
-      if (!ref) continue;
-      ref.position.x = u.pos.x / S;
-      ref.position.z = u.pos.y / S;
-      ref.rotation.y = -u.facing; // canvas-y maps to world-z; flip
-      ref.visible = u.team === 'player' || u.spottedByEnemy || u.team === 'enemy' && u.spottedByEnemy;
-      // visibility for enemies: only if spotted
-      if (u.team === 'enemy') ref.visible = u.spottedByEnemy;
+      if (ref) {
+        ref.position.x = u.pos.x / S;
+        ref.position.z = u.pos.y / S;
+        ref.rotation.y = -u.facing;
+        ref.visible = u.team === 'player' || u.spottedByEnemy;
+      }
+      const sel = selRefs.current.get(u.id);
+      if (sel) {
+        sel.visible = u.selected && (u.team === 'player' || u.spottedByEnemy);
+        sel.scale.set(pulse, pulse, pulse);
+      }
+      const pv = previewRefs.current.get(u.id);
+      if (pv) pv.visible = state.previewSelected.has(u.id) && !u.selected;
+      const hv = hoverRefs.current.get(u.id);
+      if (hv) hv.visible = hoverId === u.id && !u.selected && !state.previewSelected.has(u.id);
     }
   });
 
@@ -223,13 +255,34 @@ function UnitsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<Gam
           position={[u.pos.x / S, 0, u.pos.y / S]}
         >
           {unitModel(u)}
-          {/* selection ring */}
-          {u.selected && (
-            <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
-              <ringGeometry args={[0.55, 0.7, 24]} />
-              <meshBasicMaterial color={u.team === 'player' ? '#7ec0ff' : '#ff7e7e'} transparent opacity={0.9} />
-            </mesh>
-          )}
+
+          {/* hover ring (under selection/preview) */}
+          <mesh
+            ref={(el) => { if (el) hoverRefs.current.set(u.id, el); else hoverRefs.current.delete(u.id); }}
+            position={[0, 0.015, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
+          >
+            <ringGeometry args={[0.6, 0.7, 32]} />
+            <meshBasicMaterial color="#cfd8c4" transparent opacity={0.55} />
+          </mesh>
+
+          {/* preview ring (while dragging) */}
+          <mesh
+            ref={(el) => { if (el) previewRefs.current.set(u.id, el); else previewRefs.current.delete(u.id); }}
+            position={[0, 0.018, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
+          >
+            <ringGeometry args={[0.62, 0.78, 32]} />
+            <meshBasicMaterial color="#7ec0ff" transparent opacity={0.55} />
+          </mesh>
+
+          {/* confirmed selection ring */}
+          <mesh
+            ref={(el) => { if (el) selRefs.current.set(u.id, el); else selRefs.current.delete(u.id); }}
+            position={[0, 0.022, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
+          >
+            <ringGeometry args={[0.55, 0.82, 36]} />
+            <meshBasicMaterial color={u.team === 'player' ? '#7ec0ff' : '#ff8a6a'} transparent opacity={0.95} />
+          </mesh>
+
           {/* digging ring */}
           {u.order === 'entrench' && (
             <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
@@ -237,7 +290,7 @@ function UnitsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<Gam
               <meshBasicMaterial color="#d4c47a" transparent opacity={0.9} side={2} />
             </mesh>
           )}
-          {/* health bar */}
+
           <HealthBar u={u} />
         </group>
       ))}
@@ -260,7 +313,7 @@ function HealthBar({ u }: { u: Unit }) {
   );
 }
 
-// ---- Effects: projectiles + explosions ----
+// ---------- Effects ----------
 function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
   const linesRef = useRef<THREE.LineSegments>(null);
   const positionsRef = useRef<Float32Array>(new Float32Array(3000));
@@ -289,7 +342,6 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
       geo.setDrawRange(0, count);
       geo.attributes.position.needsUpdate = true;
     }
-    // explosions
     if (explRef.current) {
       explRef.current.clear();
       for (const e of state.explosions) {
@@ -316,7 +368,51 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
   );
 }
 
-// ---- Capture point markers ----
+// ---------- Command markers + formation preview ----------
+function CommandMarkersLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
+  const groupRef = useRef<THREE.Group>(null);
+  useFrame(() => {
+    const state = gameStateRef.current;
+    if (!groupRef.current) return;
+    groupRef.current.clear();
+    for (const m of state.commandMarkers) {
+      const t = 1 - m.timer / m.max; // 0 → 1
+      const r = 0.6 + t * 1.0;
+      const op = (1 - t) * 0.95;
+      const color = MARKER_COLOR[m.type] ?? '#ffffff';
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(Math.max(0.05, r - 0.12), r, 32),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op, side: THREE.DoubleSide, depthWrite: false }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(m.pos.x / S, 0.06, m.pos.y / S);
+      groupRef.current.add(ring);
+      // center dot
+      const dot = new THREE.Mesh(
+        new THREE.CircleGeometry(0.12, 16),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op * 0.8, depthWrite: false }),
+      );
+      dot.rotation.x = -Math.PI / 2;
+      dot.position.set(m.pos.x / S, 0.07, m.pos.y / S);
+      groupRef.current.add(dot);
+    }
+    // formation preview ghosts
+    if (state.commandPreview) {
+      for (const slot of state.commandPreview.slots) {
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(0.5, 0.62, 24),
+          new THREE.MeshBasicMaterial({ color: '#7ec0ff', transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }),
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(slot.x / S, 0.05, slot.y / S);
+        groupRef.current.add(ring);
+      }
+    }
+  });
+  return <group ref={groupRef} />;
+}
+
+// ---------- Capture points ----------
 function CapturePoints({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
   const groupRef = useRef<THREE.Group>(null);
   useFrame(() => {
@@ -337,7 +433,7 @@ function CapturePoints({ gameStateRef }: { gameStateRef: React.MutableRefObject<
   return <group ref={groupRef} />;
 }
 
-// ---- Selected-unit path lines ----
+// ---------- Selected-unit path lines ----------
 function PathsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
   const ref = useRef<THREE.LineSegments>(null);
   const posBuf = useRef<Float32Array>(new Float32Array(3000));
@@ -374,46 +470,89 @@ function PathsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<Gam
   );
 }
 
-// ---- Ground click handler ----
-function Ground({ gameStateRef, inputRef, onChange }: SceneProps) {
-  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+// ---------- Ground click handler (screen-space drag threshold + preview) ----------
+function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayRef'>) {
   const handleDown = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
     const wx = e.point.x * S;
     const wy = e.point.z * S;
     const state = gameStateRef.current;
+    const sx = e.nativeEvent.clientX, sy = e.nativeEvent.clientY;
+
     if (e.nativeEvent.button === 2) {
-      handleRightClickWorld(wx, wy, state, e.nativeEvent.shiftKey, e.nativeEvent.ctrlKey || e.nativeEvent.metaKey);
+      inputRef.current.rightMouseDown = true;
+      // Live formation preview begins on press; commit on release.
+      updateCommandPreview(state, wx, wy);
       onChange();
     } else if (e.nativeEvent.button === 0) {
-      dragStartRef.current = { x: wx, y: wy };
       inputRef.current.dragStart = { x: wx, y: wy };
+      inputRef.current.dragStartScreen = { x: sx, y: sy };
+      inputRef.current.dragPromoted = false;
       inputRef.current.isDragging = true;
-      const hit = handleLeftClickWorld(wx, wy, state, e.nativeEvent.shiftKey);
-      if (!hit) state.selectionBox = { start: { x: wx, y: wy }, end: { x: wx, y: wy } };
+      // selection box waits until threshold is crossed; no flicker on tap.
+      state.selectionBox = null;
+      state.previewSelected.clear();
       onChange();
     }
   };
+
   const handleMove = (e: ThreeEvent<PointerEvent>) => {
     const wx = e.point.x * S, wy = e.point.z * S;
     const state = gameStateRef.current;
     inputRef.current.mouseWorldPos = { x: wx, y: wy };
-    if (inputRef.current.isDragging && state.selectionBox) {
-      state.selectionBox.end = { x: wx, y: wy };
+    inputRef.current.mousePos = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
+
+    // Live formation preview while RMB held
+    if (inputRef.current.rightMouseDown) {
+      updateCommandPreview(state, wx, wy);
+    }
+
+    if (inputRef.current.isDragging && inputRef.current.dragStartScreen && inputRef.current.dragStart) {
+      const ds = inputRef.current.dragStartScreen;
+      const dx = e.nativeEvent.clientX - ds.x;
+      const dy = e.nativeEvent.clientY - ds.y;
+      const screenDist = Math.hypot(dx, dy);
+      if (!inputRef.current.dragPromoted && screenDist > DRAG_THRESHOLD_PX) {
+        inputRef.current.dragPromoted = true;
+        state.selectionBox = { start: { ...inputRef.current.dragStart }, end: { x: wx, y: wy } };
+      }
+      if (inputRef.current.dragPromoted && state.selectionBox) {
+        state.selectionBox.end = { x: wx, y: wy };
+        updatePreviewSelection(state);
+      }
     }
   };
+
   const handleUp = (e: ThreeEvent<PointerEvent>) => {
     const state = gameStateRef.current;
-    if (state.selectionBox && inputRef.current.isDragging) {
-      const { start, end } = state.selectionBox;
-      const dist = Math.hypot(end.x - start.x, end.y - start.y);
-      if (dist > 15) handleBoxSelect(start.x, start.y, end.x, end.y, state, e.nativeEvent.shiftKey);
-      state.selectionBox = null;
+    if (e.nativeEvent.button === 2) {
+      // commit right-click on release using cursor world pos
+      const wx = e.point.x * S, wy = e.point.z * S;
+      handleRightClickWorld(wx, wy, state, e.nativeEvent.shiftKey, e.nativeEvent.ctrlKey || e.nativeEvent.metaKey);
+      inputRef.current.rightMouseDown = false;
+      clearCommandPreview(state);
       onChange();
+      return;
     }
+    if (e.nativeEvent.button !== 0) return;
+
+    if (inputRef.current.dragPromoted && state.selectionBox) {
+      const { start, end } = state.selectionBox;
+      handleBoxSelect(start.x, start.y, end.x, end.y, state, e.nativeEvent.shiftKey);
+    } else {
+      // tap = single-unit select
+      const wx = e.point.x * S, wy = e.point.z * S;
+      handleLeftClickWorld(wx, wy, state, e.nativeEvent.shiftKey);
+    }
+    state.selectionBox = null;
+    state.previewSelected.clear();
     inputRef.current.isDragging = false;
-    dragStartRef.current = null;
+    inputRef.current.dragPromoted = false;
+    inputRef.current.dragStart = null;
+    inputRef.current.dragStartScreen = null;
+    onChange();
   };
+
   return (
     <mesh
       position={[W / 2, 0, H / 2]}
@@ -429,30 +568,37 @@ function Ground({ gameStateRef, inputRef, onChange }: SceneProps) {
   );
 }
 
-// ---- Selection box (rendered as a low rectangle on ground) ----
-function SelectionBox({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
-  const ref = useRef<THREE.Mesh>(null);
+// ---------- Screen-space selection rectangle (HTML overlay) ----------
+function SelectionOverlayUpdater({ gameStateRef, overlayRef }: { gameStateRef: React.MutableRefObject<GameState>; overlayRef: React.MutableRefObject<HTMLDivElement | null> }) {
+  const { camera, size } = useThree();
+  const v = useMemo(() => new THREE.Vector3(), []);
   useFrame(() => {
+    const el = overlayRef.current;
+    if (!el) return;
     const sb = gameStateRef.current.selectionBox;
-    if (!ref.current) return;
-    if (!sb) { ref.current.visible = false; return; }
-    ref.current.visible = true;
-    const minX = Math.min(sb.start.x, sb.end.x) / S;
-    const maxX = Math.max(sb.start.x, sb.end.x) / S;
-    const minY = Math.min(sb.start.y, sb.end.y) / S;
-    const maxY = Math.max(sb.start.y, sb.end.y) / S;
-    ref.current.position.set((minX + maxX) / 2, 0.06, (minY + maxY) / 2);
-    ref.current.scale.set(Math.max(0.01, maxX - minX), 1, Math.max(0.01, maxY - minY));
+    if (!sb) { el.style.display = 'none'; return; }
+    // Project four corners to screen and take the AABB
+    const xs = [sb.start.x, sb.end.x];
+    const ys = [sb.start.y, sb.end.y];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const wx of xs) for (const wy of ys) {
+      v.set(wx / S, 0, wy / S);
+      v.project(camera);
+      const sx = (v.x * 0.5 + 0.5) * size.width;
+      const sy = (-v.y * 0.5 + 0.5) * size.height;
+      if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
+      if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+    }
+    el.style.display = 'block';
+    el.style.left = `${minX}px`;
+    el.style.top = `${minY}px`;
+    el.style.width = `${Math.max(1, maxX - minX)}px`;
+    el.style.height = `${Math.max(1, maxY - minY)}px`;
   });
-  return (
-    <mesh ref={ref} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[1, 1]} />
-      <meshBasicMaterial color="#7ec0ff" transparent opacity={0.2} />
-    </mesh>
-  );
+  return null;
 }
 
-// ---- Camera controller: WASD pan + scroll zoom ----
+// ---------- Camera rig ----------
 function CameraRig({ inputRef }: { inputRef: React.MutableRefObject<InputState> }) {
   const { camera } = useThree();
   const targetRef = useRef({ x: W / 2, z: H / 2 });
@@ -480,33 +626,50 @@ function CameraRig({ inputRef }: { inputRef: React.MutableRefObject<InputState> 
   return null;
 }
 
-// ---- Scene root ----
-const Scene3D: React.FC<SceneProps> = ({ gameStateRef, inputRef, onChange }) => {
+// ---------- Scene root ----------
+const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, inputRef, onChange }) => {
   const terrain = gameStateRef.current.terrain;
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+
   return (
-    <Canvas
-      shadows
-      camera={{ position: [W / 2, 35, H / 2 + 20], fov: 50 }}
-      onContextMenu={(e) => e.preventDefault()}
-      gl={{ antialias: true }}
-      style={{ background: '#1a201a' }}
-    >
-      <fog attach="fog" args={['#1a201a', 100, 220]} />
-      <ambientLight intensity={0.55} />
-      <directionalLight
-        position={[40, 60, 20]} intensity={1.1}
-        castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024}
-        shadow-camera-left={-50} shadow-camera-right={50} shadow-camera-top={50} shadow-camera-bottom={-50}
+    <div className="relative w-full h-full">
+      <Canvas
+        shadows
+        camera={{ position: [W / 2, 35, H / 2 + 20], fov: 50 }}
+        onContextMenu={(e) => e.preventDefault()}
+        gl={{ antialias: true }}
+        style={{ background: '#1a201a' }}
+      >
+        <fog attach="fog" args={['#1a201a', 100, 220]} />
+        <ambientLight intensity={0.55} />
+        <directionalLight
+          position={[40, 60, 20]} intensity={1.1}
+          castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024}
+          shadow-camera-left={-50} shadow-camera-right={50} shadow-camera-top={50} shadow-camera-bottom={-50}
+        />
+        <CameraRig inputRef={inputRef} />
+        <TerrainMesh terrain={terrain} />
+        <CapturePoints gameStateRef={gameStateRef} />
+        <UnitsLayer gameStateRef={gameStateRef} inputRef={inputRef} />
+        <PathsLayer gameStateRef={gameStateRef} />
+        <CommandMarkersLayer gameStateRef={gameStateRef} />
+        <EffectsLayer gameStateRef={gameStateRef} />
+        <Ground gameStateRef={gameStateRef} inputRef={inputRef} onChange={onChange} />
+        <SelectionOverlayUpdater gameStateRef={gameStateRef} overlayRef={overlayRef} />
+      </Canvas>
+      {/* Screen-space selection rectangle */}
+      <div
+        ref={overlayRef}
+        className="absolute pointer-events-none"
+        style={{
+          display: 'none',
+          border: '1.5px solid #7ec0ff',
+          background: 'rgba(126,192,255,0.12)',
+          boxShadow: '0 0 0 1px rgba(0,0,0,0.55), 0 0 14px rgba(126,192,255,0.35)',
+          mixBlendMode: 'screen',
+        }}
       />
-      <CameraRig inputRef={inputRef} />
-      <TerrainMesh terrain={terrain} />
-      <CapturePoints gameStateRef={gameStateRef} />
-      <UnitsLayer gameStateRef={gameStateRef} />
-      <PathsLayer gameStateRef={gameStateRef} />
-      <EffectsLayer gameStateRef={gameStateRef} />
-      <SelectionBox gameStateRef={gameStateRef} />
-      <Ground gameStateRef={gameStateRef} inputRef={inputRef} onChange={onChange} />
-    </Canvas>
+    </div>
   );
 };
 
