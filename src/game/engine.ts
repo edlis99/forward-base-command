@@ -1,4 +1,4 @@
-import { GameState, InputState, MissionDef, Position, FormationType, Unit } from './types';
+import { GameState, InputState, MissionDef, Position, FormationType, Unit, CommandMarker, CommandMarkerType } from './types';
 import { generateTerrain, getTerrainAt, canDigHere, digTrench } from './terrain';
 import { setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
 import { updateAI } from './ai';
@@ -25,6 +25,9 @@ export function createInitialState(mission: MissionDef): GameState {
     eventLog: [],
     ghostContacts: [],
     selectionBox: null,
+    previewSelected: new Set(),
+    commandMarkers: [],
+    commandPreview: null,
     gameOver: false,
     gameResult: null,
     time: 0,
@@ -48,7 +51,13 @@ export function createInputState(): InputState {
     mousePos: { x: 0, y: 0 },
     mouseWorldPos: { x: 0, y: 0 },
     isDragging: false, isPanning: false, dragStart: null,
+    dragStartScreen: null, dragPromoted: false, rightMouseDown: false,
   };
+}
+
+function pushMarker(state: GameState, type: CommandMarkerType, pos: Position, team: import('./types').Team = 'player') {
+  const max = type === 'hold' ? 0.9 : 0.6;
+  state.commandMarkers.push({ pos: { x: pos.x, y: pos.y }, type, team, timer: max, max });
 }
 
 export function update(state: GameState, input: InputState, dt: number) {
@@ -99,11 +108,9 @@ export function update(state: GameState, input: InputState, dt: number) {
     if (d > 60 && !unit.targetPos && unit.path.length === 0) setDestination(unit, state, unit.homePos);
   }
 
-  // Awareness BEFORE combat so visibility gates engagement
   const awarenessMsgs = updateAwareness(state, dt);
   for (const m of awarenessMsgs) state.eventLog.unshift({ message: m, time: state.time, type: 'contact' });
 
-  // Combat
   for (const unit of state.units) {
     const result = updateCombat(unit, dt, state);
     if (result.killMsg) {
@@ -118,33 +125,62 @@ export function update(state: GameState, input: InputState, dt: number) {
 
   if (state.eventLog.length > 30) state.eventLog.length = 30;
 
-  // Remove fully dead
   state.units = state.units.filter(u => u.alive || u.health > -9999);
 
-  // Tick projectiles, explosions, wreckage
   state.projectiles = state.projectiles.filter(p => { p.timer -= dt; return p.timer > 0; });
   state.explosions = state.explosions.filter(e => { e.timer -= dt; return e.timer > 0; });
   state.wreckage = state.wreckage.filter(w => { w.timer -= dt; return w.timer > 0; });
 
-  // AI
+  // Tick command markers
+  for (const m of state.commandMarkers) m.timer -= dt;
+  state.commandMarkers = state.commandMarkers.filter(m => m.timer > 0);
+
   updateAI(state, dt);
 
-  // Mission script
   state.mission.update(state, dt);
 }
 
+// ============ SELECTION HELPERS ============
+
+/** True if the click landed on a friendly unit (and selected it). */
 export function handleLeftClickWorld(worldX: number, worldY: number, state: GameState, shiftKey: boolean) {
   if (!shiftKey) state.units.forEach(u => u.selected = false);
   for (const unit of state.units) {
     if (!unit.alive || unit.team !== 'player') continue;
     const dx = unit.pos.x - worldX, dy = unit.pos.y - worldY;
     if (Math.sqrt(dx * dx + dy * dy) < 22) {
-      unit.selected = !unit.selected || !shiftKey;
+      unit.selected = shiftKey ? !unit.selected : true;
       return true;
     }
   }
   return false;
 }
+
+/** Recompute which player units are inside the live drag rectangle. */
+export function updatePreviewSelection(state: GameState) {
+  state.previewSelected.clear();
+  const sb = state.selectionBox;
+  if (!sb) return;
+  const units = getUnitsInRect(state.units, sb.start.x, sb.start.y, sb.end.x, sb.end.y, 'player');
+  for (const u of units) state.previewSelected.add(u.id);
+}
+
+/** Recompute formation ghost slots based on currently selected units + cursor world pos. */
+export function updateCommandPreview(state: GameState, worldX: number, worldY: number) {
+  const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player');
+  if (selected.length === 0) { state.commandPreview = null; return; }
+  const cx = selected.reduce((s, u) => s + u.pos.x, 0) / selected.length;
+  const cy = selected.reduce((s, u) => s + u.pos.y, 0) / selected.length;
+  const facing = Math.atan2(worldY - cy, worldX - cx);
+  const dest: Position = { x: worldX, y: worldY };
+  const destCell = getTerrainAt(state.terrain, worldX, worldY);
+  const formType: FormationType = state.preferredFormation
+    ?? (destCell?.type === 'road' ? 'column' : pickFormation(selected));
+  const slots = computeFormation(selected, dest, facing, formType);
+  state.commandPreview = { slots: slots.map(s => s.pos) };
+}
+
+export function clearCommandPreview(state: GameState) { state.commandPreview = null; }
 
 export function handleRightClickWorld(worldX: number, worldY: number, state: GameState, shiftKey = false, ctrlKey = false) {
   const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player');
@@ -161,6 +197,7 @@ export function handleRightClickWorld(worldX: number, worldY: number, state: Gam
           u.waypoints = [];
           u.order = 'attack';
         });
+        pushMarker(state, 'attack', unit.pos);
         return;
       }
     }
@@ -179,8 +216,15 @@ export function handleRightClickWorld(worldX: number, worldY: number, state: Gam
           (u as { _boardTarget?: string | null })._boardTarget = unit.id;
         }
       });
+      pushMarker(state, 'board', unit.pos);
       return;
     }
+  }
+
+  // Capture point click?
+  let onCapture = false;
+  for (const cp of state.capturePoints) {
+    if (Math.hypot(cp.pos.x - worldX, cp.pos.y - worldY) < cp.radius) { onCapture = true; break; }
   }
 
   // Move with formation
@@ -189,7 +233,6 @@ export function handleRightClickWorld(worldX: number, worldY: number, state: Gam
   const facing = Math.atan2(worldY - centerY, worldX - centerX);
   const dest: Position = { x: worldX, y: worldY };
   const formationType: FormationType = state.preferredFormation ?? pickFormation(selected);
-  // Auto-column if landing on a road
   const destCell = getTerrainAt(state.terrain, worldX, worldY);
   const formType: FormationType = (destCell?.type === 'road' && !state.preferredFormation) ? 'column' : formationType;
   const slots = computeFormation(selected, dest, facing, formType);
@@ -207,6 +250,7 @@ export function handleRightClickWorld(worldX: number, worldY: number, state: Gam
       u.order = ctrlKey ? 'attack_move' : 'move';
     }
   }
+  pushMarker(state, onCapture ? 'capture' : ctrlKey ? 'attack_move' : 'move', dest);
 }
 
 export function setFormation(state: GameState, type: FormationType | null) {
@@ -231,6 +275,7 @@ export function handleBoxSelect(x1: number, y1: number, x2: number, y2: number, 
   if (!shiftKey) state.units.forEach(u => u.selected = false);
   const units = getUnitsInRect(state.units, x1, y1, x2, y2, 'player');
   units.forEach(u => u.selected = true);
+  state.previewSelected.clear();
 }
 
 export function setStanceForSelected(state: GameState, stance: import('./types').Stance) {
@@ -238,27 +283,30 @@ export function setStanceForSelected(state: GameState, stance: import('./types')
 }
 
 export function holdPositionForSelected(state: GameState) {
-  state.units.filter(u => u.alive && u.selected && u.team === 'player').forEach(u => {
+  const sel = state.units.filter(u => u.alive && u.selected && u.team === 'player');
+  sel.forEach(u => {
     u.targetPos = null; u.path = []; u.waypoints = [];
     u.order = 'hold_position'; u.homePos = { ...u.pos };
   });
+  if (sel.length > 0) {
+    const cx = sel.reduce((s, u) => s + u.pos.x, 0) / sel.length;
+    const cy = sel.reduce((s, u) => s + u.pos.y, 0) / sel.length;
+    pushMarker(state, 'hold', { x: cx, y: cy });
+  }
 }
 
 export function spawnReinforcement(type: import('./types').UnitType, state: GameState) {
   const cost = UNIT_STATS[type].cost;
   const pool = state.reinforcementBudget + (state.mission.rewardKills ? state.rewardCP : 0);
   if (pool < cost) return false;
-  // Deduct
   if (state.reinforcementBudget >= cost) state.reinforcementBudget -= cost;
   else {
     const rem = cost - state.reinforcementBudget;
     state.reinforcementBudget = 0;
     state.rewardCP -= rem;
   }
-  // Spawn at edge nearest first surviving friendly
   const friendly = state.units.find(u => u.alive && u.team === 'player');
   const spawn = friendly ? { x: friendly.pos.x - 80, y: friendly.pos.y } : { x: 60, y: 600 };
-  // import lazily to avoid cycle
   const { createUnit } = require('./units') as typeof import('./units');
   const u = createUnit(type, 'player', spawn.x, spawn.y);
   state.units.push(u);

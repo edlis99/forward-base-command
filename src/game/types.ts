@@ -114,6 +114,15 @@ export interface CapturePoint {
 
 export interface GhostContact { team: Team; pos: Position; type: UnitType; time: number; }
 
+export type CommandMarkerType = 'move' | 'attack' | 'capture' | 'board' | 'hold' | 'attack_move';
+export interface CommandMarker {
+  pos: Position;
+  type: CommandMarkerType;
+  team: Team;
+  timer: number;
+  max: number;
+}
+
 export interface GameState {
   units: Unit[];
   terrain: TerrainCell[][];
@@ -125,19 +134,22 @@ export interface GameState {
   eventLog: EventLog[];
   ghostContacts: GhostContact[];
   selectionBox: { start: Position; end: Position } | null;
+  /** Player-team unit IDs currently inside the live drag rectangle (preview highlight). */
+  previewSelected: Set<string>;
+  /** Transient ping markers for issued commands. */
+  commandMarkers: CommandMarker[];
+  /** Ghost formation slots shown while right-button is held. */
+  commandPreview: { slots: Position[] } | null;
   gameOver: boolean; gameResult: 'win' | 'lose' | null;
   time: number;
   paused: boolean;
   mission: MissionDef;
   objectives: Objective[];
   capturePoints: CapturePoint[];
-  reinforcementBudget: number; // mission-specific reinforcement pool
-  // defense mission only — kill reward CP
+  reinforcementBudget: number;
   rewardCP: number;
-  // mission script state bag
   script: Record<string, unknown>;
-  // detection-bonus zone (ambush)
-  detectionMultiplier: number; // applied to enemy detection of player units
+  detectionMultiplier: number;
   preferredFormation?: FormationType;
 }
 
@@ -146,4 +158,10 @@ export interface InputState {
   mousePos: Position; mouseWorldPos: Position;
   isDragging: boolean; isPanning: boolean;
   dragStart: Position | null;
+  /** Screen-pixel pointerdown anchor, used to apply a screen-space drag threshold. */
+  dragStartScreen: Position | null;
+  /** True once the cursor moved more than DRAG_THRESHOLD px since pointerdown. */
+  dragPromoted: boolean;
+  /** True while right mouse button is held (for live formation preview). */
+  rightMouseDown: boolean;
 }
