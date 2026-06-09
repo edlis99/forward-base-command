@@ -7,6 +7,7 @@ import {
   handleLeftClickWorld, handleRightClickWorld, handleBoxSelect,
   updatePreviewSelection, updateCommandPreview, clearCommandPreview,
 } from '../game/engine';
+import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor } from '../game/tactical';
 
 const S = CELL_SIZE;
 const W = MAP_COLS;
