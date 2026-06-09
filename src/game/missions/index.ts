@@ -251,9 +251,9 @@ export const reconMission: MissionDef = {
 
 export const ambushMission: MissionDef = {
   id: 'ambush',
-  name: 'Convoy Ambush',
-  summary: 'Set up positions and destroy an enemy convoy before it exits the map.',
-  briefing: 'An enemy supply convoy will travel west-to-east along the central road. Pre-position your forces in concealment. Detection multiplier is reduced — your units are hard to spot until you fire. Destroy the entire convoy.',
+  name: 'Dust & Steel — Convoy Ambush',
+  summary: 'Pre-position in the dunes and destroy an enemy supply convoy before it escapes east.',
+  briefing: 'An enemy supply convoy is moving along the old desert highway at dawn — fuel, ammunition and a command vehicle for their forward brigade. If it reaches the eastern depot, our offensive stalls for a week. You have twelve minutes before contact to deploy infantry in the tall grass and dig in your armour behind the dunes and boulder fields. Hold fire until they enter the kill zone. One vehicle escapes and the operation is a failure.',
   rewardKills: false,
   mapLayout: 'desert_road',
   mapSeed: 31,
