@@ -107,38 +107,64 @@ function InstancedTerrainGroup({ type, positions, sizes }: { type: string; posit
 
 function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
   const positions = useMemo(() => {
-    const out: [number, number][] = [];
+    const out: Array<{ x: number; z: number; s: number; rot: number; hue: number }> = [];
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const c = terrain[y][x];
       if (c.type === 'forest' || c.type === 'hedgerow') {
         const seed = (x * 73 + y * 31) % 100;
-        out.push([x + 0.25 + (seed % 5) * 0.1, y + 0.25 + ((seed * 7) % 5) * 0.1]);
-        if (seed > 50) out.push([x + 0.75 - (seed % 4) * 0.08, y + 0.7 - ((seed * 3) % 4) * 0.08]);
+        const variants = c.type === 'forest' ? 2 : 1;
+        for (let i = 0; i < variants + (seed > 60 ? 1 : 0); i++) {
+          const sx = x + 0.2 + ((seed + i * 17) % 6) * 0.11;
+          const sz = y + 0.2 + ((seed * 7 + i * 11) % 6) * 0.11;
+          const s = 0.7 + ((seed + i * 5) % 7) * 0.08;
+          const rot = ((seed + i * 23) % 360) * (Math.PI / 180);
+          const hue = 0.85 + ((seed + i * 3) % 30) / 100;
+          out.push({ x: sx, z: sz, s, rot, hue });
+        }
       }
     }
     return out;
   }, [terrain]);
 
-  const ref = useRef<THREE.InstancedMesh>(null);
+  const foliageRef = useRef<THREE.InstancedMesh>(null);
+  const trunkRef = useRef<THREE.InstancedMesh>(null);
   useEffect(() => {
-    if (!ref.current) return;
+    if (!foliageRef.current || !trunkRef.current) return;
     const tmp = new THREE.Object3D();
+    const col = new THREE.Color();
+    const base = new THREE.Color('#2d4a25');
     for (let i = 0; i < positions.length; i++) {
-      tmp.position.set(positions[i][0], 1, positions[i][1]);
-      const s = 0.8 + ((i * 13) % 5) * 0.1;
-      tmp.scale.set(s, s, s);
-      tmp.rotation.y = ((i * 17) % 360) * (Math.PI / 180);
+      const p = positions[i];
+      tmp.position.set(p.x, 1.0 * p.s + 0.4, p.z);
+      tmp.scale.set(p.s, p.s * 1.3, p.s);
+      tmp.rotation.y = p.rot;
       tmp.updateMatrix();
-      ref.current.setMatrixAt(i, tmp.matrix);
+      foliageRef.current.setMatrixAt(i, tmp.matrix);
+      col.copy(base).multiplyScalar(p.hue);
+      foliageRef.current.setColorAt(i, col);
+      // trunk
+      tmp.position.set(p.x, 0.35 * p.s, p.z);
+      tmp.scale.set(p.s * 0.18, p.s * 0.7, p.s * 0.18);
+      tmp.rotation.y = 0;
+      tmp.updateMatrix();
+      trunkRef.current.setMatrixAt(i, tmp.matrix);
     }
-    ref.current.instanceMatrix.needsUpdate = true;
+    foliageRef.current.instanceMatrix.needsUpdate = true;
+    if (foliageRef.current.instanceColor) foliageRef.current.instanceColor.needsUpdate = true;
+    trunkRef.current.instanceMatrix.needsUpdate = true;
   }, [positions]);
 
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, positions.length]} castShadow raycast={() => null}>
-      <coneGeometry args={[0.45, 1.6, 6]} />
-      <meshStandardMaterial color="#2d4a25" flatShading />
-    </instancedMesh>
+    <group>
+      <instancedMesh ref={trunkRef} args={[undefined, undefined, positions.length]} castShadow raycast={() => null}>
+        <cylinderGeometry args={[1, 1, 1, 6]} />
+        <meshStandardMaterial color="#3a2a1c" flatShading />
+      </instancedMesh>
+      <instancedMesh ref={foliageRef} args={[undefined, undefined, positions.length]} castShadow raycast={() => null}>
+        <coneGeometry args={[0.55, 1.8, 7]} />
+        <meshStandardMaterial color="#ffffff" flatShading roughness={0.9} />
+      </instancedMesh>
+    </group>
   );
 }
 
