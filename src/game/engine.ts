@@ -86,6 +86,20 @@ export function update(state: GameState, input: InputState, dt: number) {
 
   for (const unit of state.units) if (unit.alive) moveUnit(unit, dt, state);
 
+  // Dig-on-arrive: units flagged by digTrenchLineForSelected start entrenching at destination
+  for (const unit of state.units) {
+    if (!unit.alive) continue;
+    const tag = unit as Unit & { _digOnArrive?: boolean };
+    if (!tag._digOnArrive) continue;
+    if (unit.targetPos || unit.path.length > 0 || unit.waypoints.length > 0) continue;
+    const cell = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
+    if (cell && cell.type !== 'trench' && canDigHere(cell)) {
+      unit.order = 'entrench';
+      unit.digTimer = 0;
+    }
+    tag._digOnArrive = false;
+  }
+
   // Dig progress
   for (const unit of state.units) {
     if (!unit.alive || unit.order !== 'entrench' || unit.type !== 'infantry') continue;
@@ -270,6 +284,88 @@ export function digInForSelected(state: GameState) {
     u.targetPos = null; u.path = []; u.waypoints = []; u.finalDest = null;
     u.attackTarget = null;
   }
+}
+
+/**
+ * Dig a connected trench LINE through the selected infantry.
+ * Endpoints are the two infantry farthest apart; intermediate cells along the
+ * Bresenham line between them become dig targets. Each selected unit is
+ * greedy-assigned to its nearest cell, then moves there and entrenches.
+ * Existing trench cells along the path are skipped (so segments auto-connect).
+ */
+export function digTrenchLineForSelected(state: GameState) {
+  const cs = state.cellSize;
+  const sel = state.units.filter(u => u.alive && u.selected && u.team === 'player' && u.type === 'infantry');
+  if (sel.length < 2) { digInForSelected(state); return; }
+
+  // Find the two farthest-apart units to use as endpoints
+  let a = sel[0], b = sel[1], best = 0;
+  for (let i = 0; i < sel.length; i++) for (let j = i + 1; j < sel.length; j++) {
+    const d = Math.hypot(sel[i].pos.x - sel[j].pos.x, sel[i].pos.y - sel[j].pos.y);
+    if (d > best) { best = d; a = sel[i]; b = sel[j]; }
+  }
+
+  // Bresenham line in cell coords
+  const x0 = Math.floor(a.pos.x / cs), y0 = Math.floor(a.pos.y / cs);
+  const x1 = Math.floor(b.pos.x / cs), y1 = Math.floor(b.pos.y / cs);
+  const cells: { gx: number; gy: number; wx: number; wy: number }[] = [];
+  const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy, cx = x0, cy = y0;
+  // safety cap to avoid runaway loops
+  for (let n = 0; n < 256; n++) {
+    cells.push({ gx: cx, gy: cy, wx: cx * cs + cs / 2, wy: cy * cs + cs / 2 });
+    if (cx === x1 && cy === y1) break;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; cx += sx; }
+    if (e2 < dx) { err += dx; cy += sy; }
+  }
+
+  // Filter to diggable empty cells (skip existing trenches — they're already connected)
+  const targets = cells.filter(c => {
+    const cell = state.terrain[c.gy]?.[c.gx];
+    if (!cell) return false;
+    if (cell.type === 'trench') return false;
+    return canDigHere(cell);
+  });
+
+  if (targets.length === 0) {
+    state.eventLog.unshift({ message: 'No diggable ground along trench line', time: state.time, type: 'info' });
+    return;
+  }
+
+  // Greedy assign: each unit takes its nearest unused target
+  const free = new Set(targets.map((_, i) => i));
+  const assignments: Array<{ unit: Unit; tgt: typeof targets[number] }> = [];
+  const queue = [...sel];
+  while (queue.length && free.size) {
+    let bestU = -1, bestT = -1, bestD = Infinity;
+    queue.forEach((u, ui) => {
+      free.forEach(ti => {
+        const d = Math.hypot(targets[ti].wx - u.pos.x, targets[ti].wy - u.pos.y);
+        if (d < bestD) { bestD = d; bestU = ui; bestT = ti; }
+      });
+    });
+    if (bestU < 0) break;
+    assignments.push({ unit: queue[bestU], tgt: targets[bestT] });
+    queue.splice(bestU, 1);
+    free.delete(bestT);
+  }
+
+  for (const { unit, tgt } of assignments) {
+    unit.waypoints = [];
+    unit.attackTarget = null;
+    unit.order = 'move';
+    setDestination(unit, state, { x: tgt.wx, y: tgt.wy });
+    // Tag so engine.update flips the unit into 'entrench' when it arrives
+    (unit as Unit & { _digOnArrive?: boolean })._digOnArrive = true;
+    pushMarker(state, 'move', { x: tgt.wx, y: tgt.wy });
+  }
+
+  state.eventLog.unshift({
+    message: `Trench line designated: ${assignments.length} segments`,
+    time: state.time, type: 'info',
+  });
 }
 
 export function handleBoxSelect(x1: number, y1: number, x2: number, y2: number, state: GameState, shiftKey: boolean) {

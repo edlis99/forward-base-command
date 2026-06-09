@@ -3,7 +3,7 @@ import { GameState, InputState, UnitType, MissionDef, Stance } from '../game/typ
 import {
   createInitialState, createInputState, update,
   spawnReinforcement, setStanceForSelected, holdPositionForSelected, togglePause,
-  digInForSelected, setFormation, toggleDebugLayer,
+  digInForSelected, setFormation, toggleDebugLayer, digTrenchLineForSelected,
 } from '../game/engine';
 import Scene3D from '../scene3d/Scene3D';
 import GameHUD from './GameHUD';
@@ -67,7 +67,11 @@ const GameUI: React.FC = () => {
       if (k === 'x') { setStanceForSelected(state, 'tight'); triggerHudUpdate(); }
       if (k === 'g') { setStanceForSelected(state, 'defend'); triggerHudUpdate(); }
       if (k === 'y') { setStanceForSelected(state, 'aggressive'); triggerHudUpdate(); }
-      if (k === 't') { digInForSelected(state); triggerHudUpdate(); }
+      if (k === 't') {
+        if (e.shiftKey) digTrenchLineForSelected(state);
+        else digInForSelected(state);
+        triggerHudUpdate();
+      }
       if (k === '1') { setFormation(state, 'line'); triggerHudUpdate(); }
       if (k === '2') { setFormation(state, 'wedge'); triggerHudUpdate(); }
       if (k === '3') { setFormation(state, 'column'); triggerHudUpdate(); }
