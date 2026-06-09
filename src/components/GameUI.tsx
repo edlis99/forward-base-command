@@ -3,7 +3,7 @@ import { GameState, InputState, UnitType, MissionDef, Stance } from '../game/typ
 import {
   createInitialState, createInputState, update,
   spawnReinforcement, setStanceForSelected, holdPositionForSelected, togglePause,
-  digInForSelected, setFormation, toggleDebugLayer,
+  digInForSelected, setFormation, toggleDebugLayer, digTrenchLineForSelected,
 } from '../game/engine';
 import Scene3D from '../scene3d/Scene3D';
 import GameHUD from './GameHUD';
