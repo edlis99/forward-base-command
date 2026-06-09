@@ -319,3 +319,12 @@ export function togglePause(state: GameState) {
   state.paused = !state.paused;
   state.eventLog.unshift({ message: state.paused ? 'PAUSED — issue orders' : 'Resumed', time: state.time, type: 'info' });
 }
+
+/** Toggle a single debug layer; turning one on turns others off (mutually exclusive). */
+export function toggleDebugLayer(state: GameState, layer: keyof DebugFlags) {
+  const wasOn = state.debug[layer];
+  state.debug.showCover = false;
+  state.debug.showConcealment = false;
+  state.debug.showTactical = false;
+  state.debug[layer] = !wasOn;
+}
