@@ -85,7 +85,7 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
         <div>LClick: select · Drag: box-select · Shift: add</div>
         <div>RClick: move/attack · Shift+R: queue · Ctrl+R: attack-move</div>
         <div>H: hold · F: hold-fire · X: tight · G: defend · Y: aggressive</div>
-        <div>T: dig-in · 1/2/3: line/wedge/column · 0: auto</div>
+        <div>T: dig-in · Shift+T: dig trench line · 1/2/3: line/wedge/column · 0: auto</div>
         <div>F1: cover · F2: concealment · F3: tactical score</div>
       </div>
 
