@@ -267,6 +267,11 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         ref.position.x = u.pos.x / S;
         ref.position.z = u.pos.y / S;
         ref.rotation.y = -u.facing;
+        // Prone / digging crouch: squash + slight bob while digging
+        const isDigging = u.order === 'entrench';
+        const proneScale = (u.prone || isDigging) ? 0.45 : 1;
+        const bob = isDigging ? 1 + Math.sin(t * 8) * 0.08 : 1;
+        ref.scale.set(1, proneScale * bob, 1);
         ref.visible = u.team === 'player' || u.spottedByEnemy;
       }
       const sel = selRefs.current.get(u.id);
