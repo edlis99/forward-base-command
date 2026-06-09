@@ -1,5 +1,5 @@
 import React from 'react';
-import { GameState, UnitType, Stance, FormationType } from '../game/types';
+import { GameState, UnitType, Stance, FormationType, DebugFlags } from '../game/types';
 import { UNIT_STATS, VETERANCY_NAMES } from '../game/constants';
 
 interface Props {
@@ -11,9 +11,10 @@ interface Props {
   onExit: () => void;
   onDig: () => void;
   onFormation: (f: FormationType | null) => void;
+  onToggleDebug: (layer: keyof DebugFlags) => void;
 }
 
-const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogglePause, onExit, onDig, onFormation }) => {
+const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogglePause, onExit, onDig, onFormation, onToggleDebug }) => {
   const selected = gameState.units.filter(u => u.alive && u.selected && u.team === 'player');
   const pool = gameState.reinforcementBudget + (gameState.mission.rewardKills ? gameState.rewardCP : 0);
 
@@ -85,6 +86,31 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
         <div>RClick: move/attack · Shift+R: queue · Ctrl+R: attack-move</div>
         <div>H: hold · F: hold-fire · X: tight · G: defend · Y: aggressive</div>
         <div>T: dig-in · 1/2/3: line/wedge/column · 0: auto</div>
+        <div>F1: cover · F2: concealment · F3: tactical score</div>
+      </div>
+
+      {/* Debug overlay toggle row */}
+      <div className="pointer-events-auto absolute top-32 right-3 text-[10px] font-mono p-2 flex flex-col gap-1"
+        style={{ background: 'rgba(15,20,15,0.85)', border: '1px solid #2a3a2a', color: '#a5cf6f' }}>
+        <div>DEBUG</div>
+        {([
+          ['showCover', 'Cover [F1]'],
+          ['showConcealment', 'Conceal [F2]'],
+          ['showTactical', 'Tactical [F3]'],
+        ] as [keyof DebugFlags, string][]).map(([k, label]) => (
+          <button key={k} onClick={() => onToggleDebug(k)}
+            className="px-2 py-0.5 border text-left"
+            style={{
+              background: gameState.debug[k] ? 'rgba(80,100,60,0.9)' : 'rgba(40,50,40,0.8)',
+              borderColor: '#5a6a5a',
+              color: gameState.debug[k] ? '#e8f0c8' : '#a5cf6f',
+            }}>
+            {gameState.debug[k] ? '● ' : '○ '}{label}
+          </button>
+        ))}
+        <div className="mt-1 text-[9px]" style={{ color: '#7a8a6a' }}>
+          blue→green→yellow→red
+        </div>
       </div>
 
       {/* Bottom bar */}

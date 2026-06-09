@@ -3,7 +3,7 @@ import { GameState, InputState, UnitType, MissionDef, Stance } from '../game/typ
 import {
   createInitialState, createInputState, update,
   spawnReinforcement, setStanceForSelected, holdPositionForSelected, togglePause,
-  digInForSelected, setFormation,
+  digInForSelected, setFormation, toggleDebugLayer,
 } from '../game/engine';
 import Scene3D from '../scene3d/Scene3D';
 import GameHUD from './GameHUD';
@@ -72,6 +72,9 @@ const GameUI: React.FC = () => {
       if (k === '2') { setFormation(state, 'wedge'); triggerHudUpdate(); }
       if (k === '3') { setFormation(state, 'column'); triggerHudUpdate(); }
       if (k === '0') { setFormation(state, null); triggerHudUpdate(); }
+      if (k === 'f1') { e.preventDefault(); toggleDebugLayer(state, 'showCover'); triggerHudUpdate(); }
+      if (k === 'f2') { e.preventDefault(); toggleDebugLayer(state, 'showConcealment'); triggerHudUpdate(); }
+      if (k === 'f3') { e.preventDefault(); toggleDebugLayer(state, 'showTactical'); triggerHudUpdate(); }
       if (k === 'escape') { state.units.forEach(u => u.selected = false); triggerHudUpdate(); }
     };
     const onUp = (e: KeyboardEvent) => inputRef.current.keys.delete(e.key.toLowerCase());
@@ -116,6 +119,7 @@ const GameUI: React.FC = () => {
         onExit={exitMission}
         onDig={() => { digInForSelected(gameStateRef.current!); triggerHudUpdate(); }}
         onFormation={(f) => { setFormation(gameStateRef.current!, f); triggerHudUpdate(); }}
+        onToggleDebug={(l) => { toggleDebugLayer(gameStateRef.current!, l); triggerHudUpdate(); }}
       />
     </div>
   );

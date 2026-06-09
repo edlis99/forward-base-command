@@ -1,4 +1,4 @@
-import { GameState, InputState, MissionDef, Position, FormationType, Unit, CommandMarker, CommandMarkerType } from './types';
+import { GameState, InputState, MissionDef, Position, FormationType, Unit, CommandMarker, CommandMarkerType, DebugFlags } from './types';
 import { generateTerrain, getTerrainAt, canDigHere, digTrench } from './terrain';
 import { setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
 import { updateAI } from './ai';
@@ -39,6 +39,7 @@ export function createInitialState(mission: MissionDef): GameState {
     rewardCP: initial.rewardCP ?? 0,
     script: initial.script ?? {},
     detectionMultiplier: initial.detectionMultiplier ?? 1,
+    debug: { showCover: false, showConcealment: false, showTactical: false },
   };
   state.units = initial.units ?? [];
   state.eventLog.unshift({ message: `Mission: ${mission.name}`, time: 0, type: 'objective' });
@@ -317,4 +318,13 @@ export function spawnReinforcement(type: import('./types').UnitType, state: Game
 export function togglePause(state: GameState) {
   state.paused = !state.paused;
   state.eventLog.unshift({ message: state.paused ? 'PAUSED — issue orders' : 'Resumed', time: state.time, type: 'info' });
+}
+
+/** Toggle a single debug layer; turning one on turns others off (mutually exclusive). */
+export function toggleDebugLayer(state: GameState, layer: keyof DebugFlags) {
+  const wasOn = state.debug[layer];
+  state.debug.showCover = false;
+  state.debug.showConcealment = false;
+  state.debug.showTactical = false;
+  state.debug[layer] = !wasOn;
 }
