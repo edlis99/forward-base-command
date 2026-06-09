@@ -154,9 +154,9 @@ export const defendMission: MissionDef = {
 
 export const reconMission: MissionDef = {
   id: 'recon',
-  name: 'Recon & Extract',
-  summary: 'Photograph 3 enemy positions and reach the extraction point. Avoid contact.',
-  briefing: 'A small recon team must observe three enemy positions and exfil. Detection raises an alarm and brings hunters down on you. Use hold-fire stance and concealment.',
+  name: 'Silent Eyes — Recon & Extract',
+  summary: 'Slip past patrols, observe three forward outposts and exfil through the forest.',
+  briefing: 'A three-man scout team is inserted west of the river. Forward HQ needs eyes on three suspected forward outposts before the morning bombardment. Stay in hold-fire — a single shot brings the QRF and the whole forest down on you. Use trails, hedgerows and tall grass; cross the bridge only if you must. Tag all three positions, then exfil at the eastern LZ. Bring everyone home.',
   rewardKills: false,
   mapLayout: 'forest_outpost',
   mapSeed: 23,
