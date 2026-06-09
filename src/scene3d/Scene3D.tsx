@@ -326,12 +326,28 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             <meshBasicMaterial color={u.team === 'player' ? '#7ec0ff' : '#ff8a6a'} transparent opacity={0.95} />
           </mesh>
 
-          {/* digging ring */}
+          {/* digging visuals: progress ring + growing dirt mound parapet */}
           {u.order === 'entrench' && (
-            <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
-              <ringGeometry args={[0.4, 0.48, 24, 1, 0, Math.min(Math.PI * 2, (u.digTimer / 6) * Math.PI * 2)]} />
-              <meshBasicMaterial color="#d4c47a" transparent opacity={0.9} side={2} />
-            </mesh>
+            <group>
+              <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
+                <ringGeometry args={[0.4, 0.48, 24, 1, 0, Math.min(Math.PI * 2, (u.digTimer / 6) * Math.PI * 2)]} />
+                <meshBasicMaterial color="#d4c47a" transparent opacity={0.9} side={2} />
+              </mesh>
+              {/* front parapet (dirt thrown forward) */}
+              <mesh position={[0.5, 0.05 + (u.digTimer / 6) * 0.12, 0]} raycast={() => null}>
+                <boxGeometry args={[0.35, Math.max(0.05, (u.digTimer / 6) * 0.28), 0.7]} />
+                <meshStandardMaterial color="#4a3520" flatShading roughness={1} />
+              </mesh>
+              {/* side spoil piles */}
+              <mesh position={[-0.35, 0.05 + (u.digTimer / 6) * 0.08, 0.4]} raycast={() => null}>
+                <boxGeometry args={[0.28, Math.max(0.05, (u.digTimer / 6) * 0.2), 0.28]} />
+                <meshStandardMaterial color="#3d2c1a" flatShading roughness={1} />
+              </mesh>
+              <mesh position={[-0.35, 0.05 + (u.digTimer / 6) * 0.08, -0.4]} raycast={() => null}>
+                <boxGeometry args={[0.28, Math.max(0.05, (u.digTimer / 6) * 0.2), 0.28]} />
+                <meshStandardMaterial color="#3d2c1a" flatShading roughness={1} />
+              </mesh>
+            </group>
           )}
 
           <HealthBar u={u} />
