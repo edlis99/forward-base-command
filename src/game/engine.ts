@@ -86,6 +86,20 @@ export function update(state: GameState, input: InputState, dt: number) {
 
   for (const unit of state.units) if (unit.alive) moveUnit(unit, dt, state);
 
+  // Dig-on-arrive: units flagged by digTrenchLineForSelected start entrenching at destination
+  for (const unit of state.units) {
+    if (!unit.alive) continue;
+    const tag = unit as Unit & { _digOnArrive?: boolean };
+    if (!tag._digOnArrive) continue;
+    if (unit.targetPos || unit.path.length > 0 || unit.waypoints.length > 0) continue;
+    const cell = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
+    if (cell && cell.type !== 'trench' && canDigHere(cell)) {
+      unit.order = 'entrench';
+      unit.digTimer = 0;
+    }
+    tag._digOnArrive = false;
+  }
+
   // Dig progress
   for (const unit of state.units) {
     if (!unit.alive || unit.order !== 'entrench' || unit.type !== 'infantry') continue;
