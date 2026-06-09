@@ -39,6 +39,7 @@ export function createInitialState(mission: MissionDef): GameState {
     rewardCP: initial.rewardCP ?? 0,
     script: initial.script ?? {},
     detectionMultiplier: initial.detectionMultiplier ?? 1,
+    debug: { showCover: false, showConcealment: false, showTactical: false },
   };
   state.units = initial.units ?? [];
   state.eventLog.unshift({ message: `Mission: ${mission.name}`, time: 0, type: 'objective' });

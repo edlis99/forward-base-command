@@ -151,6 +151,14 @@ export interface GameState {
   script: Record<string, unknown>;
   detectionMultiplier: number;
   preferredFormation?: FormationType;
+  /** Debug overlay toggles (Stage 2). At most one should be on at a time. */
+  debug: DebugFlags;
+}
+
+export interface DebugFlags {
+  showCover: boolean;
+  showConcealment: boolean;
+  showTactical: boolean;
 }
 
 export interface InputState {
