@@ -15,9 +15,9 @@ function placeGarrison(state: Partial<GameState>, gx: number, gy: number) {
 
 export const assaultMission: MissionDef = {
   id: 'assault',
-  name: 'Take the Farmhouse',
-  summary: 'Eliminate the enemy garrison holding the central farmhouse.',
-  briefing: 'A reinforced platoon holds the farmhouse complex at the center of the map. No reinforcements — make every soldier count. Use cover, flank, and reduce the position.',
+  name: 'Operation Iron Gate — Seize the Farmhouse',
+  summary: 'Reduce the reinforced farmhouse held by an entrenched enemy platoon.',
+  briefing: 'At first light, recon confirmed enemy forward observers operating from the Kovalenko farmstead — a stone-walled compound dominating the river ford. They have been calling artillery on our supply road for six days. Command wants the compound silenced before noon. You lead a depleted rifle section with one tank and an APC up the western approach. There are no reinforcements. Use the bocage and the creek line for cover, take the perimeter trench first, then breach the gate. Every soldier counts.',
   rewardKills: false,
   mapLayout: 'farmhouse_complex',
   mapSeed: 7,
