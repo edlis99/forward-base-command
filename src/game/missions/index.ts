@@ -67,9 +67,9 @@ export const assaultMission: MissionDef = {
 
 export const defendMission: MissionDef = {
   id: 'defend',
-  name: 'Hold the Settlement',
-  summary: 'Defend two capture points against scripted enemy advances.',
-  briefing: 'Enemy forces are pushing west toward the village. Hold both objective points until command lifts the order. Kill rewards are authorized — call in reinforcements as needed.',
+  name: 'Hold the Line — Stary Most',
+  summary: 'Defend the village crossroads against four mechanised waves.',
+  briefing: 'The village of Stary Most sits astride the only paved crossroads for thirty kilometres. If it falls, the enemy armoured column rolls straight into our rear. Civilians evacuated overnight. You inherit prepared sandbag lines, two trench segments and the plazas. Intel expects four escalating waves from the east — infantry, then mechanised, then armour. Command has authorised kill-reward fire support: every confirmed kill builds reinforcement credit. Lose either plaza and the line breaks.',
   rewardKills: true,
   mapLayout: 'village_crossroads',
   mapSeed: 11,
