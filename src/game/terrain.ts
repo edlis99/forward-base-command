@@ -49,31 +49,29 @@ export function generateTerrain(layout: MapLayoutId = 'farmhouse_complex', seed:
 // ============================== LAYOUTS ==============================
 
 function buildFarmhouseComplex(grid: TerrainCell[][], rand: () => number) {
-  scatterGrass(grid, rand, 0.08);
-  // Approach road from west toward farmhouse
+  scatterGrass(grid, rand, 0.14);
   for (let x = 0; x < 28; x++) { setTerrain(grid, x, 19, 'road'); setTerrain(grid, x, 20, 'road'); }
-  // Hedgerow corridors (bocage)
-  for (let y = 8; y <= 16; y++) setTerrain(grid, 16, y, 'hedgerow');
-  for (let y = 22; y <= 32; y++) setTerrain(grid, 16, y, 'hedgerow');
-  for (let x = 6; x <= 14; x++) setTerrain(grid, x, 8, 'hedgerow');
-  for (let x = 6; x <= 14; x++) setTerrain(grid, x, 32, 'hedgerow');
-  // Creek (water) running south of farmhouse, partial ford
+  for (let y = 6; y <= 16; y++) setTerrain(grid, 16, y, 'hedgerow');
+  for (let y = 22; y <= 34; y++) setTerrain(grid, 16, y, 'hedgerow');
+  for (let x = 4; x <= 14; x++) setTerrain(grid, x, 6, 'hedgerow');
+  for (let x = 4; x <= 14; x++) setTerrain(grid, x, 34, 'hedgerow');
+  for (let y = 10; y <= 14; y++) setTerrain(grid, 42, y, 'hedgerow');
+  for (let y = 26; y <= 30; y++) setTerrain(grid, 42, y, 'hedgerow');
   for (let x = 0; x < MAP_COLS; x++) {
     const ry = 27 + Math.round(Math.sin(x * 0.4) * 1);
     if (grid[ry] && grid[ry][x].type === 'open') setTerrain(grid, x, ry, 'water');
   }
-  // Ford crossing
   setTerrain(grid, 22, 27, 'gravel'); setTerrain(grid, 22, 28, 'gravel'); setTerrain(grid, 23, 27, 'gravel');
-  // Forests left/right of approach
-  placeForest(grid, rand, 8, 14, 3);
+  setTerrain(grid, 40, 27, 'gravel'); setTerrain(grid, 40, 28, 'gravel');
+  placeForest(grid, rand, 8, 12, 3);
   placeForest(grid, rand, 8, 26, 3);
   placeForest(grid, rand, 20, 6, 2);
   placeForest(grid, rand, 20, 34, 2);
-  placeForest(grid, rand, 50, 12, 4);
-  placeForest(grid, rand, 50, 28, 4);
+  placeForest(grid, rand, 50, 10, 4);
+  placeForest(grid, rand, 50, 30, 4);
+  placeForest(grid, rand, 62, 18, 3);
+  placeForest(grid, rand, 75, 22, 3);
 
-  // Farmhouse compound at center (28-34, 17-23)
-  // Outer wall with two gates
   for (let x = 26; x <= 35; x++) {
     if (x !== 30) setTerrain(grid, x, 16, 'wall');
     if (x !== 30 && x !== 31) setTerrain(grid, x, 24, 'wall');
@@ -82,70 +80,83 @@ function buildFarmhouseComplex(grid: TerrainCell[][], rand: () => number) {
     if (y !== 20) setTerrain(grid, 26, y, 'wall');
     if (y !== 20) setTerrain(grid, 35, y, 'wall');
   }
-  // Buildings inside compound
   placeUrbanCluster(grid, rand, 29, 18, 1, 1);
   placeUrbanCluster(grid, rand, 33, 18, 1, 1);
   placeUrbanCluster(grid, rand, 31, 22, 1, 1);
-  // Sandbag firing positions at gates
   setTerrain(grid, 29, 16, 'sandbag'); setTerrain(grid, 31, 16, 'sandbag');
   setTerrain(grid, 29, 24, 'sandbag'); setTerrain(grid, 32, 24, 'sandbag');
-  // Craters from prior shelling
-  for (const c of [[24, 18], [25, 22], [27, 17], [36, 19], [37, 21]]) {
+  for (let x = 25; x <= 36; x++) if (rand() < 0.45) setTerrain(grid, x, 15, 'trench');
+  for (let x = 25; x <= 36; x++) if (rand() < 0.45) setTerrain(grid, x, 25, 'trench');
+  for (const c of [[24, 18], [25, 22], [27, 17], [36, 19], [37, 21], [22, 14], [38, 25], [19, 20], [39, 17]]) {
     setTerrain(grid, c[0], c[1], 'crater');
   }
-  // Low hill east as overwatch
-  raiseArea(grid, 50, 20, 4);
+  for (let i = 0; i < 18; i++) {
+    const x = 10 + Math.floor(rand() * 50);
+    const y = 8 + Math.floor(rand() * 28);
+    if (grid[y]?.[x]?.type === 'open') setTerrain(grid, x, y, rand() < 0.5 ? 'rubble' : 'sandbag');
+  }
+  for (let i = 0; i < 14; i++) {
+    const x = 5 + Math.floor(rand() * 60);
+    const y = 24 + Math.floor(rand() * 5);
+    if (grid[y]?.[x]?.type === 'open') setTerrain(grid, x, y, 'mud');
+  }
+  raiseArea(grid, 50, 20, 5);
+  raiseArea(grid, 78, 32, 4);
 }
 
 function buildVillageCrossroads(grid: TerrainCell[][], rand: () => number) {
-  scatterGrass(grid, rand, 0.12);
-  // Crossroads at (30, 20)
+  scatterGrass(grid, rand, 0.16);
   for (let x = 0; x < MAP_COLS; x++) { setTerrain(grid, x, 19, 'road'); setTerrain(grid, x, 20, 'road'); }
   for (let y = 0; y < MAP_ROWS; y++) setTerrain(grid, 30, y, 'road');
-  // Open fields east — attack corridor
-  // Two capture-point zones on the village (north + south plaza)
-  placeUrbanCluster(grid, rand, 27, 14, 2, 0.7);
-  placeUrbanCluster(grid, rand, 33, 14, 2, 0.7);
-  placeUrbanCluster(grid, rand, 27, 26, 2, 0.7);
-  placeUrbanCluster(grid, rand, 33, 26, 2, 0.7);
-  placeUrbanCluster(grid, rand, 22, 19, 1, 0.8);
-  placeUrbanCluster(grid, rand, 38, 19, 1, 0.8);
-  // Pre-built sandbag defensive lines for player
+  placeUrbanCluster(grid, rand, 27, 14, 2, 0.8);
+  placeUrbanCluster(grid, rand, 33, 14, 2, 0.8);
+  placeUrbanCluster(grid, rand, 27, 26, 2, 0.8);
+  placeUrbanCluster(grid, rand, 33, 26, 2, 0.8);
+  placeUrbanCluster(grid, rand, 22, 19, 1, 0.85);
+  placeUrbanCluster(grid, rand, 38, 19, 1, 0.85);
+  placeUrbanCluster(grid, rand, 27, 8, 1, 0.7);
+  placeUrbanCluster(grid, rand, 33, 8, 1, 0.7);
+  placeUrbanCluster(grid, rand, 27, 32, 1, 0.7);
+  placeUrbanCluster(grid, rand, 33, 32, 1, 0.7);
   for (let y = 12; y <= 16; y++) setTerrain(grid, 24, y, 'sandbag');
   for (let y = 24; y <= 28; y++) setTerrain(grid, 24, y, 'sandbag');
   for (let x = 25; x <= 35; x++) setTerrain(grid, x, 11, 'sandbag');
   for (let x = 25; x <= 35; x++) setTerrain(grid, x, 29, 'sandbag');
-  // Trench line in front of plazas
   for (let x = 26; x <= 34; x++) setTerrain(grid, x, 17, 'trench');
   for (let x = 26; x <= 34; x++) setTerrain(grid, x, 23, 'trench');
-  // Walls between buildings
   for (let x = 25; x <= 35; x++) { if (rand() < 0.4 && grid[13][x].type === 'open') setTerrain(grid, x, 13, 'wall'); }
-  // Rubble in plazas
+  for (let x = 25; x <= 35; x++) { if (rand() < 0.4 && grid[27][x].type === 'open') setTerrain(grid, x, 27, 'wall'); }
   for (const c of [[27, 14], [33, 14], [27, 26], [33, 26]]) {
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (rand() < 0.3) setTerrain(grid, c[0] + dx, c[1] + dy, 'rubble');
     }
   }
-  // Open east field with sparse cover for attackers to use
-  for (let i = 0; i < 12; i++) {
-    const x = 42 + Math.floor(rand() * 16);
-    const y = 10 + Math.floor(rand() * 22);
-    if (grid[y] && grid[y][x].type === 'open') setTerrain(grid, x, y, 'crater');
+  for (let i = 0; i < 22; i++) {
+    const x = 40 + Math.floor(rand() * 20);
+    const y = 8 + Math.floor(rand() * 26);
+    if (grid[y]?.[x]?.type === 'open') setTerrain(grid, x, y, rand() < 0.6 ? 'crater' : 'rubble');
   }
-  // Forests at west (player retreat)
-  placeForest(grid, rand, 6, 10, 3);
-  placeForest(grid, rand, 6, 28, 3);
+  for (let i = 0; i < 30; i++) {
+    const x = 40 + Math.floor(rand() * 20);
+    const y = Math.floor(rand() * MAP_ROWS);
+    if (grid[y]?.[x]?.type === 'open') setTerrain(grid, x, y, 'tall_grass');
+  }
+  placeForest(grid, rand, 6, 8, 4);
+  placeForest(grid, rand, 6, 30, 4);
+  placeForest(grid, rand, 12, 4, 2);
+  placeForest(grid, rand, 12, 36, 2);
+  for (let y = 6; y <= 14; y++) setTerrain(grid, 18, y, 'hedgerow');
+  for (let y = 24; y <= 32; y++) setTerrain(grid, 18, y, 'hedgerow');
+  raiseArea(grid, 55, 20, 5);
 }
 
 function buildForestOutpost(grid: TerrainCell[][], rand: () => number) {
-  scatterGrass(grid, rand, 0.2);
-  // Dense forest belts
-  for (let cx = 8; cx < MAP_COLS; cx += 6) {
-    for (let cy = 4; cy < MAP_ROWS; cy += 6) {
-      if (rand() < 0.65) placeForest(grid, rand, cx + Math.floor(rand() * 4) - 2, cy + Math.floor(rand() * 4) - 2, 2 + Math.floor(rand() * 2));
+  scatterGrass(grid, rand, 0.28);
+  for (let cx = 6; cx < MAP_COLS; cx += 5) {
+    for (let cy = 4; cy < MAP_ROWS; cy += 5) {
+      if (rand() < 0.7) placeForest(grid, rand, cx + Math.floor(rand() * 4) - 2, cy + Math.floor(rand() * 4) - 2, 2 + Math.floor(rand() * 2));
     }
   }
-  // Narrow winding trail (gravel) west -> east
   let ty = 18;
   for (let x = 0; x < MAP_COLS; x++) {
     setTerrain(grid, x, ty, 'gravel');
@@ -153,16 +164,13 @@ function buildForestOutpost(grid: TerrainCell[][], rand: () => number) {
     if (rand() < 0.18) ty += rand() < 0.5 ? 1 : -1;
     ty = Math.max(4, Math.min(MAP_ROWS - 5, ty));
   }
-  // River that cuts across
   for (let y = 0; y < MAP_ROWS; y++) {
     const rx = 36 + Math.round(Math.sin(y * 0.4) * 2);
-    if (grid[y] && grid[y][rx] && grid[y][rx].type !== 'gravel') setTerrain(grid, rx, y, 'water');
-    if (grid[y] && grid[y][rx + 1] && grid[y][rx + 1].type !== 'gravel') setTerrain(grid, rx + 1, y, 'water');
+    if (grid[y]?.[rx] && grid[y][rx].type !== 'gravel') setTerrain(grid, rx, y, 'water');
+    if (grid[y]?.[rx + 1] && grid[y][rx + 1].type !== 'gravel') setTerrain(grid, rx + 1, y, 'water');
   }
-  // Bridge near trail
   for (let y = 17; y <= 20; y++) { setTerrain(grid, 36, y, 'gravel'); setTerrain(grid, 37, y, 'gravel'); }
-  // Outpost clearings: small clusters of buildings + sandbags
-  const posts = [[20, 10], [35, 28], [48, 14]];
+  const posts: Array<[number, number]> = [[20, 10], [35, 28], [48, 14], [62, 30], [78, 16]];
   for (const [cx, cy] of posts) {
     for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
       if (Math.abs(dx) + Math.abs(dy) <= 2 && grid[cy + dy]?.[cx + dx]?.type === 'forest') {
@@ -172,44 +180,49 @@ function buildForestOutpost(grid: TerrainCell[][], rand: () => number) {
     placeUrbanCluster(grid, rand, cx, cy, 1, 0.8);
     setTerrain(grid, cx - 1, cy + 1, 'sandbag');
     setTerrain(grid, cx + 1, cy - 1, 'sandbag');
+    setTerrain(grid, cx - 2, cy, 'trench');
+    setTerrain(grid, cx + 2, cy, 'trench');
   }
-  // Hills for elevation
-  raiseArea(grid, 12, 30, 4);
-  raiseArea(grid, 52, 6, 3);
+  for (let i = 0; i < 18; i++) {
+    const x = Math.floor(rand() * MAP_COLS);
+    const y = Math.floor(rand() * MAP_ROWS);
+    if (grid[y]?.[x]?.type === 'open') setTerrain(grid, x, y, rand() < 0.5 ? 'mud' : 'crater');
+  }
+  raiseArea(grid, 12, 30, 5);
+  raiseArea(grid, 52, 6, 4);
+  raiseArea(grid, 82, 36, 4);
 }
 
 function buildDesertRoad(grid: TerrainCell[][], rand: () => number) {
-  scatterGrass(grid, rand, 0.04);
-  // Long straight road E-W
+  scatterGrass(grid, rand, 0.06);
   for (let x = 0; x < MAP_COLS; x++) {
     setTerrain(grid, x, 19, 'road');
     setTerrain(grid, x, 20, 'road');
     if (rand() < 0.6) setTerrain(grid, x, 18, 'gravel');
     if (rand() < 0.6) setTerrain(grid, x, 21, 'gravel');
   }
-  // Low dunes (elevation only) along both flanks
-  for (let cx = 6; cx < MAP_COLS; cx += 5) {
+  for (let cx = 6; cx < MAP_COLS; cx += 4) {
     raiseArea(grid, cx + Math.floor(rand() * 3), 8 + Math.floor(rand() * 3), 2);
     raiseArea(grid, cx + Math.floor(rand() * 3), 28 + Math.floor(rand() * 3), 2);
   }
-  // Ridgelines (walls of rock) on far flanks for ambush positions
-  for (let x = 10; x <= 50; x++) { if (rand() < 0.35) setTerrain(grid, x, 6, 'rubble'); }
-  for (let x = 10; x <= 50; x++) { if (rand() < 0.35) setTerrain(grid, x, 33, 'rubble'); }
-  // A few wrecks/craters in the kill zone
-  for (const c of [[22, 17], [28, 22], [35, 18], [42, 21]]) setTerrain(grid, c[0], c[1], 'crater');
-  // Sparse scrub: tall grass clusters along flanks for concealment
-  for (let i = 0; i < 60; i++) {
+  for (let x = 8; x <= 80; x++) { if (rand() < 0.4) setTerrain(grid, x, 5 + Math.floor(rand() * 2), 'rubble'); }
+  for (let x = 8; x <= 80; x++) { if (rand() < 0.4) setTerrain(grid, x, 32 + Math.floor(rand() * 2), 'rubble'); }
+  for (const c of [[22, 17], [28, 22], [35, 18], [42, 21], [50, 19], [58, 22], [66, 18], [72, 21]]) setTerrain(grid, c[0], c[1], 'crater');
+  for (let i = 0; i < 90; i++) {
     const x = Math.floor(rand() * MAP_COLS);
     const y = 9 + Math.floor(rand() * 4);
-    if (grid[y][x].type === 'open') setTerrain(grid, x, y, 'tall_grass');
+    if (grid[y]?.[x]?.type === 'open') setTerrain(grid, x, y, 'tall_grass');
     const y2 = 26 + Math.floor(rand() * 4);
-    if (grid[y2][x].type === 'open') setTerrain(grid, x, y2, 'tall_grass');
+    if (grid[y2]?.[x]?.type === 'open') setTerrain(grid, x, y2, 'tall_grass');
   }
-  // A couple of large rocks (urban=blocks LOS as cover boulders)
-  for (const c of [[26, 12], [38, 28], [44, 10], [20, 27]]) placeUrbanCluster(grid, rand, c[0], c[1], 1, 0.9);
-  // Hilltop overlooks
-  raiseArea(grid, 18, 8, 3);
-  raiseArea(grid, 44, 30, 3);
+  for (const c of [[26, 12], [38, 28], [44, 10], [20, 27], [55, 9], [62, 30], [72, 12], [80, 28]]) placeUrbanCluster(grid, rand, c[0], c[1], 1, 0.9);
+  for (const c of [[18, 8], [44, 30], [62, 8], [78, 30]]) {
+    setTerrain(grid, c[0], c[1], 'sandbag');
+    setTerrain(grid, c[0] + 1, c[1], 'sandbag');
+  }
+  raiseArea(grid, 18, 8, 4);
+  raiseArea(grid, 44, 30, 4);
+  raiseArea(grid, 70, 8, 3);
 }
 
 // ============================== HELPERS ==============================

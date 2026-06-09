@@ -15,17 +15,17 @@ const H = MAP_ROWS;
 const DRAG_THRESHOLD_PX = 5;
 
 const TERRAIN_COLORS: Record<string, string> = {
-  open: '#6b7f5a', urban: '#8a847a', forest: '#3e5a35', road: '#56524a',
-  water: '#2c5570', wall: '#5a5550', trench: '#3a3525', rubble: '#6a6560',
-  sandbag: '#a59670', mud: '#4a3a25', crater: '#322d25', hedgerow: '#3e5b34',
-  tall_grass: '#7a8a4e', gravel: '#857a6a',
+  open: '#5e7548', urban: '#8a807a', forest: '#2f4a26', road: '#3f3a32',
+  water: '#264e6b', wall: '#6b665e', trench: '#2a2018', rubble: '#766f64',
+  sandbag: '#a9986a', mud: '#3a2c1c', crater: '#26201a', hedgerow: '#34522a',
+  tall_grass: '#6f834a', gravel: '#8a7e6a',
 };
 
 const TERRAIN_HEIGHT: Record<string, number> = {
-  open: 0.02, urban: 1.4, forest: 0.05, road: 0.01,
-  water: -0.15, wall: 1.1, trench: -0.25, rubble: 0.25,
-  sandbag: 0.45, mud: 0, crater: -0.3, hedgerow: 0.85,
-  tall_grass: 0.15, gravel: 0.02,
+  open: 0.02, urban: 1.6, forest: 0.05, road: 0.01,
+  water: -0.18, wall: 1.3, trench: -0.35, rubble: 0.22,
+  sandbag: 0.55, mud: 0, crater: -0.4, hedgerow: 1.0,
+  tall_grass: 0.18, gravel: 0.02,
 };
 
 const MARKER_COLOR: Record<string, string> = {
@@ -73,61 +73,98 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
 function InstancedTerrainGroup({ type, positions, sizes }: { type: string; positions: [number, number, number][]; sizes: [number, number, number][] }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const count = positions.length;
+  const baseColor = useMemo(() => new THREE.Color(TERRAIN_COLORS[type] ?? '#666'), [type]);
   useEffect(() => {
     if (!ref.current) return;
     const tmp = new THREE.Object3D();
+    const col = new THREE.Color();
     for (let i = 0; i < count; i++) {
       const [px, py, pz] = positions[i];
       const [sx, sy, sz] = sizes[i];
+      // pseudo-random per-cell tint variance for natural look
+      const seed = Math.sin((px * 12.9898 + pz * 78.233)) * 43758.5453;
+      const r = (seed - Math.floor(seed)) - 0.5; // -0.5..0.5
+      const tint = 1 + r * 0.12;
+      const rot = (Math.floor((seed + 1) * 17) % 4) * (Math.PI / 2);
       tmp.position.set(px, py, pz);
-      tmp.scale.set(sx, sy, sz);
+      tmp.scale.set(sx * (1 + r * 0.04), sy * (1 + Math.abs(r) * 0.1), sz * (1 + r * 0.04));
+      tmp.rotation.y = rot;
       tmp.updateMatrix();
       ref.current.setMatrixAt(i, tmp.matrix);
+      col.copy(baseColor).multiplyScalar(tint);
+      ref.current.setColorAt(i, col);
     }
     ref.current.instanceMatrix.needsUpdate = true;
-  }, [positions, sizes, count]);
+    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+  }, [positions, sizes, count, baseColor]);
   return (
     <instancedMesh ref={ref} args={[undefined, undefined, count]} castShadow receiveShadow raycast={() => null}>
       <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial color={TERRAIN_COLORS[type] ?? '#666'} flatShading roughness={0.85} />
+      <meshStandardMaterial color="#ffffff" flatShading roughness={0.92} />
     </instancedMesh>
   );
 }
 
 function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
   const positions = useMemo(() => {
-    const out: [number, number][] = [];
+    const out: Array<{ x: number; z: number; s: number; rot: number; hue: number }> = [];
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const c = terrain[y][x];
       if (c.type === 'forest' || c.type === 'hedgerow') {
         const seed = (x * 73 + y * 31) % 100;
-        out.push([x + 0.25 + (seed % 5) * 0.1, y + 0.25 + ((seed * 7) % 5) * 0.1]);
-        if (seed > 50) out.push([x + 0.75 - (seed % 4) * 0.08, y + 0.7 - ((seed * 3) % 4) * 0.08]);
+        const variants = c.type === 'forest' ? 2 : 1;
+        for (let i = 0; i < variants + (seed > 60 ? 1 : 0); i++) {
+          const sx = x + 0.2 + ((seed + i * 17) % 6) * 0.11;
+          const sz = y + 0.2 + ((seed * 7 + i * 11) % 6) * 0.11;
+          const s = 0.7 + ((seed + i * 5) % 7) * 0.08;
+          const rot = ((seed + i * 23) % 360) * (Math.PI / 180);
+          const hue = 0.85 + ((seed + i * 3) % 30) / 100;
+          out.push({ x: sx, z: sz, s, rot, hue });
+        }
       }
     }
     return out;
   }, [terrain]);
 
-  const ref = useRef<THREE.InstancedMesh>(null);
+  const foliageRef = useRef<THREE.InstancedMesh>(null);
+  const trunkRef = useRef<THREE.InstancedMesh>(null);
   useEffect(() => {
-    if (!ref.current) return;
+    if (!foliageRef.current || !trunkRef.current) return;
     const tmp = new THREE.Object3D();
+    const col = new THREE.Color();
+    const base = new THREE.Color('#2d4a25');
     for (let i = 0; i < positions.length; i++) {
-      tmp.position.set(positions[i][0], 1, positions[i][1]);
-      const s = 0.8 + ((i * 13) % 5) * 0.1;
-      tmp.scale.set(s, s, s);
-      tmp.rotation.y = ((i * 17) % 360) * (Math.PI / 180);
+      const p = positions[i];
+      tmp.position.set(p.x, 1.0 * p.s + 0.4, p.z);
+      tmp.scale.set(p.s, p.s * 1.3, p.s);
+      tmp.rotation.y = p.rot;
       tmp.updateMatrix();
-      ref.current.setMatrixAt(i, tmp.matrix);
+      foliageRef.current.setMatrixAt(i, tmp.matrix);
+      col.copy(base).multiplyScalar(p.hue);
+      foliageRef.current.setColorAt(i, col);
+      // trunk
+      tmp.position.set(p.x, 0.35 * p.s, p.z);
+      tmp.scale.set(p.s * 0.18, p.s * 0.7, p.s * 0.18);
+      tmp.rotation.y = 0;
+      tmp.updateMatrix();
+      trunkRef.current.setMatrixAt(i, tmp.matrix);
     }
-    ref.current.instanceMatrix.needsUpdate = true;
+    foliageRef.current.instanceMatrix.needsUpdate = true;
+    if (foliageRef.current.instanceColor) foliageRef.current.instanceColor.needsUpdate = true;
+    trunkRef.current.instanceMatrix.needsUpdate = true;
   }, [positions]);
 
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, positions.length]} castShadow raycast={() => null}>
-      <coneGeometry args={[0.45, 1.6, 6]} />
-      <meshStandardMaterial color="#2d4a25" flatShading />
-    </instancedMesh>
+    <group>
+      <instancedMesh ref={trunkRef} args={[undefined, undefined, positions.length]} castShadow raycast={() => null}>
+        <cylinderGeometry args={[1, 1, 1, 6]} />
+        <meshStandardMaterial color="#3a2a1c" flatShading />
+      </instancedMesh>
+      <instancedMesh ref={foliageRef} args={[undefined, undefined, positions.length]} castShadow raycast={() => null}>
+        <coneGeometry args={[0.55, 1.8, 7]} />
+        <meshStandardMaterial color="#ffffff" flatShading roughness={0.9} />
+      </instancedMesh>
+    </group>
   );
 }
 
@@ -230,6 +267,11 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         ref.position.x = u.pos.x / S;
         ref.position.z = u.pos.y / S;
         ref.rotation.y = -u.facing;
+        // Prone / digging crouch: squash + slight bob while digging
+        const isDigging = u.order === 'entrench';
+        const proneScale = (u.prone || isDigging) ? 0.45 : 1;
+        const bob = isDigging ? 1 + Math.sin(t * 8) * 0.08 : 1;
+        ref.scale.set(1, proneScale * bob, 1);
         ref.visible = u.team === 'player' || u.spottedByEnemy;
       }
       const sel = selRefs.current.get(u.id);
@@ -284,12 +326,28 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             <meshBasicMaterial color={u.team === 'player' ? '#7ec0ff' : '#ff8a6a'} transparent opacity={0.95} />
           </mesh>
 
-          {/* digging ring */}
+          {/* digging visuals: progress ring + growing dirt mound parapet */}
           {u.order === 'entrench' && (
-            <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
-              <ringGeometry args={[0.4, 0.48, 24, 1, 0, Math.min(Math.PI * 2, (u.digTimer / 6) * Math.PI * 2)]} />
-              <meshBasicMaterial color="#d4c47a" transparent opacity={0.9} side={2} />
-            </mesh>
+            <group>
+              <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
+                <ringGeometry args={[0.4, 0.48, 24, 1, 0, Math.min(Math.PI * 2, (u.digTimer / 6) * Math.PI * 2)]} />
+                <meshBasicMaterial color="#d4c47a" transparent opacity={0.9} side={2} />
+              </mesh>
+              {/* front parapet (dirt thrown forward) */}
+              <mesh position={[0.5, 0.05 + (u.digTimer / 6) * 0.12, 0]} raycast={() => null}>
+                <boxGeometry args={[0.35, Math.max(0.05, (u.digTimer / 6) * 0.28), 0.7]} />
+                <meshStandardMaterial color="#4a3520" flatShading roughness={1} />
+              </mesh>
+              {/* side spoil piles */}
+              <mesh position={[-0.35, 0.05 + (u.digTimer / 6) * 0.08, 0.4]} raycast={() => null}>
+                <boxGeometry args={[0.28, Math.max(0.05, (u.digTimer / 6) * 0.2), 0.28]} />
+                <meshStandardMaterial color="#3d2c1a" flatShading roughness={1} />
+              </mesh>
+              <mesh position={[-0.35, 0.05 + (u.digTimer / 6) * 0.08, -0.4]} raycast={() => null}>
+                <boxGeometry args={[0.28, Math.max(0.05, (u.digTimer / 6) * 0.2), 0.28]} />
+                <meshStandardMaterial color="#3d2c1a" flatShading roughness={1} />
+              </mesh>
+            </group>
           )}
 
           <HealthBar u={u} />

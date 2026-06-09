@@ -15,9 +15,9 @@ function placeGarrison(state: Partial<GameState>, gx: number, gy: number) {
 
 export const assaultMission: MissionDef = {
   id: 'assault',
-  name: 'Take the Farmhouse',
-  summary: 'Eliminate the enemy garrison holding the central farmhouse.',
-  briefing: 'A reinforced platoon holds the farmhouse complex at the center of the map. No reinforcements — make every soldier count. Use cover, flank, and reduce the position.',
+  name: 'Operation Iron Gate — Seize the Farmhouse',
+  summary: 'Reduce the reinforced farmhouse held by an entrenched enemy platoon.',
+  briefing: 'At first light, recon confirmed enemy forward observers operating from the Kovalenko farmstead — a stone-walled compound dominating the river ford. They have been calling artillery on our supply road for six days. Command wants the compound silenced before noon. You lead a depleted rifle section with one tank and an APC up the western approach. There are no reinforcements. Use the bocage and the creek line for cover, take the perimeter trench first, then breach the gate. Every soldier counts.',
   rewardKills: false,
   mapLayout: 'farmhouse_complex',
   mapSeed: 7,
@@ -67,9 +67,9 @@ export const assaultMission: MissionDef = {
 
 export const defendMission: MissionDef = {
   id: 'defend',
-  name: 'Hold the Settlement',
-  summary: 'Defend two capture points against scripted enemy advances.',
-  briefing: 'Enemy forces are pushing west toward the village. Hold both objective points until command lifts the order. Kill rewards are authorized — call in reinforcements as needed.',
+  name: 'Hold the Line — Stary Most',
+  summary: 'Defend the village crossroads against four mechanised waves.',
+  briefing: 'The village of Stary Most sits astride the only paved crossroads for thirty kilometres. If it falls, the enemy armoured column rolls straight into our rear. Civilians evacuated overnight. You inherit prepared sandbag lines, two trench segments and the plazas. Intel expects four escalating waves from the east — infantry, then mechanised, then armour. Command has authorised kill-reward fire support: every confirmed kill builds reinforcement credit. Lose either plaza and the line breaks.',
   rewardKills: true,
   mapLayout: 'village_crossroads',
   mapSeed: 11,
@@ -154,9 +154,9 @@ export const defendMission: MissionDef = {
 
 export const reconMission: MissionDef = {
   id: 'recon',
-  name: 'Recon & Extract',
-  summary: 'Photograph 3 enemy positions and reach the extraction point. Avoid contact.',
-  briefing: 'A small recon team must observe three enemy positions and exfil. Detection raises an alarm and brings hunters down on you. Use hold-fire stance and concealment.',
+  name: 'Silent Eyes — Recon & Extract',
+  summary: 'Slip past patrols, observe three forward outposts and exfil through the forest.',
+  briefing: 'A three-man scout team is inserted west of the river. Forward HQ needs eyes on three suspected forward outposts before the morning bombardment. Stay in hold-fire — a single shot brings the QRF and the whole forest down on you. Use trails, hedgerows and tall grass; cross the bridge only if you must. Tag all three positions, then exfil at the eastern LZ. Bring everyone home.',
   rewardKills: false,
   mapLayout: 'forest_outpost',
   mapSeed: 23,
@@ -251,9 +251,9 @@ export const reconMission: MissionDef = {
 
 export const ambushMission: MissionDef = {
   id: 'ambush',
-  name: 'Convoy Ambush',
-  summary: 'Set up positions and destroy an enemy convoy before it exits the map.',
-  briefing: 'An enemy supply convoy will travel west-to-east along the central road. Pre-position your forces in concealment. Detection multiplier is reduced — your units are hard to spot until you fire. Destroy the entire convoy.',
+  name: 'Dust & Steel — Convoy Ambush',
+  summary: 'Pre-position in the dunes and destroy an enemy supply convoy before it escapes east.',
+  briefing: 'An enemy supply convoy is moving along the old desert highway at dawn — fuel, ammunition and a command vehicle for their forward brigade. If it reaches the eastern depot, our offensive stalls for a week. You have twelve minutes before contact to deploy infantry in the tall grass and dig in your armour behind the dunes and boulder fields. Hold fire until they enter the kill zone. One vehicle escapes and the operation is a failure.',
   rewardKills: false,
   mapLayout: 'desert_road',
   mapSeed: 31,
