@@ -413,6 +413,57 @@ function CommandMarkersLayer({ gameStateRef }: { gameStateRef: React.MutableRefO
   return <group ref={groupRef} />;
 }
 
+// ---------- Terrain debug overlay (cover / concealment / tactical) ----------
+function TerrainDebugLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
+  const ref = useRef<THREE.InstancedMesh>(null);
+  const lastLayerRef = useRef<string>('');
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const color = useMemo(() => new THREE.Color(), []);
+  const total = MAP_COLS * MAP_ROWS;
+
+  useFrame(() => {
+    const state = gameStateRef.current;
+    const d = state.debug;
+    const layer = d.showCover ? 'cover' : d.showConcealment ? 'concealment' : d.showTactical ? 'tactical' : '';
+    const mesh = ref.current;
+    if (!mesh) return;
+    if (!layer) {
+      mesh.visible = false;
+      lastLayerRef.current = '';
+      return;
+    }
+    mesh.visible = true;
+    if (layer === lastLayerRef.current) return; // static field, only rebuild on change
+    lastLayerRef.current = layer;
+    let i = 0;
+    for (let y = 0; y < MAP_ROWS; y++) {
+      for (let x = 0; x < MAP_COLS; x++) {
+        const c = state.terrain[y][x];
+        const v = layer === 'cover' ? cellCoverScore(c)
+          : layer === 'concealment' ? cellConcealmentScore(c)
+          : cellTacticalScore(c);
+        dummy.position.set(x + 0.5, 1.6, y + 0.5);
+        dummy.scale.set(0.94, 0.02, 0.94);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+        const [r, g, b] = scoreToColor(v);
+        color.setRGB(r, g, b);
+        mesh.setColorAt(i, color);
+        i++;
+      }
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={ref} args={[undefined, undefined, total]} raycast={() => null} visible={false}>
+      <boxGeometry args={[1, 1, 1]} />
+      <meshBasicMaterial transparent opacity={0.55} />
+    </instancedMesh>
+  );
+}
+
 // ---------- Capture points ----------
 function CapturePoints({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
   const groupRef = useRef<THREE.Group>(null);
@@ -650,6 +701,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         />
         <CameraRig inputRef={inputRef} />
         <TerrainMesh terrain={terrain} />
+        <TerrainDebugLayer gameStateRef={gameStateRef} />
         <CapturePoints gameStateRef={gameStateRef} />
         <UnitsLayer gameStateRef={gameStateRef} inputRef={inputRef} />
         <PathsLayer gameStateRef={gameStateRef} />
