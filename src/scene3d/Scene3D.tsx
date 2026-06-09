@@ -15,17 +15,17 @@ const H = MAP_ROWS;
 const DRAG_THRESHOLD_PX = 5;
 
 const TERRAIN_COLORS: Record<string, string> = {
-  open: '#6b7f5a', urban: '#8a847a', forest: '#3e5a35', road: '#56524a',
-  water: '#2c5570', wall: '#5a5550', trench: '#3a3525', rubble: '#6a6560',
-  sandbag: '#a59670', mud: '#4a3a25', crater: '#322d25', hedgerow: '#3e5b34',
-  tall_grass: '#7a8a4e', gravel: '#857a6a',
+  open: '#5e7548', urban: '#8a807a', forest: '#2f4a26', road: '#3f3a32',
+  water: '#264e6b', wall: '#6b665e', trench: '#2a2018', rubble: '#766f64',
+  sandbag: '#a9986a', mud: '#3a2c1c', crater: '#26201a', hedgerow: '#34522a',
+  tall_grass: '#6f834a', gravel: '#8a7e6a',
 };
 
 const TERRAIN_HEIGHT: Record<string, number> = {
-  open: 0.02, urban: 1.4, forest: 0.05, road: 0.01,
-  water: -0.15, wall: 1.1, trench: -0.25, rubble: 0.25,
-  sandbag: 0.45, mud: 0, crater: -0.3, hedgerow: 0.85,
-  tall_grass: 0.15, gravel: 0.02,
+  open: 0.02, urban: 1.6, forest: 0.05, road: 0.01,
+  water: -0.18, wall: 1.3, trench: -0.35, rubble: 0.22,
+  sandbag: 0.55, mud: 0, crater: -0.4, hedgerow: 1.0,
+  tall_grass: 0.18, gravel: 0.02,
 };
 
 const MARKER_COLOR: Record<string, string> = {
