@@ -73,23 +73,34 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
 function InstancedTerrainGroup({ type, positions, sizes }: { type: string; positions: [number, number, number][]; sizes: [number, number, number][] }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const count = positions.length;
+  const baseColor = useMemo(() => new THREE.Color(TERRAIN_COLORS[type] ?? '#666'), [type]);
   useEffect(() => {
     if (!ref.current) return;
     const tmp = new THREE.Object3D();
+    const col = new THREE.Color();
     for (let i = 0; i < count; i++) {
       const [px, py, pz] = positions[i];
       const [sx, sy, sz] = sizes[i];
+      // pseudo-random per-cell tint variance for natural look
+      const seed = Math.sin((px * 12.9898 + pz * 78.233)) * 43758.5453;
+      const r = (seed - Math.floor(seed)) - 0.5; // -0.5..0.5
+      const tint = 1 + r * 0.12;
+      const rot = (Math.floor((seed + 1) * 17) % 4) * (Math.PI / 2);
       tmp.position.set(px, py, pz);
-      tmp.scale.set(sx, sy, sz);
+      tmp.scale.set(sx * (1 + r * 0.04), sy * (1 + Math.abs(r) * 0.1), sz * (1 + r * 0.04));
+      tmp.rotation.y = rot;
       tmp.updateMatrix();
       ref.current.setMatrixAt(i, tmp.matrix);
+      col.copy(baseColor).multiplyScalar(tint);
+      ref.current.setColorAt(i, col);
     }
     ref.current.instanceMatrix.needsUpdate = true;
-  }, [positions, sizes, count]);
+    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+  }, [positions, sizes, count, baseColor]);
   return (
     <instancedMesh ref={ref} args={[undefined, undefined, count]} castShadow receiveShadow raycast={() => null}>
       <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial color={TERRAIN_COLORS[type] ?? '#666'} flatShading roughness={0.85} />
+      <meshStandardMaterial color="#ffffff" flatShading roughness={0.92} />
     </instancedMesh>
   );
 }
