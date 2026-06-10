@@ -48,6 +48,7 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const c = terrain[y][x];
       const t = c.type;
+      if (t === 'trench') continue; // rendered by TrenchInstances
       const h = TERRAIN_HEIGHT[t] ?? 0;
       if (!byType[t]) byType[t] = { positions: [], sizes: [] };
       byType[t].positions.push([x + 0.5, h / 2, y + 0.5]);
@@ -65,7 +66,94 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
       {Object.entries(groups).map(([type, g]) => (
         <InstancedTerrainGroup key={type} type={type} positions={g.positions} sizes={g.sizes} />
       ))}
+      <TrenchInstances terrain={terrain} />
       <TreeInstances terrain={terrain} />
+    </group>
+  );
+}
+
+/**
+ * Render trench cells as a sunken floor plus two parapet walls (dirt mounds)
+ * oriented along the trench's main axis (derived from neighboring trench cells).
+ */
+function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
+  const cells = useMemo(() => {
+    const out: Array<{ x: number; y: number; horiz: boolean }> = [];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (terrain[y][x].type !== 'trench') continue;
+      const e = x + 1 < W && terrain[y][x + 1].type === 'trench';
+      const w = x - 1 >= 0 && terrain[y][x - 1].type === 'trench';
+      const n = y - 1 >= 0 && terrain[y - 1][x].type === 'trench';
+      const s = y + 1 < H && terrain[y + 1][x].type === 'trench';
+      const horizScore = (e ? 1 : 0) + (w ? 1 : 0);
+      const vertScore = (n ? 1 : 0) + (s ? 1 : 0);
+      // horiz = parapets on north/south sides (trench runs east-west)
+      out.push({ x, y, horiz: horizScore >= vertScore });
+    }
+    return out;
+  }, [terrain]);
+
+  const floorRef = useRef<THREE.InstancedMesh>(null);
+  const parapetARef = useRef<THREE.InstancedMesh>(null);
+  const parapetBRef = useRef<THREE.InstancedMesh>(null);
+
+  useEffect(() => {
+    const tmp = new THREE.Object3D();
+    if (floorRef.current) {
+      for (let i = 0; i < cells.length; i++) {
+        const c = cells[i];
+        tmp.position.set(c.x + 0.5, -0.18, c.y + 0.5);
+        tmp.scale.set(1, 0.36, 1);
+        tmp.rotation.y = 0;
+        tmp.updateMatrix();
+        floorRef.current.setMatrixAt(i, tmp.matrix);
+      }
+      floorRef.current.instanceMatrix.needsUpdate = true;
+    }
+    // Parapet A: one side
+    if (parapetARef.current && parapetBRef.current) {
+      for (let i = 0; i < cells.length; i++) {
+        const c = cells[i];
+        // horiz trench => parapets along ±z; vertical trench => parapets along ±x
+        if (c.horiz) {
+          tmp.position.set(c.x + 0.5, 0.18, c.y + 0.1);
+          tmp.scale.set(1, 0.45, 0.22);
+        } else {
+          tmp.position.set(c.x + 0.1, 0.18, c.y + 0.5);
+          tmp.scale.set(0.22, 0.45, 1);
+        }
+        tmp.rotation.y = 0;
+        tmp.updateMatrix();
+        parapetARef.current.setMatrixAt(i, tmp.matrix);
+
+        if (c.horiz) {
+          tmp.position.set(c.x + 0.5, 0.18, c.y + 0.9);
+        } else {
+          tmp.position.set(c.x + 0.9, 0.18, c.y + 0.5);
+        }
+        tmp.updateMatrix();
+        parapetBRef.current.setMatrixAt(i, tmp.matrix);
+      }
+      parapetARef.current.instanceMatrix.needsUpdate = true;
+      parapetBRef.current.instanceMatrix.needsUpdate = true;
+    }
+  }, [cells]);
+
+  if (cells.length === 0) return null;
+  return (
+    <group>
+      <instancedMesh ref={floorRef} args={[undefined, undefined, cells.length]} receiveShadow raycast={() => null}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#241a12" flatShading roughness={1} />
+      </instancedMesh>
+      <instancedMesh ref={parapetARef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#4a3520" flatShading roughness={1} />
+      </instancedMesh>
+      <instancedMesh ref={parapetBRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#4a3520" flatShading roughness={1} />
+      </instancedMesh>
     </group>
   );
 }
@@ -267,9 +355,15 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         ref.position.x = u.pos.x / S;
         ref.position.z = u.pos.y / S;
         ref.rotation.y = -u.facing;
+        // Sink into trench when standing in a trench cell so the unit reads as occupying it
+        const gx = Math.floor(u.pos.x / S);
+        const gy = Math.floor(u.pos.y / S);
+        const cell = state.terrain[gy]?.[gx];
+        const inTrench = cell?.type === 'trench' && u.type === 'infantry';
+        ref.position.y = inTrench ? -0.28 : 0;
         // Prone / digging crouch: squash + slight bob while digging
         const isDigging = u.order === 'entrench';
-        const proneScale = (u.prone || isDigging) ? 0.45 : 1;
+        const proneScale = (u.prone || isDigging || inTrench) ? 0.55 : 1;
         const bob = isDigging ? 1 + Math.sin(t * 8) * 0.08 : 1;
         ref.scale.set(1, proneScale * bob, 1);
         ref.visible = u.team === 'player' || u.spottedByEnemy;
