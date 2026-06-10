@@ -3,6 +3,8 @@ import { generateTerrain, getTerrainAt, canDigHere, digTrench } from './terrain'
 import { setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
 import { updateAI } from './ai';
 import { updateAwareness } from './awareness';
+import { updateThreatMap } from './threatMap';
+import { updateSquads } from './squads';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './constants';
 import { getMission } from './missions';
 import { computeFormation, pickFormation } from './formations';
@@ -126,6 +128,9 @@ export function update(state: GameState, input: InputState, dt: number) {
   const awarenessMsgs = updateAwareness(state, dt);
   for (const m of awarenessMsgs) state.eventLog.unshift({ message: m, time: state.time, type: 'contact' });
 
+  updateThreatMap(state, dt);
+
+
   for (const unit of state.units) {
     const result = updateCombat(unit, dt, state);
     if (result.killMsg) {
@@ -150,6 +155,7 @@ export function update(state: GameState, input: InputState, dt: number) {
   for (const m of state.commandMarkers) m.timer -= dt;
   state.commandMarkers = state.commandMarkers.filter(m => m.timer > 0);
 
+  updateSquads(state, dt);
   updateAI(state, dt);
 
   state.mission.update(state, dt);

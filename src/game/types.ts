@@ -153,6 +153,8 @@ export interface GameState {
   preferredFormation?: FormationType;
   /** Debug overlay toggles (Stage 2). At most one should be on at a time. */
   debug: DebugFlags;
+  /** Threat / last-seen memory fields (Stage 3). Allocated lazily by threatMap. */
+  threat?: import('./threatMap').ThreatMap;
 }
 
 export interface DebugFlags {

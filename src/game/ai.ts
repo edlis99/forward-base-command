@@ -241,9 +241,12 @@ function runEnemyBehavior(unit: Unit, state: GameState, dt: number) {
   }
 
   if (closest) {
-    // Flanking approach with cover preference, instead of straight-line charge
-    if (!unit.targetPos || distance(unit.targetPos, closest.pos) > 100) {
-      const dest = flankApproach(unit, closest, state);
+    // Squad-coordinated approach: prefer squad rally / focus over solo flank
+    const tag = unit as Unit & { _squadRally?: Position | null; _squadFocus?: string | null; _squadRole?: string };
+    const focus = tag._squadFocus ? state.units.find(u => u.id === tag._squadFocus && u.alive) ?? closest : closest;
+    if (tag._squadRally && tag._squadRole === 'regroup') return; // squad controller already issued retreat move
+    if (!unit.targetPos || distance(unit.targetPos, focus.pos) > 120) {
+      const dest = tag._squadRally ?? flankApproach(unit, focus, state);
       setDestination(unit, state, dest);
       unit.order = 'attack_move';
     }
