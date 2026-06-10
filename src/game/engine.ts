@@ -3,6 +3,8 @@ import { generateTerrain, getTerrainAt, canDigHere, digTrench } from './terrain'
 import { setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
 import { updateAI } from './ai';
 import { updateAwareness } from './awareness';
+import { updateThreatMap, pulseThreat } from './threatMap';
+import { updateSquads } from './squads';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './constants';
 import { getMission } from './missions';
 import { computeFormation, pickFormation } from './formations';
