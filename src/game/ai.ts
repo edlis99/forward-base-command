@@ -175,13 +175,16 @@ function runEnemyBehavior(unit: Unit, state: GameState, dt: number) {
       unit.order = 'attack_move';
       return;
     }
-    // Infantry cover-seek: if standing in the open, move to nearby cover that still has LOS.
+    // Infantry cover-seek: if standing in poor cover, slide to nearby better cell that still has LOS.
     if (!veh && unit.coverSeekCooldown <= 0) {
       unit.coverSeekCooldown = 1.5 + Math.random();
       const curCell = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
-      const inCover = curCell ? (curCell.coverBonus + curCell.concealment * 0.5) >= 0.25 : false;
-      if (!inCover) {
-        const spot = pickCoverFiringPosition(state, unit, engageable, 5);
+      const curScore = curCell ? cellTacticalScore(curCell) : 0;
+      const tag = unit as Unit & { _squadRole?: string };
+      // Support role: higher threshold (always seek strongest cover)
+      const threshold = tag._squadRole === 'support' ? 0.45 : 0.25;
+      if (curScore < threshold) {
+        const spot = pickCoverFiringPosition(state, unit, engageable, tag._squadRole === 'support' ? 7 : 5);
         if (spot) {
           setDestination(unit, state, spot);
           unit.order = 'attack_move';
