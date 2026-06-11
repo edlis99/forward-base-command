@@ -77,7 +77,7 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
  * oriented along the trench's main axis (derived from neighboring trench cells).
  */
 function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
-  const cells = useMemo(() => {
+  const computeCells = () => {
     const out: Array<{ x: number; y: number; horiz: boolean }> = [];
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       if (terrain[y][x].type !== 'trench') continue;
@@ -87,11 +87,25 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
       const s = y + 1 < H && terrain[y + 1][x].type === 'trench';
       const horizScore = (e ? 1 : 0) + (w ? 1 : 0);
       const vertScore = (n ? 1 : 0) + (s ? 1 : 0);
-      // horiz = parapets on north/south sides (trench runs east-west)
       out.push({ x, y, horiz: horizScore >= vertScore });
     }
     return out;
-  }, [terrain]);
+  };
+  const [cells, setCells] = useState(computeCells);
+  const pollRef = useRef(0);
+  useFrame((_, dt) => {
+    pollRef.current += dt;
+    if (pollRef.current < 0.25) return;
+    pollRef.current = 0;
+    const next = computeCells();
+    if (next.length !== cells.length) { setCells(next); return; }
+    // detect change in trench layout by sampling signature
+    for (let i = 0; i < next.length; i++) {
+      const a = next[i], b = cells[i];
+      if (a.x !== b.x || a.y !== b.y || a.horiz !== b.horiz) { setCells(next); return; }
+    }
+  });
+
 
   const floorRef = useRef<THREE.InstancedMesh>(null);
   const parapetARef = useRef<THREE.InstancedMesh>(null);
