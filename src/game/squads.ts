@@ -72,18 +72,21 @@ function clusterEnemies(state: GameState): Squad[] {
   return squads;
 }
 
-/** Pick squad role based on health, ammo, morale aggregate + threat field. */
+/** Pick squad role based on health, ammo, morale aggregate + threat + suppression. */
 function pickRole(squad: Squad, state: GameState): Role {
   const m = squad.members;
   const avgHealth = m.reduce((s, u) => s + u.health / u.maxHealth, 0) / m.length;
   const avgMorale = m.reduce((s, u) => s + u.morale, 0) / m.length;
+  const avgSuppression = m.reduce((s, u) => s + u.suppression, 0) / m.length;
   const localThreat = threatAt(state, 'enemy', squad.center.x, squad.center.y);
 
+  // Pinned-down squad: pull back to recover
+  if (avgSuppression > 0.55 && avgMorale < 0.55) return 'regroup';
   if (avgHealth < 0.35 || avgMorale < 0.3) return 'regroup';
   if (localThreat > 0.55 && avgHealth < 0.7) return 'support';
   // mixed-arms with vehicle = assault, infantry-heavy with known target = flank
   const hasVehicle = m.some(u => u.type === 'tank' || u.type === 'apc');
-  if (!hasVehicle && m.length >= 3) return 'flank';
+  if (!hasVehicle && m.length >= 3 && avgSuppression < 0.35) return 'flank';
   return 'assault';
 }
 
