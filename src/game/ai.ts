@@ -1,8 +1,9 @@
 import { GameState, Unit, Position } from './types';
-import { distance, setDestination, angleBetween } from './units';
+import { distance, setDestination } from './units';
 import { hasLineOfSight, getTerrainAt, isPassable } from './terrain';
 import { isVisibleTo } from './awareness';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from './constants';
+import { findBestTacticalCell, cellTacticalScore } from './tactical';
 
 function canEngage(unit: Unit, target: Unit, state: GameState): boolean {
   if (distance(unit.pos, target.pos) > unit.range) return false;
