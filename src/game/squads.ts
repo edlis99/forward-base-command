@@ -204,4 +204,3 @@ export function updateSquads(state: GameState, dt: number) {
   st.squads = nextSquads;
   st.prevCounts = newCounts;
 }
-}
