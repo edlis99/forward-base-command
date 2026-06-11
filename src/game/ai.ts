@@ -11,77 +11,47 @@ function canEngage(unit: Unit, target: Unit, state: GameState): boolean {
   return hasLineOfSight(state.terrain, unit.pos.x, unit.pos.y, target.pos.x, target.pos.y, unit.type === 'helicopter');
 }
 
-function findNearestCover(state: GameState, unit: Unit, near?: Position, minBonus = 0.25): Position | null {
-  const gx = Math.floor(unit.pos.x / CELL_SIZE);
-  const gy = Math.floor(unit.pos.y / CELL_SIZE);
+function findNearestCover(state: GameState, unit: Unit, near?: Position, minScore = 0.25): Position | null {
   const veh = unit.type === 'tank' || unit.type === 'apc';
   const heli = unit.type === 'helicopter';
-  let best: { d: number; pos: Position } | null = null;
-  const R = 10;
-  for (let dy = -R; dy <= R; dy++) {
-    for (let dx = -R; dx <= R; dx++) {
-      const tx = gx + dx, ty = gy + dy;
-      if (tx < 0 || tx >= MAP_COLS || ty < 0 || ty >= MAP_ROWS) continue;
-      const cell = state.terrain[ty][tx];
-      if (!isPassable(cell, veh, heli)) continue;
-      if ((cell.coverBonus + cell.concealment * 0.5) >= minBonus) {
-        const pos = { x: tx * CELL_SIZE + CELL_SIZE / 2, y: ty * CELL_SIZE + CELL_SIZE / 2 };
-        let d = Math.abs(dx) + Math.abs(dy);
-        if (near) d += distance(pos, near) * 0.01;
-        if (!best || d < best.d) best = { d, pos };
-      }
-    }
-  }
-  return best?.pos ?? null;
+  return findBestTacticalCell(state, unit.pos, {
+    radius: 10, isVehicle: veh, isHelicopter: heli,
+    losTo: near ?? null, minScore,
+  });
 }
 
-/** Find a cover cell within `radius` cells that still has LOS to target. */
+/** Cover cell within `radius` that retains LOS to target and is in range. */
 function pickCoverFiringPosition(state: GameState, unit: Unit, target: Unit, radius = 5): Position | null {
-  const gx = Math.floor(unit.pos.x / CELL_SIZE);
-  const gy = Math.floor(unit.pos.y / CELL_SIZE);
   const veh = unit.type === 'tank' || unit.type === 'apc';
   const heli = unit.type === 'helicopter';
-  let best: { score: number; pos: Position } | null = null;
-  for (let dy = -radius; dy <= radius; dy++) {
-    for (let dx = -radius; dx <= radius; dx++) {
-      const tx = gx + dx, ty = gy + dy;
-      if (tx < 0 || tx >= MAP_COLS || ty < 0 || ty >= MAP_ROWS) continue;
-      const cell = state.terrain[ty][tx];
-      if (!isPassable(cell, veh, heli)) continue;
-      const cover = cell.coverBonus + cell.concealment * 0.5;
-      if (cover < 0.2) continue;
-      const cx = tx * CELL_SIZE + CELL_SIZE / 2;
-      const cy = ty * CELL_SIZE + CELL_SIZE / 2;
-      const d = Math.hypot(cx - target.pos.x, cy - target.pos.y);
-      if (d > unit.range) continue;
-      if (!hasLineOfSight(state.terrain, cx, cy, target.pos.x, target.pos.y, heli)) continue;
-      const distFromMe = Math.hypot(dx, dy);
-      const score = cover * 3 - distFromMe * 0.15 - (d / unit.range) * 0.5;
-      if (!best || score > best.score) best = { score, pos: { x: cx, y: cy } };
-    }
-  }
-  return best?.pos ?? null;
+  const candidate = findBestTacticalCell(state, unit.pos, {
+    radius, isVehicle: veh, isHelicopter: heli,
+    losTo: target.pos, minScore: 0.2,
+  });
+  if (!candidate) return null;
+  if (Math.hypot(candidate.x - target.pos.x, candidate.y - target.pos.y) > unit.range) return null;
+  return candidate;
 }
 
-/** Compute a flanking approach: perpendicular offset toward better cover near target. */
+/** Flanking approach: perpendicular offset toward better cover near target. */
 function flankApproach(unit: Unit, target: Unit, state: GameState): Position {
   const dx = target.pos.x - unit.pos.x;
   const dy = target.pos.y - unit.pos.y;
   const len = Math.hypot(dx, dy) || 1;
-  // perpendicular direction (random sign per-unit, stable via id hash)
   const sign = (unit.id.charCodeAt(unit.id.length - 1) % 2) === 0 ? 1 : -1;
   const px = -dy / len * sign;
   const py = dx / len * sign;
-  // standoff distance for vehicles
   const veh = unit.type === 'tank' || unit.type === 'apc';
   const standoff = veh ? unit.range * 0.8 : unit.range * 0.85;
   const baseX = target.pos.x - (dx / len) * standoff;
   const baseY = target.pos.y - (dy / len) * standoff;
-  // flank offset
   const flankAmt = CELL_SIZE * 3 + Math.random() * CELL_SIZE * 2;
   const candidate = { x: baseX + px * flankAmt, y: baseY + py * flankAmt };
-  // Snap to cover if available
-  const cover = findNearestCover(state, { ...unit, pos: candidate } as Unit, target.pos, 0.2);
+  // Snap to best tactical cell near the candidate that still sees the target.
+  const cover = findBestTacticalCell(state, candidate, {
+    radius: 4, isVehicle: veh, isHelicopter: unit.type === 'helicopter',
+    losTo: target.pos, minScore: 0.18,
+  });
   return cover ?? candidate;
 }
 
