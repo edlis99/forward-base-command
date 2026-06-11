@@ -1,8 +1,8 @@
 import { GameState, Unit, Position } from './types';
 import { distance, setDestination } from './units';
-import { hasLineOfSight, getTerrainAt, isPassable } from './terrain';
+import { hasLineOfSight, getTerrainAt } from './terrain';
 import { isVisibleTo } from './awareness';
-import { CELL_SIZE, MAP_COLS, MAP_ROWS } from './constants';
+import { CELL_SIZE } from './constants';
 import { findBestTacticalCell, cellTacticalScore } from './tactical';
 
 function canEngage(unit: Unit, target: Unit, state: GameState): boolean {
