@@ -154,6 +154,7 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
   }, [cells]);
 
   if (cells.length === 0) return null;
+  if (cells.length === 0) return null;
   return (
     <group key={cells.length}>
       <instancedMesh ref={floorRef} args={[undefined, undefined, cells.length]} receiveShadow raycast={() => null}>
