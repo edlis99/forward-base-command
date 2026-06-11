@@ -30,12 +30,14 @@ const RECOMPUTE_INTERVAL = 1.25;
 interface SquadState {
   lastTime: number;
   squads: Squad[];
+  /** memberCount per squad-leader id from previous recompute, used to detect losses */
+  prevCounts: Record<string, number>;
 }
 
 function getSquadState(state: GameState): SquadState {
   const s = state.script as Record<string, unknown>;
   let st = s.__squads as SquadState | undefined;
-  if (!st) { st = { lastTime: -999, squads: [] }; s.__squads = st; }
+  if (!st) { st = { lastTime: -999, squads: [], prevCounts: {} }; s.__squads = st; }
   return st;
 }
 
