@@ -30,12 +30,14 @@ const RECOMPUTE_INTERVAL = 1.25;
 interface SquadState {
   lastTime: number;
   squads: Squad[];
+  /** memberCount per squad-leader id from previous recompute, used to detect losses */
+  prevCounts: Record<string, number>;
 }
 
 function getSquadState(state: GameState): SquadState {
   const s = state.script as Record<string, unknown>;
   let st = s.__squads as SquadState | undefined;
-  if (!st) { st = { lastTime: -999, squads: [] }; s.__squads = st; }
+  if (!st) { st = { lastTime: -999, squads: [], prevCounts: {} }; s.__squads = st; }
   return st;
 }
 
@@ -70,18 +72,21 @@ function clusterEnemies(state: GameState): Squad[] {
   return squads;
 }
 
-/** Pick squad role based on health, ammo, morale aggregate + threat field. */
+/** Pick squad role based on health, ammo, morale aggregate + threat + suppression. */
 function pickRole(squad: Squad, state: GameState): Role {
   const m = squad.members;
   const avgHealth = m.reduce((s, u) => s + u.health / u.maxHealth, 0) / m.length;
   const avgMorale = m.reduce((s, u) => s + u.morale, 0) / m.length;
+  const avgSuppression = m.reduce((s, u) => s + u.suppression, 0) / m.length;
   const localThreat = threatAt(state, 'enemy', squad.center.x, squad.center.y);
 
+  // Pinned-down squad: pull back to recover
+  if (avgSuppression > 0.55 && avgMorale < 0.55) return 'regroup';
   if (avgHealth < 0.35 || avgMorale < 0.3) return 'regroup';
   if (localThreat > 0.55 && avgHealth < 0.7) return 'support';
   // mixed-arms with vehicle = assault, infantry-heavy with known target = flank
   const hasVehicle = m.some(u => u.type === 'tank' || u.type === 'apc');
-  if (!hasVehicle && m.length >= 3) return 'flank';
+  if (!hasVehicle && m.length >= 3 && avgSuppression < 0.35) return 'flank';
   return 'assault';
 }
 
@@ -147,12 +152,26 @@ export function updateSquads(state: GameState, dt: number) {
     return;
   }
   st.lastTime = state.time;
-  st.squads = clusterEnemies(state);
+  const nextSquads = clusterEnemies(state);
+  const newCounts: Record<string, number> = {};
 
-  for (const sq of st.squads) {
+  for (const sq of nextSquads) {
     sq.role = pickRole(sq, state);
     sq.focus = pickFocus(sq, state);
     sq.rally = pickRally(sq, state);
+
+    // Casualty shock: if previous squad with similar leader had more members, dock morale
+    const leaderKey = sq.members[0]?.id ?? sq.id;
+    const prev = st.prevCounts[leaderKey] ?? sq.members.length;
+    const losses = Math.max(0, prev - sq.members.length);
+    if (losses > 0) {
+      const shock = Math.min(0.35, losses * 0.12);
+      for (const u of sq.members) {
+        u.morale = Math.max(0.05, u.morale - shock);
+        u.suppression = Math.min(1, u.suppression + shock * 0.5);
+      }
+    }
+    newCounts[leaderKey] = sq.members.length;
 
     // Stamp tags onto members for ai.ts to read
     for (const u of sq.members) {
@@ -162,16 +181,26 @@ export function updateSquads(state: GameState, dt: number) {
       tag._squadRole = sq.role;
     }
 
-    // For 'regroup' squads: if a member isn't already retreating and is far from rally, give a rally move.
+    // Regrouping squads: ordered retreat to rally
     if (sq.role === 'regroup' && sq.rally) {
       for (const u of sq.members) {
         if (u.order === 'retreat') continue;
         if (distance(u.pos, sq.rally) < 80) continue;
-        // Don't override active combat unless heavily damaged
-        if (u.attackTarget && u.health / u.maxHealth > 0.45) continue;
+        if (u.attackTarget && u.health / u.maxHealth > 0.45 && u.suppression < 0.5) continue;
         setDestination(u, state, sq.rally);
         u.order = 'attack_move';
       }
     }
+
+    // Support squads near rally: accelerate morale/suppression recovery (in cover, catching breath)
+    if (sq.role === 'support') {
+      for (const u of sq.members) {
+        u.morale = Math.min(1, u.morale + dt * 0.06);
+        u.suppression = Math.max(0, u.suppression - dt * 0.08);
+      }
+    }
   }
+
+  st.squads = nextSquads;
+  st.prevCounts = newCounts;
 }
