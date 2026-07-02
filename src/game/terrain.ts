@@ -40,6 +40,7 @@ export function generateTerrain(layout: MapLayoutId = 'farmhouse_complex', seed:
     case 'village_crossroads': buildVillageCrossroads(grid, rand); break;
     case 'forest_outpost': buildForestOutpost(grid, rand); break;
     case 'desert_road': buildDesertRoad(grid, rand); break;
+    case 'leipalingis_region': buildLeipalingisRegion(grid, rand); break;
   }
 
   applyWaterElevation(grid);
