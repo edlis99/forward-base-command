@@ -1,7 +1,7 @@
 import { UnitStats, UnitType } from './types';
 
-export const MAP_COLS = 96;
-export const MAP_ROWS = 64;
+export const MAP_COLS = 160;
+export const MAP_ROWS = 120;
 export const CELL_SIZE = 32;
 export const MAP_WIDTH = MAP_COLS * CELL_SIZE;
 export const MAP_HEIGHT = MAP_ROWS * CELL_SIZE;
