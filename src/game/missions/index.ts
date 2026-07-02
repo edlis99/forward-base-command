@@ -1,150 +1,217 @@
-import { MissionDef, GameState, Unit, CapturePoint, Objective } from '../types';
+import { MissionDef, GameState, Unit, DeploymentContext, DeploymentTown, Position } from '../types';
 import { createUnit, distance, setDestination } from '../units';
 import { CELL_SIZE } from '../constants';
+import { LEIPALINGIS_ANCHORS } from '../terrain';
 
 const tx = (gx: number) => gx * CELL_SIZE + CELL_SIZE / 2;
 const ty = (gy: number) => gy * CELL_SIZE + CELL_SIZE / 2;
 
-function placeGarrison(state: Partial<GameState>, gx: number, gy: number) {
-  const units: Unit[] = state.units!;
-  const inf1 = createUnit('infantry', 'enemy', tx(gx), ty(gy)); inf1.stance = 'defend'; inf1.order = 'hold_position'; inf1.homePos = { ...inf1.pos };
-  const inf2 = createUnit('infantry', 'enemy', tx(gx + 1), ty(gy + 1)); inf2.stance = 'defend'; inf2.order = 'hold_position'; inf2.homePos = { ...inf2.pos };
-  const inf3 = createUnit('infantry', 'enemy', tx(gx - 1), ty(gy)); inf3.stance = 'defend'; inf3.order = 'hold_position'; inf3.homePos = { ...inf3.pos };
-  units.push(inf1, inf2, inf3);
+const DEPLOYMENT_TOWNS: DeploymentTown[] = [
+  {
+    id: 'jovaisiai', name: 'Jovaišiai',
+    pos: { x: tx(LEIPALINGIS_ANCHORS.jovaisiai.x), y: ty(LEIPALINGIS_ANCHORS.jovaisiai.y) },
+    approach: 'North-west axis · road corridor to Leipalingis',
+    distanceKm: 4.2, risk: 'med',
+    terrainNote: 'Paved road descent through hedgerow fields; exposed final 800m.',
+    advantage: 'Fastest paved approach for armour; forest flank left.',
+  },
+  {
+    id: 'didziasalis', name: 'Didžiasalis',
+    pos: { x: tx(LEIPALINGIS_ANCHORS.didziasalis.x), y: ty(LEIPALINGIS_ANCHORS.didziasalis.y) },
+    approach: 'North-east axis · long open field',
+    distanceKm: 5.1, risk: 'high',
+    terrainNote: 'Wide agricultural belt with hedgerow lanes; ideal armour ground but exposed.',
+    advantage: 'Best sightlines for tanks; risky for infantry alone.',
+  },
+  {
+    id: 'versiai', name: 'Veršiai',
+    pos: { x: tx(LEIPALINGIS_ANCHORS.versiai.x), y: ty(LEIPALINGIS_ANCHORS.versiai.y) },
+    approach: 'South-east axis · must cross the stream',
+    distanceKm: 5.4, risk: 'med',
+    terrainNote: 'Rolling forests and one bridge crossing; excellent concealment for infantry.',
+    advantage: 'Concealed infantry approach; harder for armour (single bridge).',
+  },
+  {
+    id: 'straciunai', name: 'Stračiūnai',
+    pos: { x: tx(LEIPALINGIS_ANCHORS.straciunai.x), y: ty(LEIPALINGIS_ANCHORS.straciunai.y) },
+    approach: 'South-west axis · mixed dirt tracks',
+    distanceKm: 4.6, risk: 'low',
+    terrainNote: 'Short farm tracks through orchards and low ground.',
+    advantage: 'Quiet approach; enemy pickets sparse this side.',
+  },
+  {
+    id: 'seirijai', name: 'Seirijai',
+    pos: { x: tx(LEIPALINGIS_ANCHORS.seirijai.x), y: ty(LEIPALINGIS_ANCHORS.seirijai.y) },
+    approach: 'Western reserve axis · longest march',
+    distanceKm: 8.7, risk: 'low',
+    terrainNote: 'Must cross river bridge, then long road through forest belts.',
+    advantage: 'Safest staging; flexible — flank north or south. Slowest to contact.',
+  },
+];
+
+/** Spawn a mixed enemy garrison inside/around Leipalingis + outer strongpoints. */
+function garrisonLeipalingis(units: Unit[]) {
+  const L = LEIPALINGIS_ANCHORS.leipalingis;
+  // Inner defenders: infantry in trenches around town
+  const inner: Array<[number, number]> = [
+    [L.x - 6, L.y - 14], [L.x, L.y - 14], [L.x + 6, L.y - 14],
+    [L.x - 6, L.y + 14], [L.x, L.y + 14], [L.x + 6, L.y + 14],
+    [L.x - 14, L.y - 4], [L.x - 14, L.y + 4],
+    [L.x + 14, L.y - 4], [L.x + 14, L.y + 4],
+    [L.x - 2, L.y - 8], [L.x + 2, L.y + 8], [L.x, L.y],
+  ];
+  for (const [gx, gy] of inner) {
+    const u = createUnit('infantry', 'enemy', tx(gx), ty(gy));
+    u.stance = 'defend'; u.order = 'hold_position'; u.homePos = { ...u.pos };
+    units.push(u);
+  }
+  // Armour reserve inside town
+  const t1 = createUnit('tank', 'enemy', tx(L.x - 4), ty(L.y + 2));
+  t1.stance = 'defend'; t1.order = 'hold_position'; t1.homePos = { ...t1.pos };
+  const t2 = createUnit('tank', 'enemy', tx(L.x + 4), ty(L.y - 2));
+  t2.stance = 'defend'; t2.order = 'hold_position'; t2.homePos = { ...t2.pos };
+  const apc = createUnit('apc', 'enemy', tx(L.x), ty(L.y + 6));
+  apc.stance = 'defend'; apc.order = 'hold_position'; apc.homePos = { ...apc.pos };
+  units.push(t1, t2, apc);
+
+  // Forward outposts / pickets along each approach
+  const outposts: Array<[number, number, 'infantry' | 'apc']> = [
+    [70, 40, 'infantry'], [70, 40, 'infantry'],       // NW picket (Jovaišiai axis)
+    [108, 42, 'infantry'], [108, 42, 'apc'],          // NE picket
+    [108, 80, 'infantry'], [108, 80, 'infantry'],     // SE picket
+    [72, 78, 'infantry'], [72, 78, 'apc'],            // SW picket
+    [78, 60, 'infantry'],                              // west screen
+  ];
+  for (const [gx, gy, t] of outposts) {
+    const u = createUnit(t, 'enemy', tx(gx), ty(gy));
+    u.stance = 'defend';
+    u.order = 'patrol';
+    u.patrolPoints = [{ x: tx(gx - 2), y: ty(gy) }, { x: tx(gx + 2), y: ty(gy) }];
+    u.patrolIndex = 1;
+    units.push(u);
+  }
 }
 
-export const assaultMission: MissionDef = {
-  id: 'assault',
-  name: 'Operation Iron Gate — Seize the Farmhouse',
-  summary: 'Reduce the reinforced farmhouse held by an entrenched enemy platoon.',
-  briefing: 'At first light, recon confirmed enemy forward observers operating from the Kovalenko farmstead — a stone-walled compound dominating the river ford. They have been calling artillery on our supply road for six days. Command wants the compound silenced before noon. You lead a depleted rifle section with one tank and an APC up the western approach. There are no reinforcements. Use the bocage and the creek line for cover, take the perimeter trench first, then breach the gate. Every soldier counts.',
+/** Spawn the player force at the chosen deployment town in a rough formation. */
+function spawnPlayerForce(units: Unit[], town: DeploymentTown, comp: { infantry: number; tank: number; apc: number }) {
+  const cx = town.pos.x, cy = town.pos.y;
+  // aim toward Leipalingis
+  const L = { x: tx(LEIPALINGIS_ANCHORS.leipalingis.x), y: ty(LEIPALINGIS_ANCHORS.leipalingis.y) };
+  const ang = Math.atan2(L.y - cy, L.x - cx);
+  const fwdX = Math.cos(ang), fwdY = Math.sin(ang);
+  const rightX = -fwdY, rightY = fwdX;
+  let slot = 0;
+  const place = (type: 'infantry' | 'tank' | 'apc') => {
+    // spread out in a shallow arc behind town centre
+    const row = Math.floor(slot / 5);
+    const col = (slot % 5) - 2;
+    const px = cx + rightX * col * 24 - fwdX * (60 + row * 32);
+    const py = cy + rightY * col * 24 - fwdY * (60 + row * 32);
+    const u = createUnit(type, 'player', px, py);
+    u.facing = ang;
+    u.stance = 'defend';
+    units.push(u);
+    slot++;
+  };
+  for (let i = 0; i < comp.infantry; i++) place('infantry');
+  for (let i = 0; i < comp.tank; i++) place('tank');
+  for (let i = 0; i < comp.apc; i++) place('apc');
+}
+
+const briefing = [
+  'OPERATION SILVER BIRCH — RECAPTURE LEIPALINGIS.',
+  '',
+  'Two weeks ago a mechanised enemy company seized the town of Leipalingis and dug in. They now control the crossroads, the church square and the perimeter tree line, and hold hasty trenches on every approach. Civilian population has evacuated to the surrounding villages.',
+  '',
+  'You command a battalion detachment staging out of the ring of villages — Jovaišiai, Didžiasalis, Veršiai, Stračiūnai and (farthest west) Seirijai. Each village offers a different axis of attack: paved road, open field, forest cover, quiet farm track, or a long safe march. There is no rush. Recon, manoeuvre, use terrain — then retake the town.',
+  '',
+  'RULES OF ENGAGEMENT: preserve your force. Combined arms wins here. Infantry alone will bleed in the open fields; armour alone will die in the trench belt and forests. Use the tactical pause (SPACE) and slow-time (1/2/3/4) to think.',
+  '',
+  'OBJECTIVE: Neutralise the Leipalingis garrison and hold the town centre.',
+].join('\n');
+
+export const leipalingisMission: MissionDef = {
+  id: 'leipalingis',
+  name: 'Operation Silver Birch — Recapture Leipalingis',
+  summary: 'Advance from a surrounding village, break the garrison, retake the town centre.',
+  briefing,
   rewardKills: false,
-  mapLayout: 'farmhouse_complex',
-  mapSeed: 7,
-  init: () => {
-    const s: Partial<GameState> = { units: [], objectives: [], capturePoints: [], reinforcementBudget: 0, rewardCP: 0, detectionMultiplier: 1, script: {} };
-    // Player force: 4 infantry, 1 tank, 1 APC at west
-    s.units!.push(createUnit('infantry', 'player', tx(4), ty(18)));
-    s.units!.push(createUnit('infantry', 'player', tx(4), ty(20)));
-    s.units!.push(createUnit('infantry', 'player', tx(4), ty(22)));
-    s.units!.push(createUnit('infantry', 'player', tx(5), ty(20)));
-    s.units!.push(createUnit('tank', 'player', tx(3), ty(20)));
-    s.units!.push(createUnit('apc', 'player', tx(3), ty(22)));
+  mapLayout: 'leipalingis_region',
+  mapSeed: 1917,
+  deploymentTowns: DEPLOYMENT_TOWNS,
+  defaultComposition: { infantry: 8, tank: 2, apc: 2 },
+  init: (ctx?: DeploymentContext) => {
+    const s: Partial<GameState> = {
+      units: [], objectives: [], capturePoints: [],
+      reinforcementBudget: 0, rewardCP: 0,
+      detectionMultiplier: 1, script: {},
+    };
+    const town = DEPLOYMENT_TOWNS.find(t => t.id === ctx?.town) ?? DEPLOYMENT_TOWNS[0];
+    const comp = ctx?.composition ?? { infantry: 8, tank: 2, apc: 2 };
+    spawnPlayerForce(s.units!, town, comp);
+    garrisonLeipalingis(s.units!);
 
-    // Enemy garrison at farmhouse (center urban cluster ~28..32, 18..22)
-    placeGarrison(s, 28, 18);
-    placeGarrison(s, 32, 18);
-    placeGarrison(s, 30, 22);
-    const tank = createUnit('tank', 'enemy', tx(30), ty(20)); tank.stance = 'defend'; tank.order = 'hold_position'; tank.homePos = { ...tank.pos };
-    s.units!.push(tank);
-    // Outer pickets patrol
-    const patrolA = createUnit('infantry', 'enemy', tx(22), ty(15));
-    patrolA.stance = 'defend'; patrolA.order = 'patrol';
-    patrolA.patrolPoints = [{ x: tx(22), y: ty(15) }, { x: tx(22), y: ty(25) }];
-    patrolA.patrolIndex = 1;
-    s.units!.push(patrolA);
+    const L = LEIPALINGIS_ANCHORS.leipalingis;
+    s.capturePoints!.push({
+      id: 'town_centre',
+      pos: { x: tx(L.x), y: ty(L.y) },
+      radius: 140,
+      owner: 'enemy', progress: -1,
+      label: 'Leipalingis Town Centre',
+    });
 
-    s.objectives!.push({ id: 'destroy_garrison', description: 'Eliminate all enemy units in the farmhouse area', status: 'active' });
-    s.objectives!.push({ id: 'preserve_tank', description: 'Keep the friendly tank alive', status: 'active', optional: true });
-
-    return s;
-  },
-  update: (state: GameState) => {
-    const enemiesAlive = state.units.some(u => u.alive && u.team === 'enemy');
-    const destroy = state.objectives.find(o => o.id === 'destroy_garrison');
-    if (destroy && destroy.status === 'active' && !enemiesAlive) {
-      destroy.status = 'complete';
-      state.gameOver = true; state.gameResult = 'win';
-      state.eventLog.unshift({ message: 'Farmhouse secured. Victory.', time: state.time, type: 'objective' });
-    }
-    const tank = state.units.find(u => u.type === 'tank' && u.team === 'player');
-    const tankObj = state.objectives.find(o => o.id === 'preserve_tank');
-    if (tankObj && tankObj.status === 'active' && (!tank || !tank.alive)) tankObj.status = 'failed';
-    const anyPlayer = state.units.some(u => u.alive && u.team === 'player');
-    if (!anyPlayer) { state.gameOver = true; state.gameResult = 'lose'; }
-  },
-};
-
-export const defendMission: MissionDef = {
-  id: 'defend',
-  name: 'Hold the Line — Stary Most',
-  summary: 'Defend the village crossroads against four mechanised waves.',
-  briefing: 'The village of Stary Most sits astride the only paved crossroads for thirty kilometres. If it falls, the enemy armoured column rolls straight into our rear. Civilians evacuated overnight. You inherit prepared sandbag lines, two trench segments and the plazas. Intel expects four escalating waves from the east — infantry, then mechanised, then armour. Command has authorised kill-reward fire support: every confirmed kill builds reinforcement credit. Lose either plaza and the line breaks.',
-  rewardKills: true,
-  mapLayout: 'village_crossroads',
-  mapSeed: 11,
-  init: () => {
-    const s: Partial<GameState> = { units: [], objectives: [], capturePoints: [], reinforcementBudget: 200, rewardCP: 100, detectionMultiplier: 1, script: { wave: 0, waveTimer: 8, totalWaves: 4 } };
-    // Player force at center
-    s.units!.push(createUnit('infantry', 'player', tx(27), ty(20)));
-    s.units!.push(createUnit('infantry', 'player', tx(29), ty(18)));
-    s.units!.push(createUnit('infantry', 'player', tx(31), ty(18)));
-    s.units!.push(createUnit('infantry', 'player', tx(33), ty(20)));
-    s.units!.push(createUnit('tank', 'player', tx(30), ty(22)));
-    s.units!.push(createUnit('apc', 'player', tx(28), ty(22)));
-
-    const cp1: CapturePoint = { id: 'cp_north', pos: { x: tx(30), y: ty(15) }, radius: 80, owner: 'player', progress: 1, label: 'North Plaza' };
-    const cp2: CapturePoint = { id: 'cp_south', pos: { x: tx(30), y: ty(25) }, radius: 80, owner: 'player', progress: 1, label: 'South Plaza' };
-    s.capturePoints!.push(cp1, cp2);
-
-    s.objectives!.push({ id: 'survive', description: 'Hold both capture points until 4 waves are repelled', status: 'active' });
-    s.objectives!.push({ id: 'no_loss', description: 'Do not lose either capture point', status: 'active' });
-
+    s.objectives!.push({
+      id: 'capture_centre',
+      description: 'Capture and hold Leipalingis town centre',
+      status: 'active',
+    });
+    s.objectives!.push({
+      id: 'reduce_garrison',
+      description: 'Reduce the enemy garrison (defeat majority of defenders)',
+      status: 'active',
+    });
+    s.objectives!.push({
+      id: 'preserve_armour',
+      description: 'Keep at least one friendly tank alive',
+      status: 'active', optional: true,
+    });
     return s;
   },
   update: (state: GameState, dt: number) => {
-    const script = state.script as { wave: number; waveTimer: number; totalWaves: number };
-    // Capture progression
+    // Capture progress at town centre
     for (const cp of state.capturePoints) {
+      if (cp.id !== 'town_centre') continue;
       const here = state.units.filter(u => u.alive && distance(u.pos, cp.pos) < cp.radius);
-      const playerCount = here.filter(u => u.team === 'player').length;
-      const enemyCount = here.filter(u => u.team === 'enemy').length;
-      if (playerCount > enemyCount) cp.progress = Math.min(1, cp.progress + dt * 0.15);
-      else if (enemyCount > playerCount) cp.progress = Math.max(-1, cp.progress - dt * 0.15);
-      const prevOwner = cp.owner;
+      const p = here.filter(u => u.team === 'player').length;
+      const e = here.filter(u => u.team === 'enemy').length;
+      if (p > e) cp.progress = Math.min(1, cp.progress + dt * 0.05);
+      else if (e > p) cp.progress = Math.max(-1, cp.progress - dt * 0.03);
       if (cp.progress >= 0.9) cp.owner = 'player';
       else if (cp.progress <= -0.9) cp.owner = 'enemy';
-      if (prevOwner !== cp.owner && cp.owner === 'enemy') {
-        state.eventLog.unshift({ message: `${cp.label} LOST!`, time: state.time, type: 'objective' });
-        const noLoss = state.objectives.find(o => o.id === 'no_loss');
-        if (noLoss) noLoss.status = 'failed';
-        state.gameOver = true; state.gameResult = 'lose';
-      }
     }
 
-    // Wave spawner
-    if (script.wave < script.totalWaves) {
-      script.waveTimer -= dt;
-      if (script.waveTimer <= 0) {
-        script.wave++;
-        script.waveTimer = 35;
-        const fromX = tx(58);
-        const yBase = 18 + (script.wave % 2 === 0 ? 4 : 0);
-        const composition: Array<'infantry' | 'tank' | 'apc'> = ['infantry', 'infantry', 'infantry'];
-        if (script.wave >= 2) composition.push('apc');
-        if (script.wave >= 3) composition.push('tank');
-        if (script.wave >= 4) composition.push('tank', 'infantry');
-        let off = -composition.length * 20;
-        for (const t of composition) {
-          const u = createUnit(t, 'enemy', fromX, ty(yBase) + off);
-          u.stance = 'aggressive'; u.order = 'attack_move';
-          setDestination(u, state, { x: tx(30), y: ty(20) });
-          state.units.push(u);
-          off += 40;
-        }
-        state.eventLog.unshift({ message: `Wave ${script.wave}/${script.totalWaves} incoming from the east`, time: state.time, type: 'spawn' });
-      }
-    } else {
-      // All waves done — survive remaining enemies
-      const enemiesAlive = state.units.some(u => u.alive && u.team === 'enemy');
-      if (!enemiesAlive) {
-        const survive = state.objectives.find(o => o.id === 'survive');
-        if (survive && survive.status === 'active') {
-          survive.status = 'complete';
-          state.gameOver = true; state.gameResult = 'win';
-          state.eventLog.unshift({ message: 'Settlement held. Victory.', time: state.time, type: 'objective' });
-        }
-      }
+    const enemies = state.units.filter(u => u.alive && u.team === 'enemy');
+    const enemyCount = enemies.length;
+    const initialEnemies = (state.script.__initialEnemies as number | undefined) ??
+      ((state.script.__initialEnemies = enemyCount) as number);
+    const reduced = enemyCount / initialEnemies < 0.25;
+    const centreHeld = state.capturePoints.find(c => c.id === 'town_centre')?.owner === 'player';
+
+    const reduceObj = state.objectives.find(o => o.id === 'reduce_garrison');
+    if (reduceObj && reduceObj.status === 'active' && reduced) reduceObj.status = 'complete';
+
+    const capObj = state.objectives.find(o => o.id === 'capture_centre');
+    if (capObj && capObj.status === 'active' && centreHeld) capObj.status = 'complete';
+
+    const armourObj = state.objectives.find(o => o.id === 'preserve_armour');
+    if (armourObj && armourObj.status === 'active') {
+      const tankAlive = state.units.some(u => u.alive && u.team === 'player' && u.type === 'tank');
+      if (!tankAlive) armourObj.status = 'failed';
+    }
+
+    if (capObj?.status === 'complete' && reduceObj?.status === 'complete' && !state.gameOver) {
+      state.gameOver = true; state.gameResult = 'win';
+      state.eventLog.unshift({ message: 'Leipalingis retaken. Silver Birch complete.', time: state.time, type: 'objective' });
     }
 
     const anyPlayer = state.units.some(u => u.alive && u.team === 'player');
@@ -152,174 +219,6 @@ export const defendMission: MissionDef = {
   },
 };
 
-export const reconMission: MissionDef = {
-  id: 'recon',
-  name: 'Silent Eyes — Recon & Extract',
-  summary: 'Slip past patrols, observe three forward outposts and exfil through the forest.',
-  briefing: 'A three-man scout team is inserted west of the river. Forward HQ needs eyes on three suspected forward outposts before the morning bombardment. Stay in hold-fire — a single shot brings the QRF and the whole forest down on you. Use trails, hedgerows and tall grass; cross the bridge only if you must. Tag all three positions, then exfil at the eastern LZ. Bring everyone home.',
-  rewardKills: false,
-  mapLayout: 'forest_outpost',
-  mapSeed: 23,
-  init: () => {
-    const s: Partial<GameState> = { units: [], objectives: [], capturePoints: [], reinforcementBudget: 0, rewardCP: 0, detectionMultiplier: 0.7, script: { alarmed: false, recons: [false, false, false] } };
-    // Recon team: 3 infantry, hold-fire
-    for (let i = 0; i < 3; i++) {
-      const u = createUnit('infantry', 'player', tx(4), ty(18 + i * 2));
-      u.stance = 'hold_fire';
-      s.units!.push(u);
-    }
-    // Recon points + extraction shown via capturePoints (reused as map markers)
-    s.capturePoints!.push({ id: 'recon_1', pos: { x: tx(20), y: ty(10) }, radius: 60, owner: 'neutral', progress: 0, label: 'Recon 1' });
-    s.capturePoints!.push({ id: 'recon_2', pos: { x: tx(35), y: ty(28) }, radius: 60, owner: 'neutral', progress: 0, label: 'Recon 2' });
-    s.capturePoints!.push({ id: 'recon_3', pos: { x: tx(48), y: ty(14) }, radius: 60, owner: 'neutral', progress: 0, label: 'Recon 3' });
-    s.capturePoints!.push({ id: 'extract', pos: { x: tx(56), y: ty(36) }, radius: 60, owner: 'player', progress: 1, label: 'Extract' });
-
-    // Enemy patrols + garrison
-    const placePatrol = (x1: number, y1: number, x2: number, y2: number) => {
-      const u = createUnit('infantry', 'enemy', tx(x1), ty(y1));
-      u.stance = 'defend'; u.order = 'patrol';
-      u.patrolPoints = [{ x: tx(x1), y: ty(y1) }, { x: tx(x2), y: ty(y2) }];
-      u.patrolIndex = 1;
-      s.units!.push(u);
-    };
-    placePatrol(18, 8, 24, 8);
-    placePatrol(33, 26, 38, 26);
-    placePatrol(46, 12, 50, 16);
-    const apc = createUnit('apc', 'enemy', tx(48), ty(20)); apc.stance = 'defend'; apc.order = 'hold_position'; apc.homePos = { ...apc.pos };
-    s.units!.push(apc);
-
-    s.objectives!.push({ id: 'recon_all', description: 'Observe all 3 recon points (move within range)', status: 'active' });
-    s.objectives!.push({ id: 'extract', description: 'Reach the extraction point', status: 'active' });
-    s.objectives!.push({ id: 'undetected', description: 'Remain undetected', status: 'active', optional: true });
-
-    return s;
-  },
-  update: (state: GameState, dt: number) => {
-    const script = state.script as { alarmed: boolean; recons: boolean[] };
-    const playerUnits = state.units.filter(u => u.alive && u.team === 'player');
-
-    // Recon checks
-    const reconIds = ['recon_1', 'recon_2', 'recon_3'];
-    reconIds.forEach((id, i) => {
-      if (script.recons[i]) return;
-      const pt = state.capturePoints.find(c => c.id === id);
-      if (!pt) return;
-      if (playerUnits.some(u => distance(u.pos, pt.pos) < pt.radius)) {
-        script.recons[i] = true;
-        pt.owner = 'player'; pt.progress = 1;
-        state.eventLog.unshift({ message: `${pt.label} observed`, time: state.time, type: 'objective' });
-      }
-    });
-    if (script.recons.every(Boolean)) {
-      const o = state.objectives.find(o => o.id === 'recon_all');
-      if (o) o.status = 'complete';
-    }
-
-    // Detection alarm
-    if (!script.alarmed && playerUnits.some(u => u.spottedByEnemy)) {
-      script.alarmed = true;
-      const undetected = state.objectives.find(o => o.id === 'undetected');
-      if (undetected) undetected.status = 'failed';
-      // Spawn hunters
-      const t1 = createUnit('apc', 'enemy', tx(58), ty(20)); t1.stance = 'aggressive'; t1.order = 'attack_move';
-      const t2 = createUnit('infantry', 'enemy', tx(58), ty(22)); t2.stance = 'aggressive'; t2.order = 'attack_move';
-      const t3 = createUnit('infantry', 'enemy', tx(58), ty(18)); t3.stance = 'aggressive'; t3.order = 'attack_move';
-      const t4 = createUnit('infantry', 'enemy', tx(58), ty(24)); t4.stance = 'aggressive'; t4.order = 'attack_move';
-      for (const u of [t1, t2, t3, t4]) {
-        const tgt = playerUnits[0];
-        if (tgt) setDestination(u, state, tgt.pos);
-        state.units.push(u);
-      }
-      state.eventLog.unshift({ message: 'ALARM! Enemy QRF inbound', time: state.time, type: 'contact' });
-    }
-
-    // Extraction
-    const extract = state.capturePoints.find(c => c.id === 'extract');
-    const reconComplete = state.objectives.find(o => o.id === 'recon_all')?.status === 'complete';
-    if (extract && reconComplete) {
-      const atExtract = playerUnits.filter(u => distance(u.pos, extract.pos) < extract.radius);
-      if (atExtract.length === playerUnits.length && atExtract.length > 0) {
-        const exObj = state.objectives.find(o => o.id === 'extract');
-        if (exObj) exObj.status = 'complete';
-        state.gameOver = true; state.gameResult = 'win';
-        state.eventLog.unshift({ message: 'Extracted. Mission complete.', time: state.time, type: 'objective' });
-      }
-    }
-    if (playerUnits.length === 0) { state.gameOver = true; state.gameResult = 'lose'; }
-  },
-};
-
-export const ambushMission: MissionDef = {
-  id: 'ambush',
-  name: 'Dust & Steel — Convoy Ambush',
-  summary: 'Pre-position in the dunes and destroy an enemy supply convoy before it escapes east.',
-  briefing: 'An enemy supply convoy is moving along the old desert highway at dawn — fuel, ammunition and a command vehicle for their forward brigade. If it reaches the eastern depot, our offensive stalls for a week. You have twelve minutes before contact to deploy infantry in the tall grass and dig in your armour behind the dunes and boulder fields. Hold fire until they enter the kill zone. One vehicle escapes and the operation is a failure.',
-  rewardKills: false,
-  mapLayout: 'desert_road',
-  mapSeed: 31,
-  init: () => {
-    const s: Partial<GameState> = { units: [], objectives: [], capturePoints: [], reinforcementBudget: 0, rewardCP: 0, detectionMultiplier: 0.4, script: { spawned: false, convoyTimer: 12 } };
-    // Player force around the road
-    s.units!.push(createUnit('infantry', 'player', tx(28), ty(15)));
-    s.units!.push(createUnit('infantry', 'player', tx(32), ty(15)));
-    s.units!.push(createUnit('infantry', 'player', tx(36), ty(24)));
-    s.units!.push(createUnit('tank', 'player', tx(40), ty(14)));
-    s.units!.push(createUnit('tank', 'player', tx(40), ty(26)));
-    s.units!.push(createUnit('apc', 'player', tx(36), ty(15)));
-    for (const u of s.units!) u.stance = 'hold_fire';
-
-    s.objectives!.push({ id: 'destroy_convoy', description: 'Destroy all convoy vehicles', status: 'active' });
-    s.objectives!.push({ id: 'no_escape', description: 'Do not let any vehicle reach the east exit', status: 'active' });
-
-    return s;
-  },
-  update: (state: GameState, dt: number) => {
-    const script = state.script as { spawned: boolean; convoyTimer: number };
-    if (!script.spawned) {
-      script.convoyTimer -= dt;
-      if (script.convoyTimer <= 0) {
-        script.spawned = true;
-        const convoyTypes: Array<'apc' | 'tank' | 'apc'> = ['apc', 'tank', 'apc'];
-        let off = 0;
-        for (const t of convoyTypes) {
-          const u = createUnit(t, 'enemy', tx(2) + off, ty(20));
-          u.stance = 'defend'; u.order = 'move';
-          setDestination(u, state, { x: tx(58), y: ty(20) });
-          (u as Unit & { _convoy?: boolean })._convoy = true;
-          state.units.push(u);
-          off -= 50;
-        }
-        state.eventLog.unshift({ message: 'Convoy spotted approaching from the west', time: state.time, type: 'contact' });
-      }
-    }
-
-    // Check escape
-    for (const u of state.units) {
-      if (u.alive && u.team === 'enemy' && (u as Unit & { _convoy?: boolean })._convoy && u.pos.x > tx(57)) {
-        const noEscape = state.objectives.find(o => o.id === 'no_escape');
-        if (noEscape) noEscape.status = 'failed';
-        state.gameOver = true; state.gameResult = 'lose';
-        state.eventLog.unshift({ message: 'A convoy vehicle escaped. Mission failed.', time: state.time, type: 'objective' });
-        return;
-      }
-    }
-
-    if (script.spawned) {
-      const convoyAlive = state.units.some(u => u.alive && u.team === 'enemy' && (u as Unit & { _convoy?: boolean })._convoy);
-      if (!convoyAlive) {
-        const o = state.objectives.find(o => o.id === 'destroy_convoy');
-        if (o) o.status = 'complete';
-        state.gameOver = true; state.gameResult = 'win';
-        state.eventLog.unshift({ message: 'Convoy destroyed. Victory.', time: state.time, type: 'objective' });
-      }
-    }
-
-    const anyPlayer = state.units.some(u => u.alive && u.team === 'player');
-    if (!anyPlayer) { state.gameOver = true; state.gameResult = 'lose'; }
-  },
-};
-
-export const MISSIONS: MissionDef[] = [assaultMission, defendMission, reconMission, ambushMission];
-export function getMission(id: string): MissionDef {
-  return MISSIONS.find(m => m.id === id) ?? assaultMission;
-}
+export const MISSIONS: MissionDef[] = [leipalingisMission];
+export function getMission(_id?: string): MissionDef { return leipalingisMission; }
+export { DEPLOYMENT_TOWNS };

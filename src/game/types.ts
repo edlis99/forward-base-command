@@ -7,9 +7,26 @@ export type TerrainType =
 export type Stance = 'hold_fire' | 'tight' | 'defend' | 'aggressive';
 export type OrderType = 'idle' | 'move' | 'attack_move' | 'attack' | 'hold_position' | 'retreat' | 'patrol' | 'entrench';
 export type FormationType = 'line' | 'wedge' | 'column';
-export type MissionId = 'assault' | 'defend' | 'recon' | 'ambush';
+export type MissionId = 'leipalingis';
 export type ObjectiveStatus = 'active' | 'complete' | 'failed';
-export type MapLayoutId = 'farmhouse_complex' | 'village_crossroads' | 'forest_outpost' | 'desert_road';
+export type MapLayoutId = 'farmhouse_complex' | 'village_crossroads' | 'forest_outpost' | 'desert_road' | 'leipalingis_region';
+export type DeploymentTownId = 'jovaisiai' | 'didziasalis' | 'versiai' | 'straciunai' | 'seirijai';
+
+export interface DeploymentTown {
+  id: DeploymentTownId;
+  name: string;
+  pos: Position;
+  approach: string;      // "North axis", etc
+  distanceKm: number;    // narrative distance
+  risk: 'low' | 'med' | 'high';
+  terrainNote: string;
+  advantage: string;
+}
+
+export interface DeploymentContext {
+  town: DeploymentTownId;
+  composition: { infantry: number; tank: number; apc: number };
+}
 
 export interface Position { x: number; y: number; }
 
@@ -99,11 +116,15 @@ export interface MissionDef {
   name: string;
   summary: string;
   briefing: string;
-  rewardKills: boolean;        // only defense mission true
+  rewardKills: boolean;
   mapLayout: MapLayoutId;
   mapSeed?: number;
-  init: () => Partial<GameState>; // returns starting units, objectives, captures, etc.
-  update: (state: GameState, dt: number) => void; // mission script tick
+  /** Deployment towns available for this mission (Leipalingis operation). */
+  deploymentTowns?: DeploymentTown[];
+  /** Default composition offered to the player if none chosen. */
+  defaultComposition?: { infantry: number; tank: number; apc: number };
+  init: (ctx?: DeploymentContext) => Partial<GameState>;
+  update: (state: GameState, dt: number) => void;
 }
 
 export interface CapturePoint {
@@ -143,7 +164,11 @@ export interface GameState {
   gameOver: boolean; gameResult: 'win' | 'lose' | null;
   time: number;
   paused: boolean;
+  /** Tactical time control: 0.25 = very slow, 0.5 = slow, 1 = normal, 2 = fast. */
+  timeScale: number;
   mission: MissionDef;
+  /** Chosen deployment town for the Leipalingis operation (if applicable). */
+  deployment?: DeploymentContext;
   objectives: Objective[];
   capturePoints: CapturePoint[];
   reinforcementBudget: number;

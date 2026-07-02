@@ -40,6 +40,7 @@ export function generateTerrain(layout: MapLayoutId = 'farmhouse_complex', seed:
     case 'village_crossroads': buildVillageCrossroads(grid, rand); break;
     case 'forest_outpost': buildForestOutpost(grid, rand); break;
     case 'desert_road': buildDesertRoad(grid, rand); break;
+    case 'leipalingis_region': buildLeipalingisRegion(grid, rand); break;
   }
 
   applyWaterElevation(grid);
@@ -225,7 +226,223 @@ function buildDesertRoad(grid: TerrainCell[][], rand: () => number) {
   raiseArea(grid, 70, 8, 3);
 }
 
+// ============================== LEIPALINGIS REGION ==============================
+/**
+ * Large-scale Lithuanian rural region for the Recapture Leipalingis operation.
+ * 160x120 cells. Central town Leipalingis is the objective; five deployment
+ * villages spread around it, connected by roads and separated by forests,
+ * lakes, hedgerow-lined fields and hills. All terrain has tactical meaning.
+ */
+export const LEIPALINGIS_ANCHORS = {
+  leipalingis:  { x: 90, y: 60 },   // main objective, dead centre-east
+  jovaisiai:    { x: 45, y: 22 },   // NW
+  didziasalis:  { x: 130, y: 22 },  // NE
+  versiai:      { x: 130, y: 98 },  // SE
+  straciunai:   { x: 45, y: 98 },   // SW
+  seirijai:     { x: 12, y: 60 },   // far west (long approach)
+};
+
+function buildLeipalingisRegion(grid: TerrainCell[][], rand: () => number) {
+  // Base ground: patchy fields with scattered tall grass
+  scatterGrass(grid, rand, 0.10);
+
+  // ---------- Large forest belts (concealment / no-vehicle zones) ----------
+  const forestBlobs: Array<[number, number, number]> = [
+    [22, 45, 8], [28, 75, 9], [60, 15, 7], [65, 90, 8],
+    [105, 12, 6], [115, 45, 7], [110, 80, 8], [140, 60, 7],
+    [78, 35, 5], [78, 85, 5], [35, 60, 6], [55, 55, 4],
+    [95, 25, 4], [95, 100, 5], [125, 75, 5], [18, 30, 5],
+    [18, 90, 5], [148, 25, 4], [148, 95, 4],
+  ];
+  for (const [x, y, r] of forestBlobs) placeForest(grid, rand, x, y, r);
+
+  // ---------- Rivers and lakes (movement blockers, need bridges) ----------
+  // North-south winding river east of Seirijai
+  for (let y = 0; y < MAP_ROWS; y++) {
+    const rx = 25 + Math.round(Math.sin(y * 0.12) * 4);
+    setTerrain(grid, rx, y, 'water');
+    setTerrain(grid, rx + 1, y, 'water');
+  }
+  // East-west stream south of Leipalingis
+  for (let x = 55; x < 145; x++) {
+    const ry = 78 + Math.round(Math.sin(x * 0.18) * 2);
+    if (grid[ry]?.[x]?.type !== 'water') setTerrain(grid, x, ry, 'water');
+    if (grid[ry + 1]?.[x]?.type !== 'water') setTerrain(grid, x, ry + 1, 'water');
+  }
+  // Two lakes
+  const lakes: Array<[number, number, number]> = [[70, 40, 4], [118, 30, 3], [50, 88, 3]];
+  for (const [cx, cy, r] of lakes) {
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (dx * dx + dy * dy <= r * r) setTerrain(grid, cx + dx, cy + dy, 'water');
+    }
+  }
+
+  // ---------- Road network (fast travel; also ambush zones) ----------
+  const roadBetween = (ax: number, ay: number, bx: number, by: number) => {
+    // simple Bresenham-style painted road, 2 cells wide, with a bridge (gravel) over water
+    const steps = Math.max(Math.abs(bx - ax), Math.abs(by - ay));
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const x = Math.round(ax + (bx - ax) * t);
+      const y = Math.round(ay + (by - ay) * t);
+      const cell = grid[y]?.[x];
+      if (!cell) continue;
+      if (cell.type === 'water') {
+        setTerrain(grid, x, y, 'gravel'); // bridge / causeway
+        if (grid[y]?.[x + 1]?.type === 'water') setTerrain(grid, x + 1, y, 'gravel');
+      } else {
+        setTerrain(grid, x, y, 'road');
+        if (grid[y]?.[x + 1]) setTerrain(grid, x + 1, y, 'road');
+      }
+    }
+  };
+  const A = LEIPALINGIS_ANCHORS;
+  roadBetween(A.seirijai.x, A.seirijai.y, A.jovaisiai.x, A.jovaisiai.y);
+  roadBetween(A.seirijai.x, A.seirijai.y, A.straciunai.x, A.straciunai.y);
+  roadBetween(A.jovaisiai.x, A.jovaisiai.y, A.leipalingis.x, A.leipalingis.y);
+  roadBetween(A.didziasalis.x, A.didziasalis.y, A.leipalingis.x, A.leipalingis.y);
+  roadBetween(A.versiai.x, A.versiai.y, A.leipalingis.x, A.leipalingis.y);
+  roadBetween(A.straciunai.x, A.straciunai.y, A.leipalingis.x, A.leipalingis.y);
+  roadBetween(A.jovaisiai.x, A.jovaisiai.y, A.didziasalis.x, A.didziasalis.y);
+  roadBetween(A.straciunai.x, A.straciunai.y, A.versiai.x, A.versiai.y);
+
+  // Dirt tracks (gravel = slower, cover-y flanking routes)
+  const dirtBetween = (ax: number, ay: number, bx: number, by: number) => {
+    const steps = Math.max(Math.abs(bx - ax), Math.abs(by - ay));
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const x = Math.round(ax + (bx - ax) * t);
+      const y = Math.round(ay + (by - ay) * t);
+      const cell = grid[y]?.[x];
+      if (!cell || cell.type === 'water' || cell.type === 'road' || cell.type === 'urban') continue;
+      setTerrain(grid, x, y, 'gravel');
+    }
+  };
+  dirtBetween(A.jovaisiai.x + 5, A.jovaisiai.y + 6, A.leipalingis.x - 15, A.leipalingis.y - 20);
+  dirtBetween(A.versiai.x - 5, A.versiai.y - 6, A.leipalingis.x + 5, A.leipalingis.y + 12);
+  dirtBetween(A.straciunai.x + 10, A.straciunai.y - 6, A.leipalingis.x - 10, A.leipalingis.y + 5);
+
+  // ---------- Hedgerow-lined fields between villages ----------
+  const hedgeLine = (ax: number, ay: number, bx: number, by: number) => {
+    const steps = Math.max(Math.abs(bx - ax), Math.abs(by - ay));
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const x = Math.round(ax + (bx - ax) * t);
+      const y = Math.round(ay + (by - ay) * t);
+      const c = grid[y]?.[x];
+      if (c && (c.type === 'open' || c.type === 'tall_grass')) setTerrain(grid, x, y, 'hedgerow');
+    }
+  };
+  hedgeLine(50, 35, 78, 35);
+  hedgeLine(60, 50, 82, 50);
+  hedgeLine(60, 70, 88, 70);
+  hedgeLine(102, 42, 122, 42);
+  hedgeLine(102, 68, 122, 68);
+  hedgeLine(50, 65, 65, 75);
+
+  // ---------- Elevation hills (LOS advantage) ----------
+  raiseArea(grid, 75, 30, 5);
+  raiseArea(grid, 108, 55, 6);
+  raiseArea(grid, 60, 85, 5);
+  raiseArea(grid, 135, 80, 5);
+  raiseArea(grid, 38, 70, 4);
+
+  // ---------- Isolated farmhouses / barns as cover ----------
+  const farms: Array<[number, number]> = [
+    [55, 30], [70, 55], [82, 45], [95, 78], [110, 40],
+    [120, 55], [125, 85], [50, 55], [38, 40], [140, 45],
+    [85, 20], [100, 90], [58, 22], [72, 90], [30, 55],
+  ];
+  for (const [x, y] of farms) {
+    if (grid[y]?.[x]?.type === 'open' || grid[y]?.[x]?.type === 'tall_grass') {
+      placeUrbanCluster(grid, rand, x, y, 1, 0.7);
+      if (rand() < 0.7) setTerrain(grid, x + 2, y, 'wall');
+      if (rand() < 0.7) setTerrain(grid, x - 2, y, 'wall');
+    }
+  }
+
+  // ---------- Deployment villages (small, walkable, defended-friendly) ----------
+  const village = (cx: number, cy: number, size: number) => {
+    for (let dy = -size; dy <= size; dy++) for (let dx = -size; dx <= size; dx++) {
+      if (Math.abs(dx) + Math.abs(dy) > size + 1) continue;
+      const x = cx + dx, y = cy + dy;
+      const cell = grid[y]?.[x];
+      if (!cell) continue;
+      if (cell.type === 'road' || cell.type === 'water') continue;
+      if (rand() < 0.55) setTerrain(grid, x, y, 'urban');
+      else if (rand() < 0.4) setTerrain(grid, x, y, 'wall');
+    }
+    // yard walls
+    for (let d = -size - 1; d <= size + 1; d++) {
+      if (rand() < 0.5) setTerrain(grid, cx + d, cy - size - 1, 'wall');
+      if (rand() < 0.5) setTerrain(grid, cx + d, cy + size + 1, 'wall');
+    }
+  };
+  village(A.jovaisiai.x, A.jovaisiai.y, 3);
+  village(A.didziasalis.x, A.didziasalis.y, 3);
+  village(A.versiai.x, A.versiai.y, 3);
+  village(A.straciunai.x, A.straciunai.y, 3);
+  village(A.seirijai.x, A.seirijai.y, 4); // larger, farthest
+
+  // ---------- LEIPALINGIS — main objective town (dense) ----------
+  const L = A.leipalingis;
+  // outer perimeter wall / hedgerow
+  for (let d = -12; d <= 12; d++) {
+    if (Math.abs(d) < 3) continue;
+    setTerrain(grid, L.x + d, L.y - 12, rand() < 0.5 ? 'wall' : 'hedgerow');
+    setTerrain(grid, L.x + d, L.y + 12, rand() < 0.5 ? 'wall' : 'hedgerow');
+    setTerrain(grid, L.x - 12, L.y + d, rand() < 0.5 ? 'wall' : 'hedgerow');
+    setTerrain(grid, L.x + 12, L.y + d, rand() < 0.5 ? 'wall' : 'hedgerow');
+  }
+  // central admin block
+  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) setTerrain(grid, L.x + dx, L.y + dy, 'urban');
+  // residential blocks
+  for (const [ox, oy] of [[-8, -6], [-8, 6], [8, -6], [8, 6], [0, -8], [0, 8], [-6, 0], [6, 0]] as [number, number][]) {
+    placeUrbanCluster(grid, rand, L.x + ox, L.y + oy, 2, 0.8);
+  }
+  // defensive rings
+  for (let dy = -8; dy <= 8; dy++) {
+    if (rand() < 0.35) setTerrain(grid, L.x - 10, L.y + dy, 'sandbag');
+    if (rand() < 0.35) setTerrain(grid, L.x + 10, L.y + dy, 'sandbag');
+  }
+  for (let dx = -8; dx <= 8; dx++) {
+    if (rand() < 0.35) setTerrain(grid, L.x + dx, L.y - 10, 'sandbag');
+    if (rand() < 0.35) setTerrain(grid, L.x + dx, L.y + 10, 'sandbag');
+  }
+  // enemy trench segments on all 4 approaches
+  for (let d = -6; d <= 6; d++) {
+    if (Math.abs(d) < 2) continue;
+    if (rand() < 0.7) setTerrain(grid, L.x + d, L.y - 14, 'trench');
+    if (rand() < 0.7) setTerrain(grid, L.x + d, L.y + 14, 'trench');
+    if (rand() < 0.7) setTerrain(grid, L.x - 14, L.y + d, 'trench');
+    if (rand() < 0.7) setTerrain(grid, L.x + 14, L.y + d, 'trench');
+  }
+  // craters and rubble from prior shelling
+  for (let i = 0; i < 40; i++) {
+    const x = L.x - 20 + Math.floor(rand() * 40);
+    const y = L.y - 20 + Math.floor(rand() * 40);
+    if (grid[y]?.[x]?.type === 'open' || grid[y]?.[x]?.type === 'tall_grass') {
+      setTerrain(grid, x, y, rand() < 0.5 ? 'crater' : 'rubble');
+    }
+  }
+  // mud strips near river
+  for (let i = 0; i < 60; i++) {
+    const x = 25 + Math.floor(rand() * 4);
+    const y = Math.floor(rand() * MAP_ROWS);
+    if (grid[y]?.[x]?.type === 'open') setTerrain(grid, x, y, 'mud');
+  }
+
+  // Scatter tall_grass and gravel for concealment / ambush spots along routes
+  for (let i = 0; i < 400; i++) {
+    const x = Math.floor(rand() * MAP_COLS);
+    const y = Math.floor(rand() * MAP_ROWS);
+    const c = grid[y]?.[x];
+    if (c?.type === 'open' && rand() < 0.5) setTerrain(grid, x, y, 'tall_grass');
+  }
+}
+
 // ============================== HELPERS ==============================
+
 
 function scatterGrass(grid: TerrainCell[][], rand: () => number, density: number) {
   for (let y = 0; y < MAP_ROWS; y++) for (let x = 0; x < MAP_COLS; x++) {
