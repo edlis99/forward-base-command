@@ -1,15 +1,20 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { GameState, InputState, UnitType, MissionDef, Stance } from '../game/types';
+import { GameState, InputState, UnitType, MissionDef, Stance, DeploymentContext } from '../game/types';
 import {
   createInitialState, createInputState, update,
   spawnReinforcement, setStanceForSelected, holdPositionForSelected, togglePause,
   digInForSelected, setFormation, toggleDebugLayer, digTrenchLineForSelected,
+  setTimeScale,
 } from '../game/engine';
 import Scene3D from '../scene3d/Scene3D';
 import GameHUD from './GameHUD';
 import MissionSelect from './MissionSelect';
+import DeploymentScreen from './DeploymentScreen';
+
+type Phase = 'briefing' | 'deployment' | 'combat';
 
 const GameUI: React.FC = () => {
+  const [phase, setPhase] = useState<Phase>('briefing');
   const [mission, setMission] = useState<MissionDef | null>(null);
   const gameStateRef = useRef<GameState | null>(null);
   const inputRef = useRef<InputState>(createInputState());
@@ -19,21 +24,27 @@ const GameUI: React.FC = () => {
 
   const triggerHudUpdate = useCallback(() => setHudVersion(v => v + 1), []);
 
-  const startMission = useCallback((m: MissionDef) => {
-    gameStateRef.current = createInitialState(m);
+  const openBriefing = useCallback((m: MissionDef) => {
     setMission(m);
+    setPhase('deployment');
+  }, []);
+
+  const beginCombat = useCallback((ctx: DeploymentContext) => {
+    if (!mission) return;
+    gameStateRef.current = createInitialState(mission, ctx);
+    setPhase('combat');
     triggerHudUpdate();
-  }, [triggerHudUpdate]);
+  }, [mission, triggerHudUpdate]);
 
   const exitMission = useCallback(() => {
     cancelAnimationFrame(animRef.current);
     gameStateRef.current = null;
     setMission(null);
+    setPhase('briefing');
   }, []);
 
-  // Game loop
   useEffect(() => {
-    if (!mission) return;
+    if (phase !== 'combat') return;
     lastTimeRef.current = 0;
     const loop = (ts: number) => {
       if (!gameStateRef.current) return;
@@ -45,18 +56,16 @@ const GameUI: React.FC = () => {
     };
     animRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animRef.current);
-  }, [mission]);
+  }, [phase]);
 
-  // HUD ticker (low frequency)
   useEffect(() => {
-    if (!mission) return;
+    if (phase !== 'combat') return;
     const id = setInterval(triggerHudUpdate, 200);
     return () => clearInterval(id);
-  }, [mission, triggerHudUpdate]);
+  }, [phase, triggerHudUpdate]);
 
-  // Key handling
   useEffect(() => {
-    if (!mission) return;
+    if (phase !== 'combat') return;
     const onDown = (e: KeyboardEvent) => {
       inputRef.current.keys.add(e.key.toLowerCase());
       const state = gameStateRef.current; if (!state) return;
@@ -72,10 +81,16 @@ const GameUI: React.FC = () => {
         else digInForSelected(state);
         triggerHudUpdate();
       }
-      if (k === '1') { setFormation(state, 'line'); triggerHudUpdate(); }
-      if (k === '2') { setFormation(state, 'wedge'); triggerHudUpdate(); }
-      if (k === '3') { setFormation(state, 'column'); triggerHudUpdate(); }
+      // Formations 4/5/6 to avoid conflict with time-scale 1/2/3/4
+      if (k === '5') { setFormation(state, 'line'); triggerHudUpdate(); }
+      if (k === '6') { setFormation(state, 'wedge'); triggerHudUpdate(); }
+      if (k === '7') { setFormation(state, 'column'); triggerHudUpdate(); }
       if (k === '0') { setFormation(state, null); triggerHudUpdate(); }
+      // Tactical time control
+      if (k === '1') { setTimeScale(state, 0.25); triggerHudUpdate(); }
+      if (k === '2') { setTimeScale(state, 0.5); triggerHudUpdate(); }
+      if (k === '3') { setTimeScale(state, 1); triggerHudUpdate(); }
+      if (k === '4') { setTimeScale(state, 2); triggerHudUpdate(); }
       if (k === 'f1') { e.preventDefault(); toggleDebugLayer(state, 'showCover'); triggerHudUpdate(); }
       if (k === 'f2') { e.preventDefault(); toggleDebugLayer(state, 'showConcealment'); triggerHudUpdate(); }
       if (k === 'f3') { e.preventDefault(); toggleDebugLayer(state, 'showTactical'); triggerHudUpdate(); }
@@ -85,7 +100,7 @@ const GameUI: React.FC = () => {
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
     return () => { window.removeEventListener('keydown', onDown); window.removeEventListener('keyup', onUp); };
-  }, [mission, triggerHudUpdate]);
+  }, [phase, triggerHudUpdate]);
 
   const handleSpawn = useCallback((type: UnitType) => {
     if (!gameStateRef.current) return;
@@ -99,10 +114,17 @@ const GameUI: React.FC = () => {
     triggerHudUpdate();
   }, [triggerHudUpdate]);
 
-  if (!mission || !gameStateRef.current) {
+  if (phase === 'briefing' || !mission) {
     return (
       <div className="relative w-full h-screen overflow-hidden">
-        <MissionSelect onStart={startMission} />
+        <MissionSelect onStart={openBriefing} />
+      </div>
+    );
+  }
+  if (phase === 'deployment' || !gameStateRef.current) {
+    return (
+      <div className="relative w-full h-screen overflow-hidden">
+        <DeploymentScreen mission={mission} onStart={beginCombat} onBack={() => setPhase('briefing')} />
       </div>
     );
   }
@@ -124,6 +146,7 @@ const GameUI: React.FC = () => {
         onDig={() => { digInForSelected(gameStateRef.current!); triggerHudUpdate(); }}
         onFormation={(f) => { setFormation(gameStateRef.current!, f); triggerHudUpdate(); }}
         onToggleDebug={(l) => { toggleDebugLayer(gameStateRef.current!, l); triggerHudUpdate(); }}
+        onSetTimeScale={(s) => { setTimeScale(gameStateRef.current!, s); triggerHudUpdate(); }}
       />
     </div>
   );

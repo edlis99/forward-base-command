@@ -12,9 +12,10 @@ interface Props {
   onDig: () => void;
   onFormation: (f: FormationType | null) => void;
   onToggleDebug: (layer: keyof DebugFlags) => void;
+  onSetTimeScale: (s: number) => void;
 }
 
-const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogglePause, onExit, onDig, onFormation, onToggleDebug }) => {
+const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogglePause, onExit, onDig, onFormation, onToggleDebug, onSetTimeScale }) => {
   const selected = gameState.units.filter(u => u.alive && u.selected && u.team === 'player');
   const pool = gameState.reinforcementBudget + (gameState.mission.rewardKills ? gameState.rewardCP : 0);
 
