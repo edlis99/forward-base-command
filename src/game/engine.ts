@@ -9,9 +9,9 @@ import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './consta
 import { getMission } from './missions';
 import { computeFormation, pickFormation } from './formations';
 
-export function createInitialState(mission: MissionDef): GameState {
+export function createInitialState(mission: MissionDef, deployment?: import('./types').DeploymentContext): GameState {
   const terrain = generateTerrain(mission.mapLayout, mission.mapSeed);
-  const initial = mission.init();
+  const initial = mission.init(deployment);
 
   const state: GameState = {
     units: [],
@@ -34,7 +34,9 @@ export function createInitialState(mission: MissionDef): GameState {
     gameResult: null,
     time: 0,
     paused: false,
+    timeScale: 1,
     mission,
+    deployment,
     objectives: initial.objectives ?? [],
     capturePoints: initial.capturePoints ?? [],
     reinforcementBudget: initial.reinforcementBudget ?? 0,
@@ -67,6 +69,8 @@ export function update(state: GameState, input: InputState, dt: number) {
   if (state.gameOver) return;
   if (state.paused) return;
 
+  // Apply tactical time-scale (0.25 / 0.5 / 1 / 2).
+  dt = dt * (state.timeScale ?? 1);
   state.time += dt;
 
   // Boarding intents
@@ -429,4 +433,9 @@ export function toggleDebugLayer(state: GameState, layer: keyof DebugFlags) {
   state.debug.showConcealment = false;
   state.debug.showTactical = false;
   state.debug[layer] = !wasOn;
+}
+
+/** Set tactical time scale. Clamped 0..2. 0 = effectively paused. */
+export function setTimeScale(state: GameState, scale: number) {
+  state.timeScale = Math.max(0, Math.min(2, scale));
 }
