@@ -821,10 +821,10 @@ function SelectionOverlayUpdater({ gameStateRef, overlayRef }: { gameStateRef: R
 function CameraRig({ inputRef }: { inputRef: React.MutableRefObject<InputState> }) {
   const { camera } = useThree();
   const targetRef = useRef({ x: W / 2, z: H / 2 });
-  const distRef = useRef(70);
+  const distRef = useRef(120);
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
-      distRef.current = Math.max(20, Math.min(140, distRef.current + (e.deltaY > 0 ? 4 : -4)));
+      distRef.current = Math.max(24, Math.min(260, distRef.current + (e.deltaY > 0 ? 8 : -8)));
     };
     window.addEventListener('wheel', onWheel);
     return () => window.removeEventListener('wheel', onWheel);
@@ -859,7 +859,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         gl={{ antialias: true }}
         style={{ background: '#1a201a' }}
       >
-        <fog attach="fog" args={['#1a201a', 100, 220]} />
+        <fog attach="fog" args={['#1a201a', 180, 420]} />
         <ambientLight intensity={0.55} />
         <directionalLight
           position={[40, 60, 20]} intensity={1.1}

@@ -42,6 +42,22 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
           )}
         </div>
         <div className="flex gap-2 items-center">
+          {/* Tactical time control */}
+          <div className="flex items-center gap-1 mr-2">
+            <span style={{ color: '#7a8a6a' }}>Time:</span>
+            {[
+              { s: 0.25, label: '¼×' },
+              { s: 0.5, label: '½×' },
+              { s: 1, label: '1×' },
+              { s: 2, label: '2×' },
+            ].map(({ s, label }) => (
+              <button key={s} onClick={() => onSetTimeScale(s)} className="px-2 py-0.5 border"
+                style={{
+                  background: Math.abs((gameState.timeScale ?? 1) - s) < 0.01 ? 'rgba(80,100,60,0.9)' : 'rgba(40,50,40,0.8)',
+                  borderColor: '#5a6a5a',
+                }}>{label}</button>
+            ))}
+          </div>
           <button onClick={onTogglePause} className="px-2 py-1 border" style={{ background: 'rgba(40,50,40,0.8)', borderColor: '#5a6a5a' }}>
             [Space] {gameState.paused ? 'Resume' : 'Pause'}
           </button>
@@ -82,12 +98,12 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
       {/* Hotkey legend */}
       <div className="pointer-events-none absolute top-12 right-3 text-[10px] font-mono px-2 py-1"
         style={{ background: 'rgba(15,20,15,0.85)', border: '1px solid #2a3a2a', color: '#8a9a7a' }}>
-        <div>Space: pause · WASD: pan · Wheel: zoom</div>
+        <div>Space: pause · 1/2/3/4: time ¼×/½×/1×/2× · WASD: pan · Wheel: zoom</div>
         <div>LClick: select · Drag: box-select · Shift: add</div>
         <div>RClick: move/attack · Shift+R: queue · Ctrl+R: attack-move</div>
         <div>H: hold · F: hold-fire · X: tight · G: defend · Y: aggressive</div>
-        <div>T: dig-in · Shift+T: dig trench line · 1/2/3: line/wedge/column · 0: auto</div>
-        <div>F1: cover · F2: concealment · F3: tactical score</div>
+        <div>T: dig-in · Shift+T: dig trench line · 5/6/7: line/wedge/column · 0: auto</div>
+        <div>F1: cover · F2: concealment · F3: tactical</div>
       </div>
 
       {/* Debug overlay toggle row */}
