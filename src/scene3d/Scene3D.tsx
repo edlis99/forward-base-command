@@ -859,7 +859,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         gl={{ antialias: true }}
         style={{ background: '#1a201a' }}
       >
-        <fog attach="fog" args={['#1a201a', 180, 420]} />
+        <fog attach="fog" args={['#1a201a', 240, 560]} />
         <ambientLight intensity={0.55} />
         <directionalLight
           position={[40, 60, 20]} intensity={1.1}
