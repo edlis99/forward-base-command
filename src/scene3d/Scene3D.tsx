@@ -824,7 +824,7 @@ function CameraRig({ inputRef }: { inputRef: React.MutableRefObject<InputState> 
   const distRef = useRef(120);
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
-      distRef.current = Math.max(24, Math.min(260, distRef.current + (e.deltaY > 0 ? 8 : -8)));
+      distRef.current = Math.max(24, Math.min(360, distRef.current + (e.deltaY > 0 ? 10 : -10)));
     };
     window.addEventListener('wheel', onWheel);
     return () => window.removeEventListener('wheel', onWheel);
@@ -859,7 +859,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         gl={{ antialias: true }}
         style={{ background: '#1a201a' }}
       >
-        <fog attach="fog" args={['#1a201a', 180, 420]} />
+        <fog attach="fog" args={['#1a201a', 240, 560]} />
         <ambientLight intensity={0.55} />
         <directionalLight
           position={[40, 60, 20]} intensity={1.1}
