@@ -824,7 +824,7 @@ function CameraRig({ inputRef }: { inputRef: React.MutableRefObject<InputState> 
   const distRef = useRef(120);
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
-      distRef.current = Math.max(24, Math.min(260, distRef.current + (e.deltaY > 0 ? 8 : -8)));
+      distRef.current = Math.max(24, Math.min(360, distRef.current + (e.deltaY > 0 ? 10 : -10)));
     };
     window.addEventListener('wheel', onWheel);
     return () => window.removeEventListener('wheel', onWheel);
