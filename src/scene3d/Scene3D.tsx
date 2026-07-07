@@ -336,6 +336,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
   const selRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const previewRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const hoverRefs = useRef<Map<string, THREE.Mesh>>(new Map());
+  const suppRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const [, forceRender] = React.useReducer((n) => n + 1, 0);
   const knownIdsRef = useRef<string>('');
 
