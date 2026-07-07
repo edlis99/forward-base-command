@@ -10,6 +10,7 @@ import Scene3D from '../scene3d/Scene3D';
 import GameHUD from './GameHUD';
 import MissionSelect from './MissionSelect';
 import DeploymentScreen from './DeploymentScreen';
+import MissionSummary from './MissionSummary';
 
 type Phase = 'briefing' | 'deployment' | 'combat';
 
@@ -148,6 +149,17 @@ const GameUI: React.FC = () => {
         onToggleDebug={(l) => { toggleDebugLayer(gameStateRef.current!, l); triggerHudUpdate(); }}
         onSetTimeScale={(s) => { setTimeScale(gameStateRef.current!, s); triggerHudUpdate(); }}
       />
+      {gameStateRef.current.gameOver && (
+        <MissionSummary
+          gameState={gameStateRef.current}
+          onReturn={exitMission}
+          onRetry={() => {
+            cancelAnimationFrame(animRef.current);
+            gameStateRef.current = null;
+            setPhase('deployment');
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -1,100 +1,85 @@
 
-## Operation: Recapture Leipalingis — Single-Mission Overhaul
+## Build slice: Objective loop + Leipalingis garrison (#2 + #3)
 
-Replace the current mission list with **one** large-scale operation. Focus on the systems that most change the *feel* of the game within our 3D low-poly R3F prototype. This is scoped to what our engine can realistically support — not a AAA sim.
-
----
-
-### 1. Mission & Map
-
-- Delete `MISSIONS` list UI; landing screen becomes an **Operation Briefing** for the single mission "Recapture Leipalingis".
-- New mission file `missions/leipalingis.ts`:
-  - Objective: capture the central Leipalingis town zone (large capture point, long capture time, defended by multiple enemy squads).
-  - Secondary (optional, not required to win): clear enemy strongpoints in outlying villages for morale/reinforcement bonus.
-  - No global kill rewards (`rewardKills: false`).
-- New large map layout `layoutLeipalingis` in `terrain.ts`:
-  - Expand `MAP_COLS/ROWS` to **160 × 120** (from 96×64) for this mission only (mission carries `mapCols/mapRows` override; `generateTerrain` accepts size).
-  - Central **Leipalingis**: dense town — grid of buildings, main road cross, fenced yards, church-like central building, tree-lined edges, 3–4 entry chokepoints.
-  - Outlying villages as **deployment zones** (small cluster of 3–6 buildings + spawn marker):
-    - Jovaišiai (N-NE, medium distance)
-    - Didžiasalis (E, close, exposed approach across fields)
-    - Veršiai (S, medium, forest approach)
-    - Stračiūnai (W, medium, mixed)
-    - Seirijai (far SW, longest travel, safest arc)
-  - Between towns: large **forests** (concealment + slow), **open fields** (fast + exposed), **dirt roads / main road** network connecting all villages to Leipalingis, **lake** blocking direct SE approach with **bridge** crossings, **tree lines** along field edges, **hills** (visual only for now — elevation already tracked per cell), scattered farm buildings & hay bales.
-  - Pre-placed enemy defensive positions: sandbag rings + short trenches at Leipalingis entries and one forward outpost per approach.
-
-### 2. Deployment Phase (pre-mission)
-
-- New screen `DeploymentScreen.tsx` shown after clicking "Begin Operation":
-  - Tactical map preview (top-down mini render of the terrain grid + village markers + Leipalingis objective).
-  - Roster on the side: fixed force (e.g. 6 infantry, 2 APCs, 2 tanks, 1 helicopter) — player assigns each unit to one of the 5 villages.
-  - Per-village info card: distance to objective, dominant terrain, threat estimate, notes.
-  - "Deploy & Begin" starts the mission; `mission.init()` places units near their chosen village spawn point.
-
-### 3. Time Control
-
-- Replace the current binary pause with a **speed selector**: `0×` (pause), `0.25×` (command), `0.5×` (slow tactical), `1×` (normal). Optional `2×` when not in contact.
-- Store `state.timeScale`; multiply `dt` in the engine tick. Keep AI/animation/pathfinding intact — they already use `dt`.
-- HUD: speed buttons + hotkeys `Space` (toggle pause), `1/2/3/4` (speeds). Existing `1–4` unit hotkeys move to `F5–F8` or similar to avoid clash — will use `Shift+1..4` for speed instead to preserve current bindings.
-
-### 4. Trench Fix (visibility & entry)
-
-- Fix disappearing units: current sink is `y -= 0.3` but the trench floor is deeper. Clamp so head/shoulders stay above parapet; add a short "enter trench" tween (0.4 s vertical ease).
-- Ensure trench mesh remounts already covered by prior polling; add exit tween on leaving the cell.
-- Confirm no unit sinks below parapet top when prone in trench.
-
-### 5. Combined-Arms & Awareness Polish
-
-- Add lightweight **support aura** in `squads.ts`/`ai.ts`:
-  - Infantry within 120u of a friendly tank/APC: +10 morale floor, −15% suppression gain.
-  - Tank within 100u of ≥2 friendly infantry: +10% accuracy (screen against close threats).
-  - Isolated infantry (no friendly within 180u) under fire: −morale, more likely to seek cover / fall back.
-- Awareness already exists; tune reaction thresholds so nearby tank presence and explosions produce visible morale/suppression events in the log.
-
-### 6. Enemy AI Defensive Bias
-
-- For this mission, enemy default posture = **defend** at their assigned strongpoint. They only advance/counterattack when:
-  - Player force enters their engagement radius, OR
-  - Adjacent strongpoint falls (triggers a counterattack squad from Leipalingis reserve).
-- Reuse existing squad brain; add a `postureHint: 'defend' | 'counterattack'` on spawn.
-
-### 7. Out of Scope (explicit)
-
-The user's brief is enormous; we honestly flag what we will **not** ship in this pass to keep the change reviewable:
-
-- New full-body animated soldier models, lean-from-cover, prone crawling, reload anims (engine is instanced low-poly; would require a character rig pipeline).
-- Building interiors / room clearing.
-- Bullet-physics penetration model per material (current model is LOS + cover multiplier — will keep, just ensure walls fully block).
-- Weather, time-of-day, smoke rendering beyond existing.
-- Difficulty selector (defer; current AI already scales via wave/squad logic).
-- Artillery call-ins (deferred; can be a follow-up once single-mission scaffold is in).
-
-These can each be follow-up passes once the single-mission scaffold lands.
+Goal: turn the scaffold into an actual playable operation with a real "take the town or lose" loop.
 
 ---
 
-### Technical Section
+### A. Leipalingis garrison layout
 
-Files to add:
-- `src/game/missions/leipalingis.ts` — mission def + init.
-- `src/components/DeploymentScreen.tsx` — pre-mission planner.
-- `src/game/deployment.ts` — village metadata + assignment → spawn logic.
+Extend `missions/leipalingis.ts` (or the mission init) to spawn a layered defence at mission start:
 
-Files to modify:
-- `src/game/missions/index.ts` — export only Leipalingis; keep `MissionDef` type.
-- `src/game/terrain.ts` — new `layoutLeipalingis`; `generateTerrain(layout, seed, cols?, rows?)`.
-- `src/game/types.ts` — `MissionDef.mapCols/mapRows?`, `state.timeScale`, `postureHint`.
-- `src/game/engine.ts` — apply `timeScale`, remove kill-reward except mission flag (already), use per-mission map size.
-- `src/game/ai.ts` / `src/game/squads.ts` — support-aura bonuses, defend posture.
-- `src/components/GameHUD.tsx` / `GameUI.tsx` — speed selector, updated hotkey legend.
-- `src/pages/Index.tsx` — flow: Briefing → Deployment → Game.
-- `src/scene3d/Scene3D.tsx` — trench entry/exit tween, no other visual scope changes.
+- **Outer trench line**: 3 short trench segments on the N/E/S/W approaches, each with 2 infantry (`postureHint: 'defend'`, `stance: 'defend'`, `order: 'hold_position'`, homePos on the trench cell).
+- **MG nests at 4 chokepoints**: sandbag ring + 1 infantry with reduced range/higher accuracy tag (reuse existing infantry stats; just place them at chokepoint cells identified from `buildLeipalingisRegion`).
+- **Forward outposts**: 1 small squad (2 infantry) at each of the 5 approach villages with `postureHint: 'defend'`, hold_position on the village anchor.
+- **Town-centre reserve**: 1 reserve squad (3 infantry + 1 APC) parked at the church block, `postureHint: 'counterattack'`, initially `hold_position` with `homePos` = church.
 
-Removed:
-- `MissionSelect.tsx` (replaced by Briefing/Deployment flow).
-- `missions/assault.ts`, `defend.ts`, `recon.ts`, `convoy.ts` (or kept as dead code — will delete).
+Chokepoint/church coordinates come from the anchors already stored during `buildLeipalingisRegion` — expose them via a returned metadata object (or a small `getLeipalingisAnchors()` helper) so the mission init can read them without re-deriving from raster.
 
-Verification:
+### B. Capture zone
+
+- Add `state.captureZone = { pos, radius: 22, progress: 0, holder: 'enemy' | 'player' | 'contested' }` to `GameState`.
+- Each tick: count alive player units and alive enemy units inside radius.
+  - Only player present → progress += dt / 90 (90 s uncontested to flip).
+  - Only enemy present → progress -= dt / 60 (enemies retake slower).
+  - Both / neither → progress decays 5 %/s toward 0 while contested, holds while empty.
+- When progress ≥ 1 → `holder = 'player'`, objective "Capture Centre" complete.
+
+### C. Counterattack trigger
+
+- First time a player unit enters capture radius, fire once:
+  - Wake the church reserve squad: set `order: 'attack_move'`, `postureHint: 'counterattack'`, destination = capture zone centre.
+  - Log event: "Enemy reserves counterattacking from town centre".
+
+### D. Secondary objectives
+
+- One per approach village: "Clear <village>" — completes when no alive enemy within 40 u of the village anchor.
+- On completion:
+  - +10 morale floor for all player units for 30 s (temporary buff via a new `state.moraleBuffUntil` timer).
+  - Grant one reinforcement token (adds 2 infantry at the nearest friendly deployment village).
+  - Log event.
+
+### E. Win / loss
+
+- **Win**: capture zone `holder === 'player'` AND progress ≥ 1.
+- **Loss**: player alive strength (sum health/maxHealth) < 25 % of starting strength AND not holding capture ring.
+- On either, set `state.result = 'victory' | 'defeat'`, freeze `timeScale = 0`.
+
+### F. Post-mission summary
+
+New component `MissionSummary.tsx` shown when `state.result` is set:
+- Title: Victory / Defeat.
+- Stats: enemies killed, units lost, mission time (mm:ss), objectives (✓/✗ list).
+- Buttons: "Return to Briefing" (calls existing `exitMission`), "Retry" (re-runs briefing → deployment).
+- Wire into `GameUI.tsx` render — overlay above the 3D scene when `gameStateRef.current.result` is set.
+
+### G. HUD additions
+
+Small additions to `GameHUD.tsx`:
+- Capture progress bar (top-centre) with holder colour.
+- Objective checklist panel (primary + secondaries).
+- Reserve counterattack warning banner (fades after 5 s).
+
+---
+
+### Files
+
+**Modify**
+- `src/game/types.ts` — `GameState.captureZone`, `result`, `objectives[]`, `moraleBuffUntil`, `Unit.postureHint` if not already there.
+- `src/game/terrain.ts` — return anchor metadata from `buildLeipalingisRegion` (church, chokepoints, trench cells, village centres).
+- `src/game/missions/index.ts` / `leipalingisMission` init — spawn garrison using anchors, seed objectives + capture zone.
+- `src/game/engine.ts` — capture-zone tick, counterattack trigger, win/loss check, reinforcement token application.
+- `src/components/GameHUD.tsx` — capture bar, objectives panel, counterattack banner.
+- `src/components/GameUI.tsx` — render `MissionSummary` overlay when result set; wire Retry.
+
+**Create**
+- `src/components/MissionSummary.tsx`.
+
+### Out of scope for this slice
+- Artillery / off-map fire support (still deferred).
+- Trench tween + tracer/muzzle-flash pass (that's slice #1, follow-up).
+- New animations or character rigs.
+
+### Verification
 - Type check clean.
-- Playwright smoke: land on briefing → deploy → units appear at correct village → time-scale buttons change tick rate → dig trench → unit remains visible in trench.
+- Playwright smoke: briefing → deploy at Seirijai → advance to town → confirm counterattack log fires → hold zone → victory summary appears.
