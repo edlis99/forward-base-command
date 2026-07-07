@@ -67,6 +67,36 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
         </div>
       </div>
 
+      {/* Capture progress bar (top centre) */}
+      {(() => {
+        const cp = gameState.capturePoints.find(c => c.id === 'town_centre');
+        if (!cp) return null;
+        const pct = Math.round(((cp.progress + 1) / 2) * 100);
+        const holderColor = cp.owner === 'player' ? '#5cda5c' : cp.owner === 'enemy' ? '#da5c5c' : '#f0a030';
+        return (
+          <div className="pointer-events-none absolute top-10 left-1/2 -translate-x-1/2 font-mono text-[11px] px-3 py-2 min-w-[280px]"
+            style={{ background: 'rgba(15,20,15,0.9)', border: '1px solid #2a3a2a' }}>
+            <div className="flex justify-between mb-1">
+              <span style={{ color: '#a5cf6f' }}>{cp.label}</span>
+              <span style={{ color: holderColor }}>{cp.owner.toUpperCase()}</span>
+            </div>
+            <div style={{ width: '100%', height: 8, background: '#1a1f1a', border: '1px solid #2a3a2a', position: 'relative' }}>
+              <div style={{ width: `${pct}%`, height: '100%', background: holderColor, transition: 'width 0.3s' }} />
+              <div style={{ position: 'absolute', left: '50%', top: -2, bottom: -2, width: 1, background: '#5a6a5a' }} />
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Counterattack warning banner */}
+      {((gameState.script.__counterBannerUntil as number) ?? 0) > gameState.time && (
+        <div className="pointer-events-none absolute top-24 left-1/2 -translate-x-1/2 font-mono text-sm px-4 py-2"
+          style={{ background: 'rgba(80,20,20,0.92)', border: '1px solid #a04040', color: '#ffd0c0', letterSpacing: 1 }}>
+          ⚠ ENEMY COUNTERATTACK FROM CHURCH SQUARE
+        </div>
+      )}
+
+
       {/* Mission Objectives panel */}
       <div className="pointer-events-none absolute top-12 left-3 max-w-xs font-mono text-xs p-2"
         style={{ background: 'rgba(15,20,15,0.85)', border: '1px solid #2a3a2a' }}>
