@@ -336,6 +336,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
   const selRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const previewRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const hoverRefs = useRef<Map<string, THREE.Mesh>>(new Map());
+  const suppRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const [, forceRender] = React.useReducer((n) => n + 1, 0);
   const knownIdsRef = useRef<string>('');
 
@@ -370,17 +371,21 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         ref.position.x = u.pos.x / S;
         ref.position.z = u.pos.y / S;
         ref.rotation.y = -u.facing;
-        // Sink into trench when standing in a trench cell so the unit reads as occupying it
+        // Sink into trench when standing in a trench cell — smooth tween in/out (~0.4s).
         const gx = Math.floor(u.pos.x / S);
         const gy = Math.floor(u.pos.y / S);
         const cell = state.terrain[gy]?.[gx];
         const inTrench = cell?.type === 'trench' && u.type === 'infantry';
-        ref.position.y = inTrench ? -0.28 : 0;
-        // Prone / digging crouch: squash + slight bob while digging
+        const targetY = inTrench ? -0.28 : 0;
+        const k = 1 - Math.exp(-dt * 8); // ~0.4s ease
+        ref.position.y += (targetY - ref.position.y) * k;
+        // Prone / digging crouch: squash + slight bob while digging — tweened too.
         const isDigging = u.order === 'entrench';
-        const proneScale = (u.prone || isDigging || inTrench) ? 0.55 : 1;
+        const proneTarget = (u.prone || isDigging || inTrench) ? 0.55 : 1;
         const bob = isDigging ? 1 + Math.sin(t * 8) * 0.08 : 1;
-        ref.scale.set(1, proneScale * bob, 1);
+        const curY = ref.scale.y;
+        const newY = curY + (proneTarget * bob - curY) * k;
+        ref.scale.set(1, newY, 1);
         ref.visible = u.team === 'player' || u.spottedByEnemy;
       }
       const sel = selRefs.current.get(u.id);
@@ -392,6 +397,17 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
       if (pv) pv.visible = state.previewSelected.has(u.id) && !u.selected;
       const hv = hoverRefs.current.get(u.id);
       if (hv) hv.visible = hoverId === u.id && !u.selected && !state.previewSelected.has(u.id);
+      const sr = suppRefs.current.get(u.id);
+      if (sr) {
+        const on = u.suppression > 0.35 && (u.team === 'player' || u.spottedByEnemy);
+        sr.visible = on;
+        if (on) {
+          const s2 = 1 + Math.sin(t * 10) * 0.12;
+          sr.scale.set(s2, s2, s2);
+          const mat = (sr as THREE.Mesh).material as THREE.MeshBasicMaterial;
+          mat.opacity = 0.35 + u.suppression * 0.5;
+        }
+      }
     }
   });
 
@@ -433,6 +449,15 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
           >
             <ringGeometry args={[0.55, 0.82, 36]} />
             <meshBasicMaterial color={u.team === 'player' ? '#7ec0ff' : '#ff8a6a'} transparent opacity={0.95} />
+          </mesh>
+
+          {/* suppression pulse ring (visible while suppressed) */}
+          <mesh
+            ref={(el) => { if (el) suppRefs.current.set(u.id, el); else suppRefs.current.delete(u.id); }}
+            position={[0, 0.028, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
+          >
+            <ringGeometry args={[0.85, 1.05, 32]} />
+            <meshBasicMaterial color="#ffb040" transparent opacity={0.5} />
           </mesh>
 
           {/* digging visuals: progress ring + growing dirt mound parapet */}
@@ -487,20 +512,25 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
   const positionsRef = useRef<Float32Array>(new Float32Array(3000));
   const colorsRef = useRef<Float32Array>(new Float32Array(3000));
   const explRef = useRef<THREE.Group>(null);
+  const flashRef = useRef<THREE.Group>(null);
 
   useFrame(() => {
     const state = gameStateRef.current;
     const positions = positionsRef.current;
     const colors = colorsRef.current;
     let count = 0;
+    // Tracers — taper opacity by remaining timer for a fading streak feel.
     for (const p of state.projectiles) {
       if (count + 2 > 500) break;
       const i = count * 3;
       positions[i] = p.from.x / S; positions[i + 1] = 0.5; positions[i + 2] = p.from.y / S;
       positions[i + 3] = p.to.x / S; positions[i + 4] = 0.5; positions[i + 5] = p.to.y / S;
-      const col = p.team === 'player' ? [0.45, 0.7, 1] : [1, 0.5, 0.25];
-      colors[i] = col[0]; colors[i + 1] = col[1]; colors[i + 2] = col[2];
-      colors[i + 3] = col[0]; colors[i + 4] = col[1]; colors[i + 5] = col[2];
+      // Player: cool blue-white. Enemy: hot orange-red.
+      const base = p.team === 'player' ? [0.55, 0.85, 1.2] : [1.3, 0.55, 0.25];
+      // Fade linearly — timer starts ~0.2-0.4, becomes 0. Use clamp.
+      const life = Math.max(0.05, Math.min(1, p.timer / 0.3));
+      colors[i]     = base[0] * life; colors[i + 1] = base[1] * life; colors[i + 2] = base[2] * life;
+      colors[i + 3] = base[0] * life; colors[i + 4] = base[1] * life; colors[i + 5] = base[2] * life;
       count += 2;
     }
     if (linesRef.current) {
@@ -510,6 +540,40 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
       geo.setDrawRange(0, count);
       geo.attributes.position.needsUpdate = true;
     }
+
+    // Muzzle flashes + impact sparks. Rebuild each frame from projectile freshness.
+    if (flashRef.current) {
+      flashRef.current.clear();
+      for (const p of state.projectiles) {
+        // Freshness: 1 at spawn → 0 as timer decays. Estimate initial via bucket.
+        const fresh = Math.max(0, Math.min(1, p.timer / 0.28));
+        if (fresh <= 0.55) continue; // only render for the first ~half of tracer life
+        const flashOpacity = (fresh - 0.55) / 0.45; // 0..1 quick fade
+        const flashCol = p.team === 'player' ? new THREE.Color(1.0, 0.95, 0.7) : new THREE.Color(1.0, 0.75, 0.35);
+        // Muzzle flash: small billboard sphere at 'from', offset slightly toward 'to'.
+        const dx = p.to.x - p.from.x, dy = p.to.y - p.from.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const mx = (p.from.x + (dx / len) * 6) / S;
+        const mz = (p.from.y + (dy / len) * 6) / S;
+        const flash = new THREE.Mesh(
+          new THREE.SphereGeometry(0.18 + 0.12 * flashOpacity, 8, 6),
+          new THREE.MeshBasicMaterial({ color: flashCol, transparent: true, opacity: flashOpacity, depthWrite: false }),
+        );
+        flash.position.set(mx, 0.55, mz);
+        flashRef.current.add(flash);
+        // Impact spark: only if it's a hit and near end of life (looks like arrival).
+        if (p.hit && fresh > 0.7) {
+          const sparkCol = p.crit ? new THREE.Color(1.0, 0.9, 0.4) : new THREE.Color(1.0, 0.7, 0.4);
+          const spark = new THREE.Mesh(
+            new THREE.SphereGeometry(0.14 + (p.crit ? 0.1 : 0), 6, 4),
+            new THREE.MeshBasicMaterial({ color: sparkCol, transparent: true, opacity: flashOpacity * 0.8, depthWrite: false }),
+          );
+          spark.position.set(p.to.x / S, 0.5, p.to.y / S);
+          flashRef.current.add(spark);
+        }
+      }
+    }
+
     if (explRef.current) {
       explRef.current.clear();
       for (const e of state.explosions) {
@@ -529,8 +593,9 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
     <group>
       <lineSegments ref={linesRef}>
         <bufferGeometry />
-        <lineBasicMaterial vertexColors linewidth={2} />
+        <lineBasicMaterial vertexColors linewidth={2} transparent />
       </lineSegments>
+      <group ref={flashRef} />
       <group ref={explRef} />
     </group>
   );
