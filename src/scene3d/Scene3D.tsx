@@ -370,17 +370,21 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         ref.position.x = u.pos.x / S;
         ref.position.z = u.pos.y / S;
         ref.rotation.y = -u.facing;
-        // Sink into trench when standing in a trench cell so the unit reads as occupying it
+        // Sink into trench when standing in a trench cell — smooth tween in/out (~0.4s).
         const gx = Math.floor(u.pos.x / S);
         const gy = Math.floor(u.pos.y / S);
         const cell = state.terrain[gy]?.[gx];
         const inTrench = cell?.type === 'trench' && u.type === 'infantry';
-        ref.position.y = inTrench ? -0.28 : 0;
-        // Prone / digging crouch: squash + slight bob while digging
+        const targetY = inTrench ? -0.28 : 0;
+        const k = 1 - Math.exp(-dt * 8); // ~0.4s ease
+        ref.position.y += (targetY - ref.position.y) * k;
+        // Prone / digging crouch: squash + slight bob while digging — tweened too.
         const isDigging = u.order === 'entrench';
-        const proneScale = (u.prone || isDigging || inTrench) ? 0.55 : 1;
+        const proneTarget = (u.prone || isDigging || inTrench) ? 0.55 : 1;
         const bob = isDigging ? 1 + Math.sin(t * 8) * 0.08 : 1;
-        ref.scale.set(1, proneScale * bob, 1);
+        const curY = ref.scale.y;
+        const newY = curY + (proneTarget * bob - curY) * k;
+        ref.scale.set(1, newY, 1);
         ref.visible = u.team === 'player' || u.spottedByEnemy;
       }
       const sel = selRefs.current.get(u.id);
@@ -392,6 +396,17 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
       if (pv) pv.visible = state.previewSelected.has(u.id) && !u.selected;
       const hv = hoverRefs.current.get(u.id);
       if (hv) hv.visible = hoverId === u.id && !u.selected && !state.previewSelected.has(u.id);
+      const sr = suppRefs.current.get(u.id);
+      if (sr) {
+        const on = u.suppression > 0.35 && (u.team === 'player' || u.spottedByEnemy);
+        sr.visible = on;
+        if (on) {
+          const s2 = 1 + Math.sin(t * 10) * 0.12;
+          sr.scale.set(s2, s2, s2);
+          const mat = (sr as THREE.Mesh).material as THREE.MeshBasicMaterial;
+          mat.opacity = 0.35 + u.suppression * 0.5;
+        }
+      }
     }
   });
 
