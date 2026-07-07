@@ -149,6 +149,17 @@ const GameUI: React.FC = () => {
         onToggleDebug={(l) => { toggleDebugLayer(gameStateRef.current!, l); triggerHudUpdate(); }}
         onSetTimeScale={(s) => { setTimeScale(gameStateRef.current!, s); triggerHudUpdate(); }}
       />
+      {gameStateRef.current.gameOver && (
+        <MissionSummary
+          gameState={gameStateRef.current}
+          onReturn={exitMission}
+          onRetry={() => {
+            cancelAnimationFrame(animRef.current);
+            gameStateRef.current = null;
+            setPhase('deployment');
+          }}
+        />
+      )}
     </div>
   );
 };
