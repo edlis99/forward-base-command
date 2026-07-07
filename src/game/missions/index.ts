@@ -49,46 +49,101 @@ const DEPLOYMENT_TOWNS: DeploymentTown[] = [
   },
 ];
 
-/** Spawn a mixed enemy garrison inside/around Leipalingis + outer strongpoints. */
-function garrisonLeipalingis(units: Unit[]) {
+/** Spawn a layered enemy garrison: outer trench line, MG nests at 4 chokepoints,
+ *  inner town defenders, forward outposts per approach village, and a reserve
+ *  squad in the church square tagged for counterattack. */
+function garrisonLeipalingis(units: Unit[], reserveIds: string[], outposts: Record<string, string[]>) {
   const L = LEIPALINGIS_ANCHORS.leipalingis;
-  // Inner defenders: infantry in trenches around town
+
+  const tagDefend = (u: Unit) => {
+    u.stance = 'defend'; u.order = 'hold_position'; u.homePos = { ...u.pos };
+  };
+
+  // ---------- Outer trench line: N / E / S / W approaches ----------
+  const trenchLine: Array<[number, number]> = [
+    // North approach
+    [L.x - 4, L.y - 18], [L.x, L.y - 18], [L.x + 4, L.y - 18],
+    // South approach
+    [L.x - 4, L.y + 18], [L.x, L.y + 18], [L.x + 4, L.y + 18],
+    // West approach
+    [L.x - 18, L.y - 3], [L.x - 18, L.y + 3],
+    // East approach
+    [L.x + 18, L.y - 3], [L.x + 18, L.y + 3],
+  ];
+  for (const [gx, gy] of trenchLine) {
+    const u = createUnit('infantry', 'enemy', tx(gx), ty(gy));
+    tagDefend(u);
+    units.push(u);
+  }
+
+  // ---------- MG nests at 4 chokepoints (sandbag rings) ----------
+  const chokepoints: Array<[number, number]> = [
+    [L.x, L.y - 12], [L.x, L.y + 12], [L.x - 12, L.y], [L.x + 12, L.y],
+  ];
+  for (const [gx, gy] of chokepoints) {
+    const u = createUnit('infantry', 'enemy', tx(gx), ty(gy));
+    tagDefend(u);
+    u.accuracy = Math.min(1, u.accuracy + 0.15); // MG accuracy bonus
+    (u as Unit & { _role?: string })._role = 'mg';
+    units.push(u);
+  }
+
+  // ---------- Inner town defenders (garrison bulk) ----------
   const inner: Array<[number, number]> = [
-    [L.x - 6, L.y - 14], [L.x, L.y - 14], [L.x + 6, L.y - 14],
-    [L.x - 6, L.y + 14], [L.x, L.y + 14], [L.x + 6, L.y + 14],
-    [L.x - 14, L.y - 4], [L.x - 14, L.y + 4],
-    [L.x + 14, L.y - 4], [L.x + 14, L.y + 4],
-    [L.x - 2, L.y - 8], [L.x + 2, L.y + 8], [L.x, L.y],
+    [L.x - 8, L.y - 6], [L.x + 8, L.y - 6],
+    [L.x - 8, L.y + 6], [L.x + 8, L.y + 6],
+    [L.x - 2, L.y - 2],
   ];
   for (const [gx, gy] of inner) {
     const u = createUnit('infantry', 'enemy', tx(gx), ty(gy));
-    u.stance = 'defend'; u.order = 'hold_position'; u.homePos = { ...u.pos };
+    tagDefend(u);
     units.push(u);
   }
-  // Armour reserve inside town
-  const t1 = createUnit('tank', 'enemy', tx(L.x - 4), ty(L.y + 2));
-  t1.stance = 'defend'; t1.order = 'hold_position'; t1.homePos = { ...t1.pos };
-  const t2 = createUnit('tank', 'enemy', tx(L.x + 4), ty(L.y - 2));
-  t2.stance = 'defend'; t2.order = 'hold_position'; t2.homePos = { ...t2.pos };
-  const apc = createUnit('apc', 'enemy', tx(L.x), ty(L.y + 6));
-  apc.stance = 'defend'; apc.order = 'hold_position'; apc.homePos = { ...apc.pos };
-  units.push(t1, t2, apc);
 
-  // Forward outposts / pickets along each approach
-  const outposts: Array<[number, number, 'infantry' | 'apc']> = [
-    [70, 40, 'infantry'], [70, 40, 'infantry'],       // NW picket (Jovaišiai axis)
-    [108, 42, 'infantry'], [108, 42, 'apc'],          // NE picket
-    [108, 80, 'infantry'], [108, 80, 'infantry'],     // SE picket
-    [72, 78, 'infantry'], [72, 78, 'apc'],            // SW picket
-    [78, 60, 'infantry'],                              // west screen
+  // ---------- Church square reserve (counterattack squad) ----------
+  const reserveSpots: Array<['infantry' | 'apc' | 'tank', number, number]> = [
+    ['infantry', L.x - 1, L.y + 1],
+    ['infantry', L.x + 1, L.y + 1],
+    ['infantry', L.x, L.y + 2],
+    ['apc', L.x - 2, L.y + 3],
+    ['tank', L.x + 3, L.y - 1],
   ];
-  for (const [gx, gy, t] of outposts) {
+  for (const [t, gx, gy] of reserveSpots) {
     const u = createUnit(t, 'enemy', tx(gx), ty(gy));
-    u.stance = 'defend';
-    u.order = 'patrol';
-    u.patrolPoints = [{ x: tx(gx - 2), y: ty(gy) }, { x: tx(gx + 2), y: ty(gy) }];
-    u.patrolIndex = 1;
+    tagDefend(u);
+    (u as Unit & { _role?: string })._role = 'reserve';
+    reserveIds.push(u.id);
     units.push(u);
+  }
+
+  // ---------- Forward outposts, one small squad per approach village ----------
+  const villages: Array<[string, number, number]> = [
+    ['jovaisiai',   LEIPALINGIS_ANCHORS.jovaisiai.x,   LEIPALINGIS_ANCHORS.jovaisiai.y],
+    ['didziasalis', LEIPALINGIS_ANCHORS.didziasalis.x, LEIPALINGIS_ANCHORS.didziasalis.y],
+    ['versiai',     LEIPALINGIS_ANCHORS.versiai.x,     LEIPALINGIS_ANCHORS.versiai.y],
+    ['straciunai',  LEIPALINGIS_ANCHORS.straciunai.x,  LEIPALINGIS_ANCHORS.straciunai.y],
+    ['seirijai',    LEIPALINGIS_ANCHORS.seirijai.x,    LEIPALINGIS_ANCHORS.seirijai.y],
+  ];
+  for (const [id, vx, vy] of villages) {
+    // Position outpost between village and Leipalingis (so player has to fight through it).
+    const dx = L.x - vx, dy = L.y - vy;
+    const len = Math.hypot(dx, dy) || 1;
+    const ox = Math.round(vx + (dx / len) * 12);
+    const oy = Math.round(vy + (dy / len) * 12);
+    const spots: Array<['infantry' | 'apc', number, number]> = [
+      ['infantry', ox - 1, oy], ['infantry', ox + 1, oy],
+    ];
+    // Add an APC to two of the villages for variety
+    if (id === 'didziasalis' || id === 'straciunai') spots.push(['apc', ox, oy + 1]);
+    const ids: string[] = [];
+    for (const [t, gx, gy] of spots) {
+      const u = createUnit(t, 'enemy', tx(gx), ty(gy));
+      tagDefend(u);
+      (u as Unit & { _role?: string })._role = 'outpost';
+      ids.push(u.id);
+      units.push(u);
+    }
+    outposts[id] = ids;
   }
 }
 
