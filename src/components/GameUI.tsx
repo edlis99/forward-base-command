@@ -10,6 +10,7 @@ import Scene3D from '../scene3d/Scene3D';
 import GameHUD from './GameHUD';
 import MissionSelect from './MissionSelect';
 import DeploymentScreen from './DeploymentScreen';
+import MissionSummary from './MissionSummary';
 
 type Phase = 'briefing' | 'deployment' | 'combat';
 
