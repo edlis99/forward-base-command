@@ -254,7 +254,21 @@ export const leipalingisMission: MissionDef = {
     return s;
   },
   update: (state: GameState, dt: number) => {
-    // ---------- Capture progress at town centre (~90s uncontested to flip) ----------
+    // ---------- Kill / loss tracking (delta-based) ----------
+    const enemyAlive = state.units.filter(u => u.alive && u.team === 'enemy').length;
+    const playerAlive = state.units.filter(u => u.alive && u.team === 'player').length;
+    const prevEnemy = state.script.__prevEnemyAlive as number | undefined;
+    const prevPlayer = state.script.__prevPlayerAlive as number | undefined;
+    if (prevEnemy !== undefined && enemyAlive < prevEnemy) {
+      state.script.__killsEnemy = (state.script.__killsEnemy as number ?? 0) + (prevEnemy - enemyAlive);
+    }
+    if (prevPlayer !== undefined && playerAlive < prevPlayer) {
+      state.script.__lossesPlayer = (state.script.__lossesPlayer as number ?? 0) + (prevPlayer - playerAlive);
+    }
+    state.script.__prevEnemyAlive = enemyAlive;
+    state.script.__prevPlayerAlive = playerAlive;
+
+
     const cp = state.capturePoints.find(c => c.id === 'town_centre');
     if (cp) {
       const here = state.units.filter(u => u.alive && distance(u.pos, cp.pos) < cp.radius);
