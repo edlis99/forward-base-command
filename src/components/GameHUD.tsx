@@ -225,22 +225,7 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
         </div>
       </div>
 
-      {/* Game over */}
-      {gameState.gameOver && (
-        <div className="pointer-events-auto absolute inset-0 flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.75)' }}>
-          <div className="text-center p-8 font-mono" style={{ background: 'rgba(15,20,15,0.96)', border: '2px solid #5a6a5a' }}>
-            <h2 className="text-3xl mb-4" style={{ color: gameState.gameResult === 'win' ? '#5cda5c' : '#da5c5c' }}>
-              {gameState.gameResult === 'win' ? 'MISSION COMPLETE' : 'MISSION FAILED'}
-            </h2>
-            <div className="mb-4 text-sm" style={{ color: '#a5cf6f' }}>{gameState.mission.name}</div>
-            <button onClick={onExit} className="px-4 py-2 border"
-              style={{ background: 'rgba(40,55,40,0.85)', borderColor: '#5a7a5a', color: '#c0d0b0' }}>
-              Return to Mission Select
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Game over overlay now handled by MissionSummary in GameUI. */}
     </div>
   );
 };
