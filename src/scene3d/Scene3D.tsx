@@ -451,6 +451,15 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             <meshBasicMaterial color={u.team === 'player' ? '#7ec0ff' : '#ff8a6a'} transparent opacity={0.95} />
           </mesh>
 
+          {/* suppression pulse ring (visible while suppressed) */}
+          <mesh
+            ref={(el) => { if (el) suppRefs.current.set(u.id, el); else suppRefs.current.delete(u.id); }}
+            position={[0, 0.028, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
+          >
+            <ringGeometry args={[0.85, 1.05, 32]} />
+            <meshBasicMaterial color="#ffb040" transparent opacity={0.5} />
+          </mesh>
+
           {/* digging visuals: progress ring + growing dirt mound parapet */}
           {u.order === 'entrench' && (
             <group>
