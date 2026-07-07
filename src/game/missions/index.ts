@@ -204,7 +204,20 @@ export const leipalingisMission: MissionDef = {
     const town = DEPLOYMENT_TOWNS.find(t => t.id === ctx?.town) ?? DEPLOYMENT_TOWNS[0];
     const comp = ctx?.composition ?? { infantry: 8, tank: 2, apc: 2 };
     spawnPlayerForce(s.units!, town, comp);
-    garrisonLeipalingis(s.units!);
+    const reserveIds: string[] = [];
+    const outpostIds: Record<string, string[]> = {};
+    garrisonLeipalingis(s.units!, reserveIds, outpostIds);
+    s.script!.__reserveIds = reserveIds;
+    s.script!.__outpostIds = outpostIds;
+    s.script!.__counterattackFired = false;
+    s.script!.__counterBannerUntil = 0;
+    s.script!.__clearedVillages = {};
+    s.script!.__deployTown = town.id;
+    // Starting player strength for defeat check (sum of max HP)
+    s.script!.__startStrength = s.units!.filter(u => u.team === 'player').reduce((n, u) => n + u.maxHealth, 0);
+    s.script!.__startTime = 0;
+    s.script!.__killsEnemy = 0;
+    s.script!.__lossesPlayer = 0;
 
     const L = LEIPALINGIS_ANCHORS.leipalingis;
     s.capturePoints!.push({
@@ -221,56 +234,104 @@ export const leipalingisMission: MissionDef = {
       status: 'active',
     });
     s.objectives!.push({
-      id: 'reduce_garrison',
-      description: 'Reduce the enemy garrison (defeat majority of defenders)',
-      status: 'active',
-    });
-    s.objectives!.push({
       id: 'preserve_armour',
       description: 'Keep at least one friendly tank alive',
       status: 'active', optional: true,
     });
+    // Secondary "clear the approach outposts" objectives (skip the deploy town)
+    const villageNames: Record<string, string> = {
+      jovaisiai: 'Jovaišiai', didziasalis: 'Didžiasalis', versiai: 'Veršiai',
+      straciunai: 'Stračiūnai', seirijai: 'Seirijai',
+    };
+    for (const vid of Object.keys(outpostIds)) {
+      if (vid === town.id) continue;
+      s.objectives!.push({
+        id: `clear_${vid}`,
+        description: `Clear the ${villageNames[vid]} outpost`,
+        status: 'active', optional: true,
+      });
+    }
     return s;
   },
   update: (state: GameState, dt: number) => {
-    // Capture progress at town centre
-    for (const cp of state.capturePoints) {
-      if (cp.id !== 'town_centre') continue;
+    // ---------- Capture progress at town centre (~90s uncontested to flip) ----------
+    const cp = state.capturePoints.find(c => c.id === 'town_centre');
+    if (cp) {
       const here = state.units.filter(u => u.alive && distance(u.pos, cp.pos) < cp.radius);
       const p = here.filter(u => u.team === 'player').length;
       const e = here.filter(u => u.team === 'enemy').length;
-      if (p > e) cp.progress = Math.min(1, cp.progress + dt * 0.05);
-      else if (e > p) cp.progress = Math.max(-1, cp.progress - dt * 0.03);
+      if (p > 0 && e === 0) cp.progress = Math.min(1, cp.progress + dt * (2 / 90));       // 0→1 in ~90s from empty
+      else if (e > 0 && p === 0) cp.progress = Math.max(-1, cp.progress - dt * (2 / 120));// enemies retake slower
+      else if (p > 0 && e > 0) cp.progress = Math.max(-1, cp.progress - dt * 0.05);       // contested: slight decay
       if (cp.progress >= 0.9) cp.owner = 'player';
       else if (cp.progress <= -0.9) cp.owner = 'enemy';
+      else cp.owner = 'neutral';
+
+      // ---------- Counterattack trigger ----------
+      if (!state.script.__counterattackFired && p > 0) {
+        state.script.__counterattackFired = true;
+        state.script.__counterBannerUntil = state.time + 6;
+        const ids = (state.script.__reserveIds as string[]) ?? [];
+        for (const id of ids) {
+          const u = state.units.find(x => x.id === id && x.alive);
+          if (!u) continue;
+          u.order = 'attack_move';
+          u.stance = 'aggressive';
+          setDestination(u, state, cp.pos);
+        }
+        state.eventLog.unshift({
+          message: 'Enemy reserves counterattacking from the church square!',
+          time: state.time, type: 'contact',
+        });
+      }
     }
 
-    const enemies = state.units.filter(u => u.alive && u.team === 'enemy');
-    const enemyCount = enemies.length;
-    const initialEnemies = (state.script.__initialEnemies as number | undefined) ??
-      ((state.script.__initialEnemies = enemyCount) as number);
-    const reduced = enemyCount / initialEnemies < 0.25;
-    const centreHeld = state.capturePoints.find(c => c.id === 'town_centre')?.owner === 'player';
+    // ---------- Secondary: clear village outposts (grants reinforcements) ----------
+    const cleared = state.script.__clearedVillages as Record<string, boolean>;
+    const outpostIds = state.script.__outpostIds as Record<string, string[]>;
+    for (const vid of Object.keys(outpostIds ?? {})) {
+      if (cleared[vid]) continue;
+      const ids = outpostIds[vid];
+      const alive = state.units.some(u => u.alive && u.team === 'enemy' && ids.includes(u.id));
+      if (!alive) {
+        cleared[vid] = true;
+        const obj = state.objectives.find(o => o.id === `clear_${vid}`);
+        if (obj) obj.status = 'complete';
+        state.reinforcementBudget += 60; // token — ~2 infantry
+        state.eventLog.unshift({
+          message: `${vid} outpost cleared — reinforcements granted`,
+          time: state.time, type: 'reward',
+        });
+      }
+    }
 
-    const reduceObj = state.objectives.find(o => o.id === 'reduce_garrison');
-    if (reduceObj && reduceObj.status === 'active' && reduced) reduceObj.status = 'complete';
-
-    const capObj = state.objectives.find(o => o.id === 'capture_centre');
-    if (capObj && capObj.status === 'active' && centreHeld) capObj.status = 'complete';
-
+    // ---------- Optional: preserve armour ----------
     const armourObj = state.objectives.find(o => o.id === 'preserve_armour');
     if (armourObj && armourObj.status === 'active') {
       const tankAlive = state.units.some(u => u.alive && u.team === 'player' && u.type === 'tank');
       if (!tankAlive) armourObj.status = 'failed';
     }
 
-    if (capObj?.status === 'complete' && reduceObj?.status === 'complete' && !state.gameOver) {
+    // ---------- Win/loss ----------
+    const capObj = state.objectives.find(o => o.id === 'capture_centre');
+    const centreHeld = cp?.owner === 'player' && (cp?.progress ?? 0) >= 1;
+    if (capObj && capObj.status === 'active' && centreHeld) capObj.status = 'complete';
+
+    if (!state.gameOver && centreHeld) {
       state.gameOver = true; state.gameResult = 'win';
       state.eventLog.unshift({ message: 'Leipalingis retaken. Silver Birch complete.', time: state.time, type: 'objective' });
     }
 
-    const anyPlayer = state.units.some(u => u.alive && u.team === 'player');
-    if (!anyPlayer) { state.gameOver = true; state.gameResult = 'lose'; }
+    // Defeat: <25% starting strength AND not holding centre
+    const startStrength = (state.script.__startStrength as number) || 1;
+    const curStrength = state.units.filter(u => u.alive && u.team === 'player').reduce((n, u) => n + u.health, 0);
+    if (!state.gameOver && curStrength / startStrength < 0.25 && !centreHeld) {
+      state.gameOver = true; state.gameResult = 'lose';
+      state.eventLog.unshift({ message: 'Force combat-ineffective. Withdrawal ordered.', time: state.time, type: 'objective' });
+    }
+    if (!state.gameOver && !state.units.some(u => u.alive && u.team === 'player')) {
+      state.gameOver = true; state.gameResult = 'lose';
+    }
   },
 };
 
