@@ -110,56 +110,90 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
   const floorRef = useRef<THREE.InstancedMesh>(null);
   const parapetARef = useRef<THREE.InstancedMesh>(null);
   const parapetBRef = useRef<THREE.InstancedMesh>(null);
+  const sandbagRef = useRef<THREE.InstancedMesh>(null);
+
+  // Deterministic per-cell jitter so parapets look irregular / hand-dug
+  const jitter = (x: number, y: number, salt: number) => {
+    const s = Math.sin(x * 127.1 + y * 311.7 + salt * 74.7) * 43758.5453;
+    return s - Math.floor(s); // 0..1
+  };
 
   useEffect(() => {
     const tmp = new THREE.Object3D();
     if (floorRef.current) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
-        tmp.position.set(c.x + 0.5, -0.18, c.y + 0.5);
-        tmp.scale.set(1, 0.36, 1);
+        // Deeper trench floor (0.55 deep, top at ~0)
+        tmp.position.set(c.x + 0.5, -0.28, c.y + 0.5);
+        tmp.scale.set(1, 0.55, 1);
         tmp.rotation.y = 0;
         tmp.updateMatrix();
         floorRef.current.setMatrixAt(i, tmp.matrix);
       }
       floorRef.current.instanceMatrix.needsUpdate = true;
     }
-    // Parapet A: one side
     if (parapetARef.current && parapetBRef.current) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
-        // horiz trench => parapets along ±z; vertical trench => parapets along ±x
+        // Per-cell jittered height + thickness for hand-dug look
+        const hA = 0.55 + jitter(c.x, c.y, 1) * 0.35;
+        const hB = 0.55 + jitter(c.x, c.y, 2) * 0.35;
+        const thA = 0.28 + jitter(c.x, c.y, 3) * 0.14;
+        const thB = 0.28 + jitter(c.x, c.y, 4) * 0.14;
+        const yaw = (jitter(c.x, c.y, 5) - 0.5) * 0.25;
         if (c.horiz) {
-          tmp.position.set(c.x + 0.5, 0.18, c.y + 0.1);
-          tmp.scale.set(1, 0.45, 0.22);
+          tmp.position.set(c.x + 0.5, hA * 0.5, c.y + thA * 0.5);
+          tmp.scale.set(1, hA, thA);
         } else {
-          tmp.position.set(c.x + 0.1, 0.18, c.y + 0.5);
-          tmp.scale.set(0.22, 0.45, 1);
+          tmp.position.set(c.x + thA * 0.5, hA * 0.5, c.y + 0.5);
+          tmp.scale.set(thA, hA, 1);
         }
-        tmp.rotation.y = 0;
+        tmp.rotation.y = yaw;
         tmp.updateMatrix();
         parapetARef.current.setMatrixAt(i, tmp.matrix);
 
         if (c.horiz) {
-          tmp.position.set(c.x + 0.5, 0.18, c.y + 0.9);
+          tmp.position.set(c.x + 0.5, hB * 0.5, c.y + 1 - thB * 0.5);
+          tmp.scale.set(1, hB, thB);
         } else {
-          tmp.position.set(c.x + 0.9, 0.18, c.y + 0.5);
+          tmp.position.set(c.x + 1 - thB * 0.5, hB * 0.5, c.y + 0.5);
+          tmp.scale.set(thB, hB, 1);
         }
+        tmp.rotation.y = -yaw;
         tmp.updateMatrix();
         parapetBRef.current.setMatrixAt(i, tmp.matrix);
       }
       parapetARef.current.instanceMatrix.needsUpdate = true;
       parapetBRef.current.instanceMatrix.needsUpdate = true;
     }
+    // Sandbag caps: one bag per ~3rd cell at a random parapet side
+    if (sandbagRef.current) {
+      for (let i = 0; i < cells.length; i++) {
+        const c = cells[i];
+        const show = jitter(c.x, c.y, 9) < 0.42;
+        if (!show) { tmp.scale.set(0, 0, 0); tmp.updateMatrix(); sandbagRef.current.setMatrixAt(i, tmp.matrix); continue; }
+        const sideA = jitter(c.x, c.y, 10) < 0.5;
+        if (c.horiz) {
+          tmp.position.set(c.x + 0.3 + jitter(c.x, c.y, 11) * 0.4, 0.78, c.y + (sideA ? 0.14 : 0.86));
+          tmp.scale.set(0.55, 0.32, 0.32);
+        } else {
+          tmp.position.set(c.x + (sideA ? 0.14 : 0.86), 0.78, c.y + 0.3 + jitter(c.x, c.y, 11) * 0.4);
+          tmp.scale.set(0.32, 0.32, 0.55);
+        }
+        tmp.rotation.y = (jitter(c.x, c.y, 12) - 0.5) * 0.4;
+        tmp.updateMatrix();
+        sandbagRef.current.setMatrixAt(i, tmp.matrix);
+      }
+      sandbagRef.current.instanceMatrix.needsUpdate = true;
+    }
   }, [cells]);
 
-  if (cells.length === 0) return null;
   if (cells.length === 0) return null;
   return (
     <group key={cells.length}>
       <instancedMesh ref={floorRef} args={[undefined, undefined, cells.length]} receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#241a12" flatShading roughness={1} />
+        <meshStandardMaterial color="#1e150e" flatShading roughness={1} />
       </instancedMesh>
       <instancedMesh ref={parapetARef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
@@ -168,6 +202,10 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
       <instancedMesh ref={parapetBRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
         <meshStandardMaterial color="#4a3520" flatShading roughness={1} />
+      </instancedMesh>
+      <instancedMesh ref={sandbagRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#8a7a52" flatShading roughness={1} />
       </instancedMesh>
     </group>
   );
