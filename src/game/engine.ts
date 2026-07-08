@@ -44,6 +44,9 @@ export function createInitialState(mission: MissionDef, deployment?: import('./t
     script: initial.script ?? {},
     detectionMultiplier: initial.detectionMultiplier ?? 1,
     debug: { showCover: false, showConcealment: false, showTactical: false },
+    fireSupport: { heTokens: 3, smokeTokens: 2, cooldown: 0, armed: null, counterCooldown: 75 },
+    fireMissions: [],
+    smokeZones: [],
   };
   state.units = initial.units ?? [];
   state.eventLog.unshift({ message: `Mission: ${mission.name}`, time: 0, type: 'objective' });
