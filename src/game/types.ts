@@ -144,6 +144,30 @@ export interface CommandMarker {
   max: number;
 }
 
+export type FireKind = 'he' | 'smoke' | 'counter';
+export interface FireMission {
+  id: string;
+  pos: Position;
+  kind: FireKind;
+  team: Team;
+  delay: number;         // seconds until first impact
+  salvoLeft: number;     // impacts remaining
+  salvoInterval: number; // seconds between impacts
+  intervalTimer: number;
+  radius: number;
+  damage: number;
+}
+export interface SmokeZone {
+  id: string; pos: Position; radius: number; timer: number; maxTimer: number;
+}
+export interface FireSupportState {
+  heTokens: number;
+  smokeTokens: number;
+  cooldown: number;        // shared cooldown between calls
+  armed: 'he' | 'smoke' | null;
+  counterCooldown: number; // until enemy counter-battery
+}
+
 export interface GameState {
   units: Unit[];
   terrain: TerrainCell[][];
@@ -180,6 +204,10 @@ export interface GameState {
   debug: DebugFlags;
   /** Threat / last-seen memory fields (Stage 3). Allocated lazily by threatMap. */
   threat?: import('./threatMap').ThreatMap;
+  /** Off-map fire support (artillery/mortars). */
+  fireSupport: FireSupportState;
+  fireMissions: FireMission[];
+  smokeZones: SmokeZone[];
 }
 
 export interface DebugFlags {
