@@ -314,41 +314,26 @@ function buildLeipalingisRegion(grid: TerrainCell[][], rand: () => number) {
   // Curve a path between two anchors using two seeded perpendicular offsets
   // to produce an S-curve; then rasterize with a 2-cell-wide brush that shifts
   // to follow the tangent (so it never looks like a ruled line).
-  const curveRoad = (ax: number, ay: number, bx: number, by: number, curviness = 1) => {
-    const mx = (ax + bx) / 2;
-    const my = (ay + by) / 2;
-    const dx = bx - ax, dy = by - ay;
-    const len = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-    const nx = -dy / len, ny = dx / len; // perpendicular
-    // Two control points with opposite offsets => S-curve
-    const off1 = (rand() * 2 - 1) * len * 0.18 * curviness + Math.sign(rand() - 0.5) * len * 0.08 * curviness;
-    const off2 = -(rand() * 2 - 1) * len * 0.18 * curviness - Math.sign(rand() - 0.5) * len * 0.08 * curviness;
-    const c1x = ax + dx * 0.33 + nx * off1;
-    const c1y = ay + dy * 0.33 + ny * off1;
-    const c2x = ax + dx * 0.66 + nx * off2;
-    const c2y = ay + dy * 0.66 + ny * off2;
-    // Cubic Bezier sampling
+  // Sample a cubic Bezier between two points with two control offsets
+  const rasterCubic = (ax: number, ay: number, bx: number, by: number,
+                       c1x: number, c1y: number, c2x: number, c2y: number) => {
+    const len = Math.hypot(bx - ax, by - ay);
     const steps = Math.max(80, Math.round(len * 2.5));
     let prevGx = -1, prevGy = -1;
     for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const it = 1 - t;
+      const t = i / steps, it = 1 - t;
       const px = it * it * it * ax + 3 * it * it * t * c1x + 3 * it * t * t * c2x + t * t * t * bx;
       const py = it * it * it * ay + 3 * it * it * t * c1y + 3 * it * t * t * c2y + t * t * t * by;
-      // tangent for perpendicular thickness
       const tx = 3 * it * it * (c1x - ax) + 6 * it * t * (c2x - c1x) + 3 * t * t * (bx - c2x);
       const ty = 3 * it * it * (c1y - ay) + 6 * it * t * (c2y - c1y) + 3 * t * t * (by - c2y);
-      const tl = Math.max(0.001, Math.sqrt(tx * tx + ty * ty));
+      const tl = Math.max(0.001, Math.hypot(tx, ty));
       const px2 = -ty / tl, py2 = tx / tl;
       const gx = Math.round(px), gy = Math.round(py);
       if (gx === prevGx && gy === prevGy) continue;
       prevGx = gx; prevGy = gy;
       paintRoad(gx, gy);
-      // 2-wide (perpendicular) with occasional 3-wide near midpoint
       paintRoad(Math.round(px + px2), Math.round(py + py2));
-      const wide = Math.abs(t - 0.5) < 0.08 || rand() < 0.06;
-      if (wide) paintRoad(Math.round(px - px2), Math.round(py - py2));
-      // Minor jitter for a lived-in surface
+      if (Math.abs(t - 0.5) < 0.08 || rand() < 0.06) paintRoad(Math.round(px - px2), Math.round(py - py2));
       if (rand() < 0.08) {
         const jx = Math.round(px + px2 * 1.6);
         const jy = Math.round(py + py2 * 1.6);
@@ -359,19 +344,53 @@ function buildLeipalingisRegion(grid: TerrainCell[][], rand: () => number) {
     }
   };
 
+  // Multi-waypoint curved road. Inserts intermediate waypoints offset
+  // perpendicular to the straight line so the route weaves organically,
+  // and forces an angled final approach so roads never enter a village head-on.
+  const curveRoad = (ax: number, ay: number, bx: number, by: number, curviness = 1) => {
+    const dx = bx - ax, dy = by - ay;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const nx = -dy / len, ny = dx / len;
+    const segs = len > 60 ? 3 : 2;
+    const pts: Array<[number, number]> = [[ax, ay]];
+    for (let s = 1; s < segs; s++) {
+      const t = s / segs;
+      const side = (s % 2 === 0 ? 1 : -1) * (rand() < 0.5 ? 1 : -1);
+      const mag = len * (0.12 + rand() * 0.14) * curviness * side;
+      const along = t + (rand() - 0.5) * 0.08;
+      pts.push([ax + dx * along + nx * mag, ay + dy * along + ny * mag]);
+    }
+    const approachSide = (rand() < 0.5 ? 1 : -1);
+    const approachMag = len * 0.09 * curviness * approachSide;
+    pts.push([ax + dx * 0.88 + nx * approachMag, ay + dy * 0.88 + ny * approachMag]);
+    pts.push([bx, by]);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [px1, py1] = pts[i];
+      const [px2, py2] = pts[i + 1];
+      const sdx = px2 - px1, sdy = py2 - py1;
+      const slen = Math.max(1, Math.hypot(sdx, sdy));
+      const snx = -sdy / slen, sny = sdx / slen;
+      const off1 = (rand() * 2 - 1) * slen * 0.22 * curviness;
+      const off2 = -(rand() * 2 - 1) * slen * 0.22 * curviness;
+      const c1x = px1 + sdx * 0.33 + snx * off1;
+      const c1y = py1 + sdy * 0.33 + sny * off1;
+      const c2x = px1 + sdx * 0.66 + snx * off2;
+      const c2y = py1 + sdy * 0.66 + sny * off2;
+      rasterCubic(px1, py1, px2, py2, c1x, c1y, c2x, c2y);
+    }
+  };
+
   const A = LEIPALINGIS_ANCHORS;
   // Radial main roads into Leipalingis — all curved, none straight
-  curveRoad(A.jovaisiai.x, A.jovaisiai.y, A.leipalingis.x, A.leipalingis.y, 1.1);
-  curveRoad(A.didziasalis.x, A.didziasalis.y, A.leipalingis.x, A.leipalingis.y, 1.0);
-  curveRoad(A.versiai.x, A.versiai.y, A.leipalingis.x, A.leipalingis.y, 1.2);
-  curveRoad(A.straciunai.x, A.straciunai.y, A.leipalingis.x, A.leipalingis.y, 1.1);
-  // Seirijai reaches Leipalingis via Jovaišiai (longer, safer arc)
-  curveRoad(A.seirijai.x, A.seirijai.y, A.jovaisiai.x, A.jovaisiai.y, 1.3);
-  curveRoad(A.seirijai.x, A.seirijai.y, A.straciunai.x, A.straciunai.y, 1.2);
-  // Ring / inter-village links
-  curveRoad(A.jovaisiai.x, A.jovaisiai.y, A.didziasalis.x, A.didziasalis.y, 0.9);
-  curveRoad(A.straciunai.x, A.straciunai.y, A.versiai.x, A.versiai.y, 1.0);
-  curveRoad(A.didziasalis.x, A.didziasalis.y, A.versiai.x, A.versiai.y, 1.1);
+  curveRoad(A.jovaisiai.x, A.jovaisiai.y, A.leipalingis.x, A.leipalingis.y, 1.3);
+  curveRoad(A.didziasalis.x, A.didziasalis.y, A.leipalingis.x, A.leipalingis.y, 1.2);
+  curveRoad(A.versiai.x, A.versiai.y, A.leipalingis.x, A.leipalingis.y, 1.4);
+  curveRoad(A.straciunai.x, A.straciunai.y, A.leipalingis.x, A.leipalingis.y, 1.3);
+  curveRoad(A.seirijai.x, A.seirijai.y, A.jovaisiai.x, A.jovaisiai.y, 1.4);
+  curveRoad(A.seirijai.x, A.seirijai.y, A.straciunai.x, A.straciunai.y, 1.3);
+  curveRoad(A.jovaisiai.x, A.jovaisiai.y, A.didziasalis.x, A.didziasalis.y, 1.1);
+  curveRoad(A.straciunai.x, A.straciunai.y, A.versiai.x, A.versiai.y, 1.2);
+  curveRoad(A.didziasalis.x, A.didziasalis.y, A.versiai.x, A.versiai.y, 1.3);
 
   // Dirt tracks (flanking cover-y routes)
   const dirtTrack = (ax: number, ay: number, bx: number, by: number) => {
