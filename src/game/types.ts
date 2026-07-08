@@ -204,6 +204,10 @@ export interface GameState {
   debug: DebugFlags;
   /** Threat / last-seen memory fields (Stage 3). Allocated lazily by threatMap. */
   threat?: import('./threatMap').ThreatMap;
+  /** Off-map fire support (artillery/mortars). */
+  fireSupport: FireSupportState;
+  fireMissions: FireMission[];
+  smokeZones: SmokeZone[];
 }
 
 export interface DebugFlags {
