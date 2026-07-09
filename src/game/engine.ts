@@ -1,5 +1,5 @@
 import { GameState, InputState, MissionDef, Position, FormationType, Unit, CommandMarker, CommandMarkerType, DebugFlags } from './types';
-import { generateTerrain, getTerrainAt, canDigHere, digTrench } from './terrain';
+import { generateTerrain, getTerrainAt, canDigHere, digTrench, findNearestPassableWorld } from './terrain';
 import { setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
 import { updateAI } from './ai';
 import { updateAwareness } from './awareness';
