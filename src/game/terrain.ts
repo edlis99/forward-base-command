@@ -673,6 +673,54 @@ export function isPassable(cell: TerrainCell | null, isVehicle: boolean, isHelic
   return true;
 }
 
+/** Footprint-aware passability. Vehicles need clearance in a neighborhood, not just one cell. */
+export function isFootprintPassable(
+  terrain: TerrainCell[][],
+  gx: number, gy: number,
+  isVehicle: boolean, isHelicopter: boolean,
+  radius?: number,
+): boolean {
+  if (isHelicopter) return true;
+  const r = radius ?? (isVehicle ? 1 : 0);
+  for (let dy = -r; dy <= r; dy++) {
+    for (let dx = -r; dx <= r; dx++) {
+      const nx = gx + dx, ny = gy + dy;
+      if (nx < 0 || nx >= MAP_COLS || ny < 0 || ny >= MAP_ROWS) return false;
+      if (!isPassable(terrain[ny][nx], isVehicle, isHelicopter)) return false;
+    }
+  }
+  return true;
+}
+
+/** BFS-nearest passable cell (footprint aware). Returns world-space center of that cell. */
+export function findNearestPassableWorld(
+  terrain: TerrainCell[][],
+  worldX: number, worldY: number,
+  isVehicle: boolean, isHelicopter: boolean,
+  maxRadius = 8,
+): { x: number; y: number } {
+  if (isHelicopter) return { x: worldX, y: worldY };
+  const gx = Math.max(0, Math.min(MAP_COLS - 1, Math.floor(worldX / CELL_SIZE)));
+  const gy = Math.max(0, Math.min(MAP_ROWS - 1, Math.floor(worldY / CELL_SIZE)));
+  if (isFootprintPassable(terrain, gx, gy, isVehicle, false)) return { x: worldX, y: worldY };
+  let best: { x: number; y: number; d: number } | null = null;
+  for (let r = 1; r <= maxRadius; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+        const nx = gx + dx, ny = gy + dy;
+        if (isFootprintPassable(terrain, nx, ny, isVehicle, false)) {
+          const d = dx * dx + dy * dy;
+          if (!best || d < best.d) best = { x: nx, y: ny, d };
+        }
+      }
+    }
+    if (best) break;
+  }
+  if (!best) return { x: worldX, y: worldY };
+  return { x: best.x * CELL_SIZE + CELL_SIZE / 2, y: best.y * CELL_SIZE + CELL_SIZE / 2 };
+}
+
 export function losInfo(
   terrain: TerrainCell[][],
   fromX: number, fromY: number, toX: number, toY: number,
