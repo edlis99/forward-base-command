@@ -49,6 +49,14 @@ export function createInitialState(mission: MissionDef, deployment?: import('./t
     smokeZones: [],
   };
   state.units = initial.units ?? [];
+  // Snap any unit that spawned on impassable terrain to the nearest passable cell.
+  for (const u of state.units) {
+    const veh = u.type === 'tank' || u.type === 'apc';
+    const heli = u.type === 'helicopter';
+    const snapped = findNearestPassableWorld(terrain, u.pos.x, u.pos.y, veh, heli, 10);
+    u.pos.x = snapped.x; u.pos.y = snapped.y;
+    u.homePos = { x: snapped.x, y: snapped.y };
+  }
   state.eventLog.unshift({ message: `Mission: ${mission.name}`, time: 0, type: 'objective' });
   return state;
 }
