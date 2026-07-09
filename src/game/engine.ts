@@ -1,5 +1,5 @@
 import { GameState, InputState, MissionDef, Position, FormationType, Unit, CommandMarker, CommandMarkerType, DebugFlags } from './types';
-import { generateTerrain, getTerrainAt, canDigHere, digTrench } from './terrain';
+import { generateTerrain, getTerrainAt, canDigHere, digTrench, findNearestPassableWorld } from './terrain';
 import { setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
 import { updateAI } from './ai';
 import { updateAwareness } from './awareness';
@@ -49,6 +49,14 @@ export function createInitialState(mission: MissionDef, deployment?: import('./t
     smokeZones: [],
   };
   state.units = initial.units ?? [];
+  // Snap any unit that spawned on impassable terrain to the nearest passable cell.
+  for (const u of state.units) {
+    const veh = u.type === 'tank' || u.type === 'apc';
+    const heli = u.type === 'helicopter';
+    const snapped = findNearestPassableWorld(terrain, u.pos.x, u.pos.y, veh, heli, 10);
+    u.pos.x = snapped.x; u.pos.y = snapped.y;
+    u.homePos = { x: snapped.x, y: snapped.y };
+  }
   state.eventLog.unshift({ message: `Mission: ${mission.name}`, time: 0, type: 'objective' });
   return state;
 }
@@ -416,9 +424,13 @@ export function spawnReinforcement(type: import('./types').UnitType, state: Game
     state.rewardCP -= rem;
   }
   const friendly = state.units.find(u => u.alive && u.team === 'player');
-  const spawn = friendly ? { x: friendly.pos.x - 80, y: friendly.pos.y } : { x: 60, y: 600 };
+  const rawSpawn = friendly ? { x: friendly.pos.x - 80, y: friendly.pos.y } : { x: 60, y: 600 };
+  const veh = type === 'tank' || type === 'apc';
+  const heli = type === 'helicopter';
+  const spawn = findNearestPassableWorld(state.terrain, rawSpawn.x, rawSpawn.y, veh, heli, 12);
   const { createUnit } = require('./units') as typeof import('./units');
   const u = createUnit(type, 'player', spawn.x, spawn.y);
+  u.homePos = { x: spawn.x, y: spawn.y };
   state.units.push(u);
   state.eventLog.unshift({ message: `Reinforcement: ${type}`, time: state.time, type: 'spawn' });
   return true;

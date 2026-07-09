@@ -1,6 +1,6 @@
 import { Unit, UnitType, Team, Position, GameState, Stance } from './types';
 import { UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS } from './constants';
-import { getTerrainAt, hasLineOfSight, losInfo, isPassable } from './terrain';
+import { getTerrainAt, hasLineOfSight, losInfo, isPassable, isFootprintPassable } from './terrain';
 import { findPath } from './pathfinding';
 import { isVisibleTo } from './awareness';
 
@@ -212,7 +212,11 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const nextX = unit.pos.x + unit.vel.x * dt;
   const nextY = unit.pos.y + unit.vel.y * dt;
   const nextT = getTerrainAt(state.terrain, nextX, nextY);
-  if (heli || isPassable(nextT, veh, false)) {
+  const ngx = Math.floor(nextX / CELL_SIZE), ngy = Math.floor(nextY / CELL_SIZE);
+  const stepOk = heli || (veh
+    ? isFootprintPassable(state.terrain, ngx, ngy, true, false, 1)
+    : isPassable(nextT, false, false));
+  if (stepOk) {
     unit.pos.x = nextX; unit.pos.y = nextY;
     unit.stuckTimer = 0;
     if (!heli && nextT && (nextT.type === 'tall_grass' || (nextT.type === 'forest' && veh))) {
@@ -221,12 +225,25 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   } else {
     unit.vel.x *= 0.3; unit.vel.y *= 0.3;
     unit.stuckTimer += dt;
-    if (unit.stuckTimer > 0.6) {
+    if (unit.stuckTimer > 0.25) {
+      // Try a small perpendicular detour first, then a full re-path.
       const dest = unit.finalDest ?? unit.targetPos;
-      if (dest) setDestination(unit, state, dest);
+      if (dest) {
+        const dxToDest = dest.x - unit.pos.x, dyToDest = dest.y - unit.pos.y;
+        const dl = Math.hypot(dxToDest, dyToDest) || 1;
+        const side = Math.random() < 0.5 ? 1 : -1;
+        const detour = {
+          x: unit.pos.x + (dxToDest / dl) * CELL_SIZE * 1.2 + (-dyToDest / dl) * CELL_SIZE * 1.5 * side,
+          y: unit.pos.y + (dyToDest / dl) * CELL_SIZE * 1.2 + (dxToDest / dl) * CELL_SIZE * 1.5 * side,
+        };
+        setDestination(unit, state, detour);
+        // Preserve original goal as follow-up waypoint.
+        if (unit.targetPos) unit.waypoints.unshift(dest);
+      }
       unit.stuckTimer = 0;
     }
   }
+
 
   // No-progress detector: if dist to target hasn't shrunk in ~0.7s, re-path to final dest.
   if (state.time - unit.lastProgressTime > 0.7) {

@@ -1,11 +1,12 @@
 import { TerrainCell, Position, UnitType } from './types';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from './constants';
-import { isPassable } from './terrain';
+import { isPassable, isFootprintPassable } from './terrain';
 
 interface Node { gx: number; gy: number; g: number; f: number; parent: Node | null; }
 
 function cellPassable(terrain: TerrainCell[][], gx: number, gy: number, vehicle: boolean, heli: boolean): boolean {
   if (gx < 0 || gx >= MAP_COLS || gy < 0 || gy >= MAP_ROWS) return false;
+  if (vehicle) return isFootprintPassable(terrain, gx, gy, true, false, 1);
   return isPassable(terrain[gy][gx], vehicle, heli);
 }
 
