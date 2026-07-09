@@ -73,8 +73,10 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
 }
 
 /**
- * Render trench cells as a sunken floor plus two parapet walls (dirt mounds)
- * oriented along the trench's main axis (derived from neighboring trench cells).
+ * Zig-zag trench system with a sunken floor, firing step, and mixed
+ * sandbag / timber / earth revetments per cell (deterministic by grid pos).
+ * Each cell's parapet is split into two half-length yawed segments so the
+ * fortification kinks every cell instead of forming a straight box.
  */
 function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
   const computeCells = () => {
@@ -99,117 +101,167 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
     pollRef.current = 0;
     const next = computeCells();
     if (next.length !== cells.length) { setCells(next); return; }
-    // detect change in trench layout by sampling signature
     for (let i = 0; i < next.length; i++) {
       const a = next[i], b = cells[i];
       if (a.x !== b.x || a.y !== b.y || a.horiz !== b.horiz) { setCells(next); return; }
     }
   });
 
-
   const floorRef = useRef<THREE.InstancedMesh>(null);
-  const parapetARef = useRef<THREE.InstancedMesh>(null);
-  const parapetBRef = useRef<THREE.InstancedMesh>(null);
-  const sandbagRef = useRef<THREE.InstancedMesh>(null);
+  const stepRef = useRef<THREE.InstancedMesh>(null);
+  const parapetRef = useRef<THREE.InstancedMesh>(null);
+  const capRef = useRef<THREE.InstancedMesh>(null);
 
-  // Deterministic per-cell jitter so parapets look irregular / hand-dug
   const jitter = (x: number, y: number, salt: number) => {
     const s = Math.sin(x * 127.1 + y * 311.7 + salt * 74.7) * 43758.5453;
-    return s - Math.floor(s); // 0..1
+    return s - Math.floor(s);
   };
 
   useEffect(() => {
     const tmp = new THREE.Object3D();
+    const col = new THREE.Color();
+    const EARTH = '#3d2a18';
+    const EARTH2 = '#4a3520';
+    const SANDBAG = '#a3915f';
+    const SANDBAG_CAP = '#c2ac74';
+    const TIMBER = '#2b1e0f';
+    const TIMBER_CAP = '#4a3418';
+
     if (floorRef.current) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
-        // Deeper trench floor (0.55 deep, top at ~0)
-        tmp.position.set(c.x + 0.5, -0.28, c.y + 0.5);
-        tmp.scale.set(1, 0.55, 1);
+        tmp.position.set(c.x + 0.5, -0.4, c.y + 0.5);
+        tmp.scale.set(1, 0.8, 1);
         tmp.rotation.y = 0;
         tmp.updateMatrix();
         floorRef.current.setMatrixAt(i, tmp.matrix);
       }
       floorRef.current.instanceMatrix.needsUpdate = true;
     }
-    if (parapetARef.current && parapetBRef.current) {
-      for (let i = 0; i < cells.length; i++) {
-        const c = cells[i];
-        // Per-cell jittered height + thickness for hand-dug look
-        const hA = 0.55 + jitter(c.x, c.y, 1) * 0.35;
-        const hB = 0.55 + jitter(c.x, c.y, 2) * 0.35;
-        const thA = 0.28 + jitter(c.x, c.y, 3) * 0.14;
-        const thB = 0.28 + jitter(c.x, c.y, 4) * 0.14;
-        const yaw = (jitter(c.x, c.y, 5) - 0.5) * 0.25;
-        if (c.horiz) {
-          tmp.position.set(c.x + 0.5, hA * 0.5, c.y + thA * 0.5);
-          tmp.scale.set(1, hA, thA);
-        } else {
-          tmp.position.set(c.x + thA * 0.5, hA * 0.5, c.y + 0.5);
-          tmp.scale.set(thA, hA, 1);
-        }
-        tmp.rotation.y = yaw;
-        tmp.updateMatrix();
-        parapetARef.current.setMatrixAt(i, tmp.matrix);
 
-        if (c.horiz) {
-          tmp.position.set(c.x + 0.5, hB * 0.5, c.y + 1 - thB * 0.5);
-          tmp.scale.set(1, hB, thB);
-        } else {
-          tmp.position.set(c.x + 1 - thB * 0.5, hB * 0.5, c.y + 0.5);
-          tmp.scale.set(thB, hB, 1);
-        }
-        tmp.rotation.y = -yaw;
-        tmp.updateMatrix();
-        parapetBRef.current.setMatrixAt(i, tmp.matrix);
-      }
-      parapetARef.current.instanceMatrix.needsUpdate = true;
-      parapetBRef.current.instanceMatrix.needsUpdate = true;
-    }
-    // Sandbag caps: one bag per ~3rd cell at a random parapet side
-    if (sandbagRef.current) {
+    // Firing step: narrow raised strip along the trench interior center
+    if (stepRef.current) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
-        const show = jitter(c.x, c.y, 9) < 0.42;
-        if (!show) { tmp.scale.set(0, 0, 0); tmp.updateMatrix(); sandbagRef.current.setMatrixAt(i, tmp.matrix); continue; }
-        const sideA = jitter(c.x, c.y, 10) < 0.5;
         if (c.horiz) {
-          tmp.position.set(c.x + 0.3 + jitter(c.x, c.y, 11) * 0.4, 0.78, c.y + (sideA ? 0.14 : 0.86));
-          tmp.scale.set(0.55, 0.32, 0.32);
+          tmp.position.set(c.x + 0.5, -0.16, c.y + 0.5);
+          tmp.scale.set(0.95, 0.35, 0.32);
         } else {
-          tmp.position.set(c.x + (sideA ? 0.14 : 0.86), 0.78, c.y + 0.3 + jitter(c.x, c.y, 11) * 0.4);
-          tmp.scale.set(0.32, 0.32, 0.55);
+          tmp.position.set(c.x + 0.5, -0.16, c.y + 0.5);
+          tmp.scale.set(0.32, 0.35, 0.95);
         }
-        tmp.rotation.y = (jitter(c.x, c.y, 12) - 0.5) * 0.4;
+        tmp.rotation.y = 0;
         tmp.updateMatrix();
-        sandbagRef.current.setMatrixAt(i, tmp.matrix);
+        stepRef.current.setMatrixAt(i, tmp.matrix);
       }
-      sandbagRef.current.instanceMatrix.needsUpdate = true;
+      stepRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // Parapets: 4 zig-zag segments per cell (2 sides × 2 halves), colored
+    // per cell by revetment material.
+    if (parapetRef.current && capRef.current) {
+      let pIdx = 0, cIdx = 0;
+      for (let i = 0; i < cells.length; i++) {
+        const c = cells[i];
+        const kinkSign = ((c.x + c.y) % 2 === 0 ? 1 : -1);
+        const kink = kinkSign * (0.18 + jitter(c.x, c.y, 7) * 0.16);
+        const hBase = 0.75 + jitter(c.x, c.y, 1) * 0.28;
+        const th = 0.34 + jitter(c.x, c.y, 3) * 0.14;
+        const halfLen = 0.52;
+
+        // material per cell: 0 earth, 1 sandbag, 2 timber
+        const mRoll = jitter(c.x, c.y, 8);
+        const mat = mRoll < 0.42 ? 0 : mRoll < 0.78 ? 1 : 2;
+        const baseHex = mat === 0
+          ? (jitter(c.x, c.y, 15) < 0.5 ? EARTH : EARTH2)
+          : mat === 1 ? SANDBAG : TIMBER;
+        col.setStyle(baseHex);
+
+        for (const side of [-1, 1] as const) {
+          for (const half of [-1, 1] as const) {
+            const yaw = kink * half * side;
+            const h = hBase + (jitter(c.x, c.y, 20 + side * 3 + half) - 0.5) * 0.12;
+            if (c.horiz) {
+              const zPos = c.y + (side < 0 ? th * 0.5 : 1 - th * 0.5);
+              const xPos = c.x + 0.5 + half * halfLen * 0.5;
+              tmp.position.set(xPos, h * 0.5, zPos);
+              tmp.scale.set(halfLen, h, th);
+            } else {
+              const xPos = c.x + (side < 0 ? th * 0.5 : 1 - th * 0.5);
+              const zPos = c.y + 0.5 + half * halfLen * 0.5;
+              tmp.position.set(xPos, h * 0.5, zPos);
+              tmp.scale.set(th, h, halfLen);
+            }
+            tmp.rotation.y = yaw;
+            tmp.updateMatrix();
+            parapetRef.current.setMatrixAt(pIdx, tmp.matrix);
+            parapetRef.current.setColorAt(pIdx, col);
+            pIdx++;
+          }
+        }
+
+        // Revetment cap (top course) — sandbag row or timber ledger per side
+        const capHex = mat === 1 ? SANDBAG_CAP : mat === 2 ? TIMBER_CAP : EARTH2;
+        const showCap = mat !== 0 || jitter(c.x, c.y, 11) < 0.35;
+        for (const side of [-1, 1] as const) {
+          if (!showCap) {
+            tmp.scale.set(0, 0, 0);
+            tmp.updateMatrix();
+            capRef.current.setMatrixAt(cIdx, tmp.matrix);
+            cIdx++;
+            continue;
+          }
+          col.setStyle(capHex);
+          const capH = mat === 2 ? 0.09 : 0.18;
+          const capY = hBase + capH * 0.5;
+          if (c.horiz) {
+            const zPos = c.y + (side < 0 ? th * 0.5 : 1 - th * 0.5);
+            tmp.position.set(c.x + 0.5, capY, zPos);
+            tmp.scale.set(0.98, capH, th * 1.08);
+          } else {
+            const xPos = c.x + (side < 0 ? th * 0.5 : 1 - th * 0.5);
+            tmp.position.set(xPos, capY, c.y + 0.5);
+            tmp.scale.set(th * 1.08, capH, 0.98);
+          }
+          tmp.rotation.y = (jitter(c.x, c.y, 12 + side) - 0.5) * 0.18;
+          tmp.updateMatrix();
+          capRef.current.setMatrixAt(cIdx, tmp.matrix);
+          capRef.current.setColorAt(cIdx, col);
+          cIdx++;
+        }
+      }
+      parapetRef.current.instanceMatrix.needsUpdate = true;
+      if (parapetRef.current.instanceColor) parapetRef.current.instanceColor.needsUpdate = true;
+      capRef.current.instanceMatrix.needsUpdate = true;
+      if (capRef.current.instanceColor) capRef.current.instanceColor.needsUpdate = true;
     }
   }, [cells]);
 
   if (cells.length === 0) return null;
+  const parapetCount = cells.length * 4;
+  const capCount = cells.length * 2;
   return (
     <group key={cells.length}>
       <instancedMesh ref={floorRef} args={[undefined, undefined, cells.length]} receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#1e150e" flatShading roughness={1} />
+        <meshStandardMaterial color="#120c06" flatShading roughness={1} />
       </instancedMesh>
-      <instancedMesh ref={parapetARef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
+      <instancedMesh ref={stepRef} args={[undefined, undefined, cells.length]} receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#4a3520" flatShading roughness={1} />
+        <meshStandardMaterial color="#2f2110" flatShading roughness={1} />
       </instancedMesh>
-      <instancedMesh ref={parapetBRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
+      <instancedMesh ref={parapetRef} args={[undefined, undefined, parapetCount]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#4a3520" flatShading roughness={1} />
+        <meshStandardMaterial vertexColors flatShading roughness={1} />
       </instancedMesh>
-      <instancedMesh ref={sandbagRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
+      <instancedMesh ref={capRef} args={[undefined, undefined, capCount]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#8a7a52" flatShading roughness={1} />
+        <meshStandardMaterial vertexColors flatShading roughness={1} />
       </instancedMesh>
     </group>
   );
 }
+
 
 function InstancedTerrainGroup({ type, positions, sizes }: { type: string; positions: [number, number, number][]; sizes: [number, number, number][] }) {
   const ref = useRef<THREE.InstancedMesh>(null);
