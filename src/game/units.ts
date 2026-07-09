@@ -1,6 +1,6 @@
 import { Unit, UnitType, Team, Position, GameState, Stance } from './types';
 import { UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS } from './constants';
-import { getTerrainAt, hasLineOfSight, losInfo, isPassable } from './terrain';
+import { getTerrainAt, hasLineOfSight, losInfo, isPassable, isFootprintPassable } from './terrain';
 import { findPath } from './pathfinding';
 import { isVisibleTo } from './awareness';
 
