@@ -424,9 +424,13 @@ export function spawnReinforcement(type: import('./types').UnitType, state: Game
     state.rewardCP -= rem;
   }
   const friendly = state.units.find(u => u.alive && u.team === 'player');
-  const spawn = friendly ? { x: friendly.pos.x - 80, y: friendly.pos.y } : { x: 60, y: 600 };
+  const rawSpawn = friendly ? { x: friendly.pos.x - 80, y: friendly.pos.y } : { x: 60, y: 600 };
+  const veh = type === 'tank' || type === 'apc';
+  const heli = type === 'helicopter';
+  const spawn = findNearestPassableWorld(state.terrain, rawSpawn.x, rawSpawn.y, veh, heli, 12);
   const { createUnit } = require('./units') as typeof import('./units');
   const u = createUnit(type, 'player', spawn.x, spawn.y);
+  u.homePos = { x: spawn.x, y: spawn.y };
   state.units.push(u);
   state.eventLog.unshift({ message: `Reinforcement: ${type}`, time: state.time, type: 'spawn' });
   return true;
