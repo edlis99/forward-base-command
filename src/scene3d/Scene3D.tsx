@@ -15,9 +15,9 @@ const H = MAP_ROWS;
 const DRAG_THRESHOLD_PX = 5;
 
 const TERRAIN_COLORS: Record<string, string> = {
-  open: '#5e7548', urban: '#8a807a', forest: '#2f4a26', road: '#3f3a32',
+  open: '#5e7548', urban: '#7d756b', forest: '#2f4a26', road: '#34332d',
   water: '#264e6b', wall: '#6b665e', trench: '#2a2018', rubble: '#766f64',
-  sandbag: '#a9986a', mud: '#3a2c1c', crater: '#26201a', hedgerow: '#34522a',
+  sandbag: '#a9986a', mud: '#4c3c27', crater: '#443421', hedgerow: '#34522a',
   tall_grass: '#6f834a', gravel: '#8a7e6a',
 };
 
@@ -68,6 +68,8 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
       ))}
       <TrenchInstances terrain={terrain} />
       <TreeInstances terrain={terrain} />
+      <HedgerowInstances terrain={terrain} />
+      <BuildingDetails terrain={terrain} />
     </group>
   );
 }
@@ -120,18 +122,18 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
   useEffect(() => {
     const tmp = new THREE.Object3D();
     const col = new THREE.Color();
-    const EARTH = '#3d2a18';
-    const EARTH2 = '#4a3520';
-    const SANDBAG = '#a3915f';
-    const SANDBAG_CAP = '#c2ac74';
-    const TIMBER = '#2b1e0f';
-    const TIMBER_CAP = '#4a3418';
+    const EARTH = '#5b4329';
+    const EARTH2 = '#6a5032';
+    const SANDBAG = '#a99968';
+    const SANDBAG_CAP = '#c0ae7b';
+    const TIMBER = '#6b5435';
+    const TIMBER_CAP = '#806845';
 
     if (floorRef.current) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
-        tmp.position.set(c.x + 0.5, -0.4, c.y + 0.5);
-        tmp.scale.set(1, 0.8, 1);
+        tmp.position.set(c.x + 0.5, -0.43, c.y + 0.5);
+        tmp.scale.set(0.86, 0.54, 0.86);
         tmp.rotation.y = 0;
         tmp.updateMatrix();
         floorRef.current.setMatrixAt(i, tmp.matrix);
@@ -144,11 +146,11 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
         if (c.horiz) {
-          tmp.position.set(c.x + 0.5, -0.16, c.y + 0.5);
-          tmp.scale.set(0.95, 0.35, 0.32);
+          tmp.position.set(c.x + 0.5, -0.13, c.y + 0.5);
+          tmp.scale.set(0.86, 0.24, 0.26);
         } else {
-          tmp.position.set(c.x + 0.5, -0.16, c.y + 0.5);
-          tmp.scale.set(0.32, 0.35, 0.95);
+          tmp.position.set(c.x + 0.5, -0.13, c.y + 0.5);
+          tmp.scale.set(0.26, 0.24, 0.86);
         }
         tmp.rotation.y = 0;
         tmp.updateMatrix();
@@ -164,10 +166,10 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
         const kinkSign = ((c.x + c.y) % 2 === 0 ? 1 : -1);
-        const kink = kinkSign * (0.18 + jitter(c.x, c.y, 7) * 0.16);
-        const hBase = 0.75 + jitter(c.x, c.y, 1) * 0.28;
-        const th = 0.34 + jitter(c.x, c.y, 3) * 0.14;
-        const halfLen = 0.52;
+        const kink = kinkSign * (0.1 + jitter(c.x, c.y, 7) * 0.13);
+        const hBase = 0.52 + jitter(c.x, c.y, 1) * 0.18;
+        const th = 0.28 + jitter(c.x, c.y, 3) * 0.1;
+        const halfLen = 0.48;
 
         // material per cell: 0 earth, 1 sandbag, 2 timber
         const mRoll = jitter(c.x, c.y, 8);
@@ -180,7 +182,7 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
         for (const side of [-1, 1] as const) {
           for (const half of [-1, 1] as const) {
             const yaw = kink * half * side;
-            const h = hBase + (jitter(c.x, c.y, 20 + side * 3 + half) - 0.5) * 0.12;
+            const h = hBase + (jitter(c.x, c.y, 20 + side * 3 + half) - 0.5) * 0.08;
             if (c.horiz) {
               const zPos = c.y + (side < 0 ? th * 0.5 : 1 - th * 0.5);
               const xPos = c.x + 0.5 + half * halfLen * 0.5;
@@ -212,7 +214,7 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
             continue;
           }
           col.setStyle(capHex);
-          const capH = mat === 2 ? 0.09 : 0.18;
+          const capH = mat === 2 ? 0.07 : 0.14;
           const capY = hBase + capH * 0.5;
           if (c.horiz) {
             const zPos = c.y + (side < 0 ? th * 0.5 : 1 - th * 0.5);
@@ -244,11 +246,11 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
     <group key={cells.length}>
       <instancedMesh ref={floorRef} args={[undefined, undefined, cells.length]} receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#120c06" flatShading roughness={1} />
+        <meshStandardMaterial color="#4f3d28" roughness={1} />
       </instancedMesh>
       <instancedMesh ref={stepRef} args={[undefined, undefined, cells.length]} receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#2f2110" flatShading roughness={1} />
+        <meshStandardMaterial color="#675137" roughness={1} />
       </instancedMesh>
       <instancedMesh ref={parapetRef} args={[undefined, undefined, parapetCount]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
@@ -303,9 +305,9 @@ function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
     const out: Array<{ x: number; z: number; s: number; rot: number; hue: number }> = [];
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const c = terrain[y][x];
-      if (c.type === 'forest' || c.type === 'hedgerow') {
+      if (c.type === 'forest') {
         const seed = (x * 73 + y * 31) % 100;
-        const variants = c.type === 'forest' ? 2 : 1;
+        const variants = 2;
         for (let i = 0; i < variants + (seed > 60 ? 1 : 0); i++) {
           const sx = x + 0.2 + ((seed + i * 17) % 6) * 0.11;
           const sz = y + 0.2 + ((seed * 7 + i * 11) % 6) * 0.11;
@@ -361,51 +363,220 @@ function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
   );
 }
 
+function HedgerowInstances({ terrain }: { terrain: TerrainCell[][] }) {
+  const bushes = useMemo(() => {
+    const out: Array<{ x: number; z: number; sx: number; sy: number; sz: number; rot: number; tint: number }> = [];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (terrain[y][x].type !== 'hedgerow') continue;
+      const seed = (x * 91 + y * 47) % 997;
+      for (let i = 0; i < 5; i++) {
+        const a = seed + i * 137;
+        out.push({
+          x: x + 0.15 + ((a * 17) % 70) / 100,
+          z: y + 0.15 + ((a * 29) % 70) / 100,
+          sx: 0.32 + ((a * 11) % 22) / 100,
+          sy: 0.35 + ((a * 7) % 25) / 100,
+          sz: 0.26 + ((a * 19) % 26) / 100,
+          rot: ((a * 13) % 360) * Math.PI / 180,
+          tint: 0.82 + ((a * 5) % 28) / 100,
+        });
+      }
+    }
+    return out;
+  }, [terrain]);
+
+  const ref = useRef<THREE.InstancedMesh>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    const tmp = new THREE.Object3D();
+    const col = new THREE.Color();
+    const base = new THREE.Color('#344f2a');
+    for (let i = 0; i < bushes.length; i++) {
+      const b = bushes[i];
+      tmp.position.set(b.x, b.sy * 0.5, b.z);
+      tmp.scale.set(b.sx, b.sy, b.sz);
+      tmp.rotation.y = b.rot;
+      tmp.updateMatrix();
+      ref.current.setMatrixAt(i, tmp.matrix);
+      col.copy(base).multiplyScalar(b.tint);
+      ref.current.setColorAt(i, col);
+    }
+    ref.current.instanceMatrix.needsUpdate = true;
+    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+  }, [bushes]);
+
+  if (bushes.length === 0) return null;
+  return (
+    <instancedMesh ref={ref} args={[undefined, undefined, bushes.length]} castShadow receiveShadow raycast={() => null}>
+      <dodecahedronGeometry args={[1, 0]} />
+      <meshStandardMaterial color="#ffffff" vertexColors flatShading roughness={0.95} />
+    </instancedMesh>
+  );
+}
+
+function BuildingDetails({ terrain }: { terrain: TerrainCell[][] }) {
+  const cells = useMemo(() => {
+    const out: Array<{ x: number; y: number; rot: number; roof: string; damaged: boolean }> = [];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (terrain[y][x].type !== 'urban') continue;
+      const seed = (x * 113 + y * 61) % 100;
+      out.push({ x, y, rot: (seed % 4) * Math.PI / 2, roof: seed % 3 === 0 ? '#5f4a38' : '#6b5945', damaged: seed > 72 });
+    }
+    return out;
+  }, [terrain]);
+
+  const roofRef = useRef<THREE.InstancedMesh>(null);
+  const windowRef = useRef<THREE.InstancedMesh>(null);
+  const debrisRef = useRef<THREE.InstancedMesh>(null);
+
+  useEffect(() => {
+    const tmp = new THREE.Object3D();
+    const col = new THREE.Color();
+    if (roofRef.current) {
+      for (let i = 0; i < cells.length; i++) {
+        const c = cells[i];
+        tmp.position.set(c.x + 0.5, 1.83, c.y + 0.5);
+        tmp.scale.set(c.damaged ? 0.72 : 0.82, c.damaged ? 0.28 : 0.36, c.damaged ? 0.72 : 0.82);
+        tmp.rotation.y = c.rot + Math.PI / 4;
+        tmp.updateMatrix();
+        roofRef.current.setMatrixAt(i, tmp.matrix);
+        col.setStyle(c.damaged ? '#4b4033' : c.roof);
+        roofRef.current.setColorAt(i, col);
+      }
+      roofRef.current.instanceMatrix.needsUpdate = true;
+      if (roofRef.current.instanceColor) roofRef.current.instanceColor.needsUpdate = true;
+    }
+    if (windowRef.current) {
+      let idx = 0;
+      for (const c of cells) {
+        for (const side of [-1, 1] as const) {
+          tmp.position.set(c.x + 0.5, 1.18, c.y + 0.5 + side * 0.505);
+          tmp.scale.set(0.42, 0.16, 0.025);
+          tmp.rotation.y = c.rot;
+          tmp.updateMatrix();
+          windowRef.current.setMatrixAt(idx, tmp.matrix);
+          idx++;
+        }
+      }
+      windowRef.current.instanceMatrix.needsUpdate = true;
+    }
+    if (debrisRef.current) {
+      let idx = 0;
+      for (const c of cells) {
+        if (!c.damaged) {
+          tmp.scale.set(0, 0, 0);
+        } else {
+          tmp.position.set(c.x + 0.22, 0.16, c.y + 0.78);
+          tmp.scale.set(0.34, 0.22, 0.24);
+          tmp.rotation.y = c.rot * 0.7;
+        }
+        tmp.updateMatrix();
+        debrisRef.current.setMatrixAt(idx, tmp.matrix);
+        idx++;
+      }
+      debrisRef.current.instanceMatrix.needsUpdate = true;
+    }
+  }, [cells]);
+
+  if (cells.length === 0) return null;
+  return (
+    <group>
+      <instancedMesh ref={roofRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
+        <coneGeometry args={[0.75, 0.55, 4]} />
+        <meshStandardMaterial color="#ffffff" vertexColors flatShading roughness={0.9} />
+      </instancedMesh>
+      <instancedMesh ref={windowRef} args={[undefined, undefined, cells.length * 2]} raycast={() => null}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#24241f" roughness={0.85} />
+      </instancedMesh>
+      <instancedMesh ref={debrisRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#6b6358" flatShading roughness={1} />
+      </instancedMesh>
+    </group>
+  );
+}
+
 // ---------- Unit models ----------
 function InfantryModel({ team }: { team: 'player' | 'enemy' }) {
-  const c = team === 'player' ? '#3b6db8' : '#b84a3b';
+  const uniform = team === 'player' ? '#465b43' : '#5b5438';
+  const kit = team === 'player' ? '#2f3f30' : '#3f3a27';
+  const accent = team === 'player' ? '#4e86b8' : '#b64c3b';
   return (
-    <group scale={0.5}>
-      <mesh position={[0, 0.6, 0]} castShadow><capsuleGeometry args={[0.18, 0.5, 4, 8]} /><meshStandardMaterial color={c} flatShading /></mesh>
-      <mesh position={[0, 1.05, 0]} castShadow><sphereGeometry args={[0.2, 8, 6]} /><meshStandardMaterial color="#2a2a25" flatShading /></mesh>
-      <mesh position={[0.25, 0.7, 0]} rotation={[0, 0, -0.2]} castShadow><boxGeometry args={[0.5, 0.08, 0.08]} /><meshStandardMaterial color="#202020" /></mesh>
+    <group scale={0.55}>
+      <mesh position={[0, 0.62, 0]} castShadow><boxGeometry args={[0.32, 0.48, 0.22]} /><meshStandardMaterial color={uniform} flatShading roughness={0.95} /></mesh>
+      <mesh position={[-0.02, 0.34, 0]} castShadow><boxGeometry args={[0.28, 0.18, 0.2]} /><meshStandardMaterial color={kit} flatShading roughness={0.95} /></mesh>
+      <mesh position={[0, 1.0, 0]} castShadow><sphereGeometry args={[0.18, 10, 7]} /><meshStandardMaterial color="#b79a75" flatShading roughness={0.9} /></mesh>
+      <mesh position={[0, 1.09, 0]} scale={[1.05, 0.55, 1.05]} castShadow><sphereGeometry args={[0.2, 10, 6]} /><meshStandardMaterial color={kit} flatShading roughness={0.95} /></mesh>
+      <mesh position={[-0.03, 0.67, -0.17]} castShadow><boxGeometry args={[0.32, 0.38, 0.12]} /><meshStandardMaterial color="#2a3328" flatShading roughness={1} /></mesh>
+      <mesh position={[0.18, 0.65, 0.03]} rotation={[0, 0, -0.38]} castShadow><boxGeometry args={[0.12, 0.4, 0.1]} /><meshStandardMaterial color={uniform} flatShading roughness={1} /></mesh>
+      <mesh position={[0.33, 0.64, 0.02]} rotation={[0, 0.05, -0.12]} castShadow><boxGeometry args={[0.62, 0.055, 0.07]} /><meshStandardMaterial color="#2c2821" roughness={0.8} /></mesh>
+      <mesh position={[-0.1, 0.18, 0.06]} rotation={[0.12, 0, 0.12]} castShadow><boxGeometry args={[0.1, 0.34, 0.09]} /><meshStandardMaterial color={uniform} flatShading roughness={1} /></mesh>
+      <mesh position={[0.12, 0.18, -0.04]} rotation={[-0.12, 0, -0.1]} castShadow><boxGeometry args={[0.1, 0.34, 0.09]} /><meshStandardMaterial color={uniform} flatShading roughness={1} /></mesh>
+      <mesh position={[0, 0.9, 0.125]} castShadow><boxGeometry args={[0.24, 0.045, 0.025]} /><meshStandardMaterial color={accent} /></mesh>
     </group>
   );
 }
 function TankModel({ team }: { team: 'player' | 'enemy' }) {
-  const c = team === 'player' ? '#345e80' : '#7a3a30';
+  const hull = team === 'player' ? '#4b5b45' : '#5f563a';
+  const dark = '#25271f';
+  const accent = team === 'player' ? '#4e86b8' : '#b64c3b';
   return (
-    <group scale={0.7}>
-      <mesh position={[0, 0.25, 0]} castShadow><boxGeometry args={[1.4, 0.4, 1]} /><meshStandardMaterial color={c} flatShading /></mesh>
-      <mesh position={[0, 0.5, 0]} castShadow><boxGeometry args={[0.8, 0.3, 0.7]} /><meshStandardMaterial color={c} flatShading /></mesh>
-      <mesh position={[0.7, 0.55, 0]} castShadow><boxGeometry args={[0.9, 0.1, 0.12]} /><meshStandardMaterial color="#1a1a1a" /></mesh>
-      <mesh position={[0, 0.1, 0.55]} castShadow><boxGeometry args={[1.5, 0.18, 0.18]} /><meshStandardMaterial color="#2a2a2a" /></mesh>
-      <mesh position={[0, 0.1, -0.55]} castShadow><boxGeometry args={[1.5, 0.18, 0.18]} /><meshStandardMaterial color="#2a2a2a" /></mesh>
+    <group scale={0.76}>
+      <mesh position={[0, 0.26, 0]} castShadow><boxGeometry args={[1.65, 0.36, 0.98]} /><meshStandardMaterial color={hull} flatShading roughness={0.9} /></mesh>
+      <mesh position={[0.1, 0.48, 0]} castShadow><boxGeometry args={[1.05, 0.26, 0.78]} /><meshStandardMaterial color={hull} flatShading roughness={0.9} /></mesh>
+      <mesh position={[0.04, 0.66, 0]} rotation={[0, 0, -0.04]} castShadow><boxGeometry args={[0.74, 0.28, 0.62]} /><meshStandardMaterial color="#55654c" flatShading roughness={0.9} /></mesh>
+      <mesh position={[0.72, 0.66, 0]} castShadow><boxGeometry args={[1.05, 0.085, 0.11]} /><meshStandardMaterial color={dark} roughness={0.75} /></mesh>
+      <mesh position={[1.28, 0.66, 0]} castShadow><cylinderGeometry args={[0.07, 0.07, 0.18, 8]} /><meshStandardMaterial color={dark} roughness={0.75} /></mesh>
+      <mesh position={[0, 0.13, 0.58]} castShadow><boxGeometry args={[1.78, 0.22, 0.18]} /><meshStandardMaterial color={dark} flatShading roughness={1} /></mesh>
+      <mesh position={[0, 0.13, -0.58]} castShadow><boxGeometry args={[1.78, 0.22, 0.18]} /><meshStandardMaterial color={dark} flatShading roughness={1} /></mesh>
+      <mesh position={[-0.22, 0.74, 0.01]} castShadow><cylinderGeometry args={[0.12, 0.12, 0.08, 8]} /><meshStandardMaterial color="#30362c" flatShading roughness={1} /></mesh>
+      <mesh position={[-0.48, 0.58, 0.42]} rotation={[0, 0.2, 0]} castShadow><boxGeometry args={[0.08, 0.32, 0.04]} /><meshStandardMaterial color="#181a15" /></mesh>
+      <mesh position={[-0.15, 0.82, 0]} castShadow><boxGeometry args={[0.34, 0.035, 0.18]} /><meshStandardMaterial color={accent} /></mesh>
     </group>
   );
 }
 function ApcModel({ team }: { team: 'player' | 'enemy' }) {
-  const c = team === 'player' ? '#3d7099' : '#995040';
+  const hull = team === 'player' ? '#4d604d' : '#655b3d';
+  const dark = '#24261f';
+  const accent = team === 'player' ? '#4e86b8' : '#b64c3b';
   return (
-    <group scale={0.65}>
-      <mesh position={[0, 0.35, 0]} castShadow><boxGeometry args={[1.3, 0.55, 0.85]} /><meshStandardMaterial color={c} flatShading /></mesh>
-      <mesh position={[0, 0.7, 0]} castShadow><boxGeometry args={[0.4, 0.2, 0.4]} /><meshStandardMaterial color={c} flatShading /></mesh>
-      <mesh position={[0.45, 0.1, 0.45]} castShadow><cylinderGeometry args={[0.15, 0.15, 0.1, 8]} /><meshStandardMaterial color="#1a1a1a" /></mesh>
-      <mesh position={[-0.45, 0.1, 0.45]} castShadow><cylinderGeometry args={[0.15, 0.15, 0.1, 8]} /><meshStandardMaterial color="#1a1a1a" /></mesh>
-      <mesh position={[0.45, 0.1, -0.45]} castShadow><cylinderGeometry args={[0.15, 0.15, 0.1, 8]} /><meshStandardMaterial color="#1a1a1a" /></mesh>
-      <mesh position={[-0.45, 0.1, -0.45]} castShadow><cylinderGeometry args={[0.15, 0.15, 0.1, 8]} /><meshStandardMaterial color="#1a1a1a" /></mesh>
+    <group scale={0.68}>
+      <mesh position={[0, 0.36, 0]} castShadow><boxGeometry args={[1.52, 0.5, 0.86]} /><meshStandardMaterial color={hull} flatShading roughness={0.92} /></mesh>
+      <mesh position={[0.44, 0.56, 0]} rotation={[0, 0, -0.12]} castShadow><boxGeometry args={[0.54, 0.22, 0.78]} /><meshStandardMaterial color="#5f7158" flatShading roughness={0.92} /></mesh>
+      <mesh position={[0, 0.72, 0]} castShadow><boxGeometry args={[0.42, 0.18, 0.38]} /><meshStandardMaterial color={hull} flatShading roughness={0.9} /></mesh>
+      <mesh position={[0.35, 0.78, 0]} castShadow><boxGeometry args={[0.58, 0.055, 0.07]} /><meshStandardMaterial color={dark} /></mesh>
+      {[-0.52, -0.16, 0.2, 0.56].map((x) => (
+        <React.Fragment key={x}>
+          <mesh position={[x, 0.14, 0.48]} rotation={[Math.PI / 2, 0, 0]} castShadow><cylinderGeometry args={[0.13, 0.13, 0.1, 10]} /><meshStandardMaterial color={dark} roughness={1} /></mesh>
+          <mesh position={[x, 0.14, -0.48]} rotation={[Math.PI / 2, 0, 0]} castShadow><cylinderGeometry args={[0.13, 0.13, 0.1, 10]} /><meshStandardMaterial color={dark} roughness={1} /></mesh>
+        </React.Fragment>
+      ))}
+      <mesh position={[-0.22, 0.64, 0.42]} rotation={[0, 0.22, 0]} castShadow><boxGeometry args={[0.07, 0.28, 0.04]} /><meshStandardMaterial color="#181a15" /></mesh>
+      <mesh position={[-0.12, 0.84, 0]} castShadow><boxGeometry args={[0.3, 0.035, 0.16]} /><meshStandardMaterial color={accent} /></mesh>
     </group>
   );
 }
 function HeliModel({ team }: { team: 'player' | 'enemy' }) {
-  const c = team === 'player' ? '#3a6090' : '#993a35';
+  const c = team === 'player' ? '#4d5c48' : '#625637';
+  const accent = team === 'player' ? '#4e86b8' : '#b64c3b';
   const rotorRef = useRef<THREE.Mesh>(null);
-  useFrame((_, dt) => { if (rotorRef.current) rotorRef.current.rotation.y += dt * 30; });
+  const tailRotorRef = useRef<THREE.Mesh>(null);
+  useFrame((_, dt) => {
+    if (rotorRef.current) rotorRef.current.rotation.y += dt * 34;
+    if (tailRotorRef.current) tailRotorRef.current.rotation.x += dt * 48;
+  });
   return (
     <group scale={0.7} position={[0, 1.5, 0]}>
-      <mesh castShadow><boxGeometry args={[1.4, 0.35, 0.5]} /><meshStandardMaterial color={c} flatShading /></mesh>
-      <mesh ref={rotorRef} position={[0, 0.3, 0]}><boxGeometry args={[2.2, 0.04, 0.12]} /><meshStandardMaterial color="#202020" /></mesh>
-      <mesh position={[-0.9, 0.15, 0]}><boxGeometry args={[0.8, 0.12, 0.12]} /><meshStandardMaterial color={c} flatShading /></mesh>
+      <mesh position={[0.15, 0, 0]} castShadow><boxGeometry args={[1.2, 0.36, 0.46]} /><meshStandardMaterial color={c} flatShading roughness={0.85} /></mesh>
+      <mesh position={[0.58, 0.02, 0]} castShadow><sphereGeometry args={[0.28, 10, 7]} /><meshStandardMaterial color="#2c3430" flatShading roughness={0.75} /></mesh>
+      <mesh ref={rotorRef} position={[0, 0.34, 0]}><boxGeometry args={[2.5, 0.035, 0.12]} /><meshStandardMaterial color="#1b1d18" transparent opacity={0.82} /></mesh>
+      <mesh position={[-0.95, 0.05, 0]} castShadow><boxGeometry args={[1.05, 0.11, 0.11]} /><meshStandardMaterial color={c} flatShading roughness={0.9} /></mesh>
+      <mesh position={[-1.5, 0.08, 0]} castShadow><boxGeometry args={[0.18, 0.34, 0.06]} /><meshStandardMaterial color={c} flatShading roughness={0.9} /></mesh>
+      <mesh ref={tailRotorRef} position={[-1.6, 0.08, 0.04]}><boxGeometry args={[0.04, 0.5, 0.08]} /><meshStandardMaterial color="#1b1d18" transparent opacity={0.82} /></mesh>
+      <mesh position={[0.12, -0.28, 0.34]} castShadow><boxGeometry args={[1.0, 0.05, 0.08]} /><meshStandardMaterial color="#22241e" /></mesh>
+      <mesh position={[0.12, -0.28, -0.34]} castShadow><boxGeometry args={[1.0, 0.05, 0.08]} /><meshStandardMaterial color="#22241e" /></mesh>
+      <mesh position={[0.24, 0.24, 0]} castShadow><boxGeometry args={[0.3, 0.035, 0.16]} /><meshStandardMaterial color={accent} /></mesh>
     </group>
   );
 }
@@ -493,9 +664,9 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         sr.visible = on;
         if (on) {
           const s2 = 1 + Math.sin(t * 10) * 0.12;
-          sr.scale.set(s2, s2, s2);
+          sr.scale.set(s2 * 1.35, 0.2, s2 * 1.35);
           const mat = (sr as THREE.Mesh).material as THREE.MeshBasicMaterial;
-          mat.opacity = 0.35 + u.suppression * 0.5;
+          mat.opacity = 0.12 + u.suppression * 0.28;
         }
       }
     }
@@ -541,13 +712,13 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             <meshBasicMaterial color={u.team === 'player' ? '#7ec0ff' : '#ff8a6a'} transparent opacity={0.95} />
           </mesh>
 
-          {/* suppression pulse ring (visible while suppressed) */}
+          {/* suppression dust cloud (visible while suppressed) */}
           <mesh
             ref={(el) => { if (el) suppRefs.current.set(u.id, el); else suppRefs.current.delete(u.id); }}
-            position={[0, 0.028, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
+            position={[0, 0.14, 0]} raycast={() => null} visible={false}
           >
-            <ringGeometry args={[0.85, 1.05, 32]} />
-            <meshBasicMaterial color="#ffb040" transparent opacity={0.5} />
+            <sphereGeometry args={[0.75, 12, 6]} />
+            <meshBasicMaterial color="#b79a72" transparent opacity={0.22} depthWrite={false} />
           </mesh>
 
           {/* digging visuals: progress ring + growing dirt mound parapet */}
@@ -643,14 +814,22 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
         // Muzzle flash: small billboard sphere at 'from', offset slightly toward 'to'.
         const dx = p.to.x - p.from.x, dy = p.to.y - p.from.y;
         const len = Math.hypot(dx, dy) || 1;
+        const heavy = len > 135;
         const mx = (p.from.x + (dx / len) * 6) / S;
         const mz = (p.from.y + (dy / len) * 6) / S;
         const flash = new THREE.Mesh(
-          new THREE.SphereGeometry(0.18 + 0.12 * flashOpacity, 8, 6),
+          new THREE.SphereGeometry((heavy ? 0.3 : 0.16) + 0.16 * flashOpacity, 10, 7),
           new THREE.MeshBasicMaterial({ color: flashCol, transparent: true, opacity: flashOpacity, depthWrite: false }),
         );
-        flash.position.set(mx, 0.55, mz);
+        flash.position.set(mx, heavy ? 0.72 : 0.55, mz);
         flashRef.current.add(flash);
+        const dust = new THREE.Mesh(
+          new THREE.SphereGeometry(heavy ? 0.38 : 0.2, 8, 5),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(0.72, 0.62, 0.46), transparent: true, opacity: flashOpacity * (heavy ? 0.42 : 0.22), depthWrite: false }),
+        );
+        dust.scale.set(1.4, 0.35, 1.4);
+        dust.position.set(mx - (dx / len) * 0.08, 0.22, mz - (dy / len) * 0.08);
+        flashRef.current.add(dust);
         // Impact spark: only if it's a hit and near end of life (looks like arrival).
         if (p.hit && fresh > 0.7) {
           const sparkCol = p.crit ? new THREE.Color(1.0, 0.9, 0.4) : new THREE.Color(1.0, 0.7, 0.4);
@@ -661,6 +840,13 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
           spark.position.set(p.to.x / S, 0.5, p.to.y / S);
           flashRef.current.add(spark);
         }
+        const impactDust = new THREE.Mesh(
+          new THREE.SphereGeometry(heavy ? 0.42 : 0.18, 8, 5),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(0.58, 0.5, 0.38), transparent: true, opacity: flashOpacity * (p.hit ? 0.28 : 0.44), depthWrite: false }),
+        );
+        impactDust.scale.set(1.5, 0.28, 1.5);
+        impactDust.position.set(p.to.x / S, 0.18, p.to.y / S);
+        flashRef.current.add(impactDust);
       }
     }
 
@@ -675,6 +861,20 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
         );
         mesh.position.set(e.pos.x / S, 0.5, e.pos.y / S);
         explRef.current.add(mesh);
+        const shock = new THREE.Mesh(
+          new THREE.RingGeometry(Math.max(0.05, r * 0.75), Math.max(0.08, r * 0.92), 32),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(0.85, 0.72, 0.48), transparent: true, opacity: t * 0.45, side: THREE.DoubleSide, depthWrite: false }),
+        );
+        shock.rotation.x = -Math.PI / 2;
+        shock.position.set(e.pos.x / S, 0.08, e.pos.y / S);
+        explRef.current.add(shock);
+        const smoke = new THREE.Mesh(
+          new THREE.SphereGeometry(Math.max(0.2, r * 0.55), 10, 7),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(0.22, 0.21, 0.18), transparent: true, opacity: Math.min(0.42, (1 - t) * 0.55), depthWrite: false }),
+        );
+        smoke.scale.set(1, 1.6, 1);
+        smoke.position.set(e.pos.x / S, 0.55 + (1 - t) * 0.9, e.pos.y / S);
+        explRef.current.add(smoke);
       }
     }
   });
