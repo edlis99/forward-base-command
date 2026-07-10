@@ -15,9 +15,9 @@ const H = MAP_ROWS;
 const DRAG_THRESHOLD_PX = 5;
 
 const TERRAIN_COLORS: Record<string, string> = {
-  open: '#5e7548', urban: '#7d756b', forest: '#2f4a26', road: '#34332d',
+  open: '#5e7548', urban: '#827a70', forest: '#2f4a26', road: '#464338',
   water: '#264e6b', wall: '#6b665e', trench: '#2a2018', rubble: '#766f64',
-  sandbag: '#a9986a', mud: '#4c3c27', crater: '#443421', hedgerow: '#34522a',
+  sandbag: '#a9986a', mud: '#57442b', crater: '#55432d', hedgerow: '#34522a',
   tall_grass: '#6f834a', gravel: '#8a7e6a',
 };
 
@@ -129,10 +129,21 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
     const TIMBER = '#6b5435';
     const TIMBER_CAP = '#806845';
 
+    const trenchCenter = (c: { x: number; y: number; horiz: boolean }) => {
+      const run = c.horiz ? c.x : c.y;
+      const sign = ((Math.floor(run / 2) + c.x + c.y) % 2 === 0 ? 1 : -1);
+      const mag = 0.1 + jitter(c.x, c.y, 31) * 0.16;
+      return {
+        cx: c.x + 0.5 + (c.horiz ? 0 : sign * mag),
+        cz: c.y + 0.5 + (c.horiz ? sign * mag : 0),
+      };
+    };
+
     if (floorRef.current) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
-        tmp.position.set(c.x + 0.5, -0.43, c.y + 0.5);
+        const { cx, cz } = trenchCenter(c);
+        tmp.position.set(cx, -0.42, cz);
         tmp.scale.set(0.86, 0.54, 0.86);
         tmp.rotation.y = 0;
         tmp.updateMatrix();
@@ -145,11 +156,12 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
     if (stepRef.current) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
+        const { cx, cz } = trenchCenter(c);
         if (c.horiz) {
-          tmp.position.set(c.x + 0.5, -0.13, c.y + 0.5);
+          tmp.position.set(cx, -0.13, cz);
           tmp.scale.set(0.86, 0.24, 0.26);
         } else {
-          tmp.position.set(c.x + 0.5, -0.13, c.y + 0.5);
+          tmp.position.set(cx, -0.13, cz);
           tmp.scale.set(0.26, 0.24, 0.86);
         }
         tmp.rotation.y = 0;
@@ -165,6 +177,7 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
       let pIdx = 0, cIdx = 0;
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
+        const { cx, cz } = trenchCenter(c);
         const kinkSign = ((c.x + c.y) % 2 === 0 ? 1 : -1);
         const kink = kinkSign * (0.1 + jitter(c.x, c.y, 7) * 0.13);
         const hBase = 0.52 + jitter(c.x, c.y, 1) * 0.18;
@@ -184,13 +197,13 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
             const yaw = kink * half * side;
             const h = hBase + (jitter(c.x, c.y, 20 + side * 3 + half) - 0.5) * 0.08;
             if (c.horiz) {
-              const zPos = c.y + (side < 0 ? th * 0.5 : 1 - th * 0.5);
-              const xPos = c.x + 0.5 + half * halfLen * 0.5;
+              const zPos = cz + side * (0.5 - th * 0.5);
+              const xPos = cx + half * halfLen * 0.5;
               tmp.position.set(xPos, h * 0.5, zPos);
               tmp.scale.set(halfLen, h, th);
             } else {
-              const xPos = c.x + (side < 0 ? th * 0.5 : 1 - th * 0.5);
-              const zPos = c.y + 0.5 + half * halfLen * 0.5;
+              const xPos = cx + side * (0.5 - th * 0.5);
+              const zPos = cz + half * halfLen * 0.5;
               tmp.position.set(xPos, h * 0.5, zPos);
               tmp.scale.set(th, h, halfLen);
             }
@@ -217,12 +230,12 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
           const capH = mat === 2 ? 0.07 : 0.14;
           const capY = hBase + capH * 0.5;
           if (c.horiz) {
-            const zPos = c.y + (side < 0 ? th * 0.5 : 1 - th * 0.5);
-            tmp.position.set(c.x + 0.5, capY, zPos);
+            const zPos = cz + side * (0.5 - th * 0.5);
+            tmp.position.set(cx, capY, zPos);
             tmp.scale.set(0.98, capH, th * 1.08);
           } else {
-            const xPos = c.x + (side < 0 ? th * 0.5 : 1 - th * 0.5);
-            tmp.position.set(xPos, capY, c.y + 0.5);
+            const xPos = cx + side * (0.5 - th * 0.5);
+            tmp.position.set(xPos, capY, cz);
             tmp.scale.set(th * 1.08, capH, 0.98);
           }
           tmp.rotation.y = (jitter(c.x, c.y, 12 + side) - 0.5) * 0.18;
@@ -246,11 +259,11 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
     <group key={cells.length}>
       <instancedMesh ref={floorRef} args={[undefined, undefined, cells.length]} receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#4f3d28" roughness={1} />
+        <meshStandardMaterial color="#604b31" roughness={1} />
       </instancedMesh>
       <instancedMesh ref={stepRef} args={[undefined, undefined, cells.length]} receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#675137" roughness={1} />
+        <meshStandardMaterial color="#70583a" roughness={1} />
       </instancedMesh>
       <instancedMesh ref={parapetRef} args={[undefined, undefined, parapetCount]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
@@ -487,7 +500,7 @@ function BuildingDetails({ terrain }: { terrain: TerrainCell[][] }) {
       </instancedMesh>
       <instancedMesh ref={windowRef} args={[undefined, undefined, cells.length * 2]} raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#24241f" roughness={0.85} />
+        <meshStandardMaterial color="#3a3932" roughness={0.85} />
       </instancedMesh>
       <instancedMesh ref={debrisRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
