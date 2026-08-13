@@ -12,4 +12,4 @@ describe('trench terrain', () => {
     expect(cellCoverScore(trench)).toBeGreaterThanOrEqual(0.85);
     expect(cellConcealmentScore(trench)).toBeGreaterThanOrEqual(0.55);
   });
-}
+});
