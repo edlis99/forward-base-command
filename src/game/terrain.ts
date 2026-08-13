@@ -618,7 +618,9 @@ export function setTerrain(grid: TerrainCell[][], x: number, y: number, type: Te
       c.coverBonus = 0.65; c.movementCost = 99;
       c.blocksLOS = true; c.blocksMovement = true; break;
     case 'trench':
-      c.coverBonus = 0.55; c.movementCost = 0.85;
+      // Infantry fighting positions: strong ballistic cover and concealment,
+      // but still traversable on foot. Vehicles must route around them.
+      c.coverBonus = 0.72; c.concealment = 0.42; c.movementCost = 0.85;
       c.vehicleImpassable = true; c.fatigueRate = 0.9; break;
     case 'rubble':
       c.coverBonus = 0.18; c.concealment = 0.1; c.movementCost = 2.2;
