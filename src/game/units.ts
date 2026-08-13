@@ -117,6 +117,12 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   if (!unit.alive) return;
   if (unit.insideOf) return;
 
+  // Refresh cover even while idle/holding. Previously this only happened at
+  // the end of active movement, so a unit that finished digging never gained
+  // the trench's armor benefit.
+  const occupiedTerrain = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
+  unit.inCover = unit.type === 'infantry' && (occupiedTerrain?.coverBonus ?? 0) > 0;
+
   // Entrenching: stay still, accrue dig progress
   if (unit.order === 'entrench') {
     unit.vel.x *= 0.6; unit.vel.y *= 0.6;
@@ -350,15 +356,16 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
 
   const attackerTerrain = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
   const targetTerrain = getTerrainAt(state.terrain, target.pos.x, target.pos.y);
+  const targetEntrenched = target.type === 'infantry' && targetTerrain?.type === 'trench';
   let positionBonus = 1.0;
   if (attackerTerrain) {
-    if (attackerTerrain.type === 'trench') positionBonus = 1.15;
+    if (attackerTerrain.type === 'trench' && unit.type === 'infantry') positionBonus = 1.18;
     else if (attackerTerrain.type === 'sandbag') positionBonus = 1.1;
     else if (attackerTerrain.type === 'urban') positionBonus = 1.05;
   }
   let coverPenalty = 1.0;
   if (targetTerrain) {
-    if (targetTerrain.type === 'trench') coverPenalty = 0.55;
+    if (targetEntrenched) coverPenalty = 0.42;
     else if (targetTerrain.type === 'sandbag') coverPenalty = 0.7;
     else if (targetTerrain.type === 'urban') coverPenalty = 0.7;
     else if (targetTerrain.type === 'rubble' || targetTerrain.type === 'crater') coverPenalty = 0.78;
@@ -386,7 +393,8 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
   if (unit.ammo <= 0) unit.reloadTimer = UNIT_STATS[unit.type].reloadTime;
 
   if (!isHit) {
-    target.suppression = Math.min(1, target.suppression + 0.08);
+    const suppressionGain = targetEntrenched ? 0.025 : 0.08;
+    target.suppression = Math.min(1, target.suppression + suppressionGain);
     return { killMsg: null, killedTeam: null };
   }
 
@@ -403,13 +411,13 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
   if (unit.type === 'tank' && (target.type === 'tank' || target.type === 'apc')) dmg *= 1.3;
   if (unit.type === 'helicopter') dmg *= 1.1;
   if (target.type === 'helicopter' && unit.type === 'infantry') dmg *= 0.5;
-  if (targetTerrain?.type === 'trench') dmg *= 0.55;
+  if (targetEntrenched) dmg *= 0.42;
   if (targetTerrain?.type === 'sandbag') dmg *= 0.75;
   if (targetTerrain?.type === 'crater') dmg *= 0.7;
 
   target.health -= dmg;
   target.lastDamageTime = state.time;
-  target.suppression = Math.min(1, target.suppression + 0.3);
+  target.suppression = Math.min(1, target.suppression + (targetEntrenched ? 0.1 : 0.3));
   for (const ally of state.units) {
     if (ally.alive && ally.team === target.team && ally.id !== target.id) {
       const allyDist = distance(ally.pos, target.pos);

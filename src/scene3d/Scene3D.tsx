@@ -122,12 +122,12 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
   useEffect(() => {
     const tmp = new THREE.Object3D();
     const col = new THREE.Color();
-    const EARTH = '#5b4329';
-    const EARTH2 = '#6a5032';
-    const SANDBAG = '#a99968';
-    const SANDBAG_CAP = '#c0ae7b';
-    const TIMBER = '#6b5435';
-    const TIMBER_CAP = '#806845';
+    const EARTH = '#786044';
+    const EARTH2 = '#8a7050';
+    const SANDBAG = '#aaa078';
+    const SANDBAG_CAP = '#c2b68b';
+    const TIMBER = '#806b4e';
+    const TIMBER_CAP = '#9a815d';
 
     const trenchCenter = (c: { x: number; y: number; horiz: boolean }) => {
       const run = c.horiz ? c.x : c.y;
@@ -143,8 +143,10 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
         const { cx, cz } = trenchCenter(c);
-        tmp.position.set(cx, -0.42, cz);
-        tmp.scale.set(0.86, 0.54, 0.86);
+        // Keep the excavated floor just above the base terrain. The old floor
+        // sat below the world slab and read as a featureless black square.
+        tmp.position.set(cx, 0.018, cz);
+        tmp.scale.set(c.horiz ? 1.02 : 0.54, 0.035, c.horiz ? 0.54 : 1.02);
         tmp.rotation.y = 0;
         tmp.updateMatrix();
         floorRef.current.setMatrixAt(i, tmp.matrix);
@@ -158,11 +160,11 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
         const c = cells[i];
         const { cx, cz } = trenchCenter(c);
         if (c.horiz) {
-          tmp.position.set(cx, -0.13, cz);
-          tmp.scale.set(0.86, 0.24, 0.26);
+          tmp.position.set(cx, 0.075, cz + 0.19);
+          tmp.scale.set(0.96, 0.11, 0.16);
         } else {
-          tmp.position.set(cx, -0.13, cz);
-          tmp.scale.set(0.26, 0.24, 0.86);
+          tmp.position.set(cx + 0.19, 0.075, cz);
+          tmp.scale.set(0.16, 0.11, 0.96);
         }
         tmp.rotation.y = 0;
         tmp.updateMatrix();
@@ -180,8 +182,8 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
         const { cx, cz } = trenchCenter(c);
         const kinkSign = ((c.x + c.y) % 2 === 0 ? 1 : -1);
         const kink = kinkSign * (0.1 + jitter(c.x, c.y, 7) * 0.13);
-        const hBase = 0.52 + jitter(c.x, c.y, 1) * 0.18;
-        const th = 0.28 + jitter(c.x, c.y, 3) * 0.1;
+        const hBase = 0.28 + jitter(c.x, c.y, 1) * 0.09;
+        const th = 0.24 + jitter(c.x, c.y, 3) * 0.07;
         const halfLen = 0.48;
 
         // material per cell: 0 earth, 1 sandbag, 2 timber
@@ -199,12 +201,12 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
             if (c.horiz) {
               const zPos = cz + side * (0.5 - th * 0.5);
               const xPos = cx + half * halfLen * 0.5;
-              tmp.position.set(xPos, h * 0.5, zPos);
+              tmp.position.set(xPos, 0.025 + h * 0.5, zPos);
               tmp.scale.set(halfLen, h, th);
             } else {
               const xPos = cx + side * (0.5 - th * 0.5);
               const zPos = cz + half * halfLen * 0.5;
-              tmp.position.set(xPos, h * 0.5, zPos);
+              tmp.position.set(xPos, 0.025 + h * 0.5, zPos);
               tmp.scale.set(th, h, halfLen);
             }
             tmp.rotation.y = yaw;
@@ -228,7 +230,7 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
           }
           col.setStyle(capHex);
           const capH = mat === 2 ? 0.07 : 0.14;
-          const capY = hBase + capH * 0.5;
+           const capY = 0.025 + hBase + capH * 0.5;
           if (c.horiz) {
             const zPos = cz + side * (0.5 - th * 0.5);
             tmp.position.set(cx, capY, zPos);
@@ -259,19 +261,19 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
     <group key={cells.length}>
       <instancedMesh ref={floorRef} args={[undefined, undefined, cells.length]} receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#604b31" roughness={1} />
+        <meshStandardMaterial color="#8b7355" roughness={1} />
       </instancedMesh>
       <instancedMesh ref={stepRef} args={[undefined, undefined, cells.length]} receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#70583a" roughness={1} />
+        <meshStandardMaterial color="#9b825e" roughness={1} />
       </instancedMesh>
       <instancedMesh ref={parapetRef} args={[undefined, undefined, parapetCount]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial vertexColors flatShading roughness={1} />
+        <meshStandardMaterial color="#ffffff" vertexColors flatShading roughness={1} />
       </instancedMesh>
       <instancedMesh ref={capRef} args={[undefined, undefined, capCount]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial vertexColors flatShading roughness={1} />
+        <meshStandardMaterial color="#ffffff" vertexColors flatShading roughness={1} />
       </instancedMesh>
     </group>
   );
@@ -650,12 +652,12 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         const gy = Math.floor(u.pos.y / S);
         const cell = state.terrain[gy]?.[gx];
         const inTrench = cell?.type === 'trench' && u.type === 'infantry';
-        const targetY = inTrench ? -0.28 : 0;
+        const targetY = inTrench ? -0.08 : 0;
         const k = 1 - Math.exp(-dt * 8); // ~0.4s ease
         ref.position.y += (targetY - ref.position.y) * k;
         // Prone / digging crouch: squash + slight bob while digging — tweened too.
         const isDigging = u.order === 'entrench';
-        const proneTarget = (u.prone || isDigging || inTrench) ? 0.55 : 1;
+        const proneTarget = (u.prone || isDigging) ? 0.62 : inTrench ? 0.78 : 1;
         const bob = isDigging ? 1 + Math.sin(t * 8) * 0.08 : 1;
         const curY = ref.scale.y;
         const newY = curY + (proneTarget * bob - curY) * k;

@@ -67,7 +67,11 @@ export function updateAI(state: GameState, dt: number) {
     if (u.coverSeekCooldown > 0) u.coverSeekCooldown = Math.max(0, u.coverSeekCooldown - dt);
     // prone if suppressed; recover when calm
     if (u.suppression > 0.55) u.prone = true;
-    else if (u.suppression < 0.2) u.prone = false;
+    else if (u.suppression < 0.2) {
+      const terrain = getTerrainAt(state.terrain, u.pos.x, u.pos.y);
+      // Keep infantry in a low firing posture while they occupy a trench.
+      u.prone = u.type === 'infantry' && terrain?.type === 'trench';
+    }
   }
 
   // Hold-fire ambush trigger: any hold_fire unit with an engageable target + nearby ally LOS,
