@@ -673,6 +673,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         const contactOnly = u.team === 'enemy' && !(u.spottedByEnemy && u.detectionLevel >= 0.7) && u.detectionLevel > 0.3;
         bl.visible = contactOnly;
         if (contactOnly) {
+          bl.position.set(u.pos.x / S, 0.9, u.pos.y / S);
           bl.rotation.y = t * 1.2;
           const s3 = 1 + Math.sin(t * 4) * 0.1;
           bl.scale.set(s3, s3, s3);
