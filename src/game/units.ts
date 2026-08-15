@@ -32,6 +32,7 @@ export function createUnit(type: UnitType, team: Team, x: number, y: number): Un
     homePos: { x, y },
     fatigue: 0, stuckTimer: 0, lastDamageTime: -999,
     passengers: [], insideOf: null,
+    boardTarget: null, groupSpeedCap: null,
     finalDest: null, lastProgressDist: Infinity, lastProgressTime: 0,
     reactionDelay: 0, prone: false, ambushReady: false, rallyUntil: 0,
     digTimer: 0, coverSeekCooldown: 0, lastAllyDeathTime: -999,
