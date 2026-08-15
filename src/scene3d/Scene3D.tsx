@@ -662,7 +662,21 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         const curY = ref.scale.y;
         const newY = curY + (proneTarget * bob - curY) * k;
         ref.scale.set(1, newY, 1);
-        ref.visible = u.team === 'player' || u.spottedByEnemy;
+        // Fog of war: enemies only render as full models once identified (detection >= 0.7).
+        const identified = u.team === 'player' || (u.spottedByEnemy && u.detectionLevel >= 0.7);
+        ref.visible = identified;
+      }
+      // contact-only blip (detected but not identified)
+      const bl = blipRefs.current.get(u.id);
+      if (bl) {
+        const contactOnly = u.team === 'enemy' && !(u.spottedByEnemy && u.detectionLevel >= 0.7) && u.detectionLevel > 0.3;
+        bl.visible = contactOnly;
+        if (contactOnly) {
+          bl.rotation.y = t * 1.2;
+          const s3 = 1 + Math.sin(t * 4) * 0.1;
+          bl.scale.set(s3, s3, s3);
+          ((bl as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.35 + u.detectionLevel * 0.5;
+        }
       }
       const sel = selRefs.current.get(u.id);
       if (sel) {
