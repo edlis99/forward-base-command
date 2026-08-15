@@ -29,6 +29,7 @@ export function computeFormation(
     return score(a) - score(b);
   });
 
+  const slotPositions: Position[] = [];
   const out: { id: string; pos: Position }[] = [];
   const N = sorted.length;
 
