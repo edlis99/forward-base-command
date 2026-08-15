@@ -613,6 +613,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
   const previewRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const hoverRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const suppRefs = useRef<Map<string, THREE.Mesh>>(new Map());
+  const blipRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const [, forceRender] = React.useReducer((n) => n + 1, 0);
   const knownIdsRef = useRef<string>('');
 
@@ -662,7 +663,22 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         const curY = ref.scale.y;
         const newY = curY + (proneTarget * bob - curY) * k;
         ref.scale.set(1, newY, 1);
-        ref.visible = u.team === 'player' || u.spottedByEnemy;
+        // Fog of war: enemies only render as full models once identified (detection >= 0.7).
+        const identified = u.team === 'player' || (u.spottedByEnemy && u.detectionLevel >= 0.7);
+        ref.visible = identified;
+      }
+      // contact-only blip (detected but not identified)
+      const bl = blipRefs.current.get(u.id);
+      if (bl) {
+        const contactOnly = u.team === 'enemy' && !(u.spottedByEnemy && u.detectionLevel >= 0.7) && u.detectionLevel > 0.3;
+        bl.visible = contactOnly;
+        if (contactOnly) {
+          bl.position.set(u.pos.x / S, 0.9, u.pos.y / S);
+          bl.rotation.y = t * 1.2;
+          const s3 = 1 + Math.sin(t * 4) * 0.1;
+          bl.scale.set(s3, s3, s3);
+          ((bl as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.35 + u.detectionLevel * 0.5;
+        }
       }
       const sel = selRefs.current.get(u.id);
       if (sel) {
@@ -763,8 +779,54 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
           <HealthBar u={u} />
         </group>
       ))}
+      {/* contact-only blips (rendered outside unit groups so they show while models are hidden) */}
+      {liveUnits.filter(u => u.team === 'enemy').map(u => (
+        <mesh
+          key={`blip-${u.id}`}
+          ref={(el) => { if (el) blipRefs.current.set(u.id, el); else blipRefs.current.delete(u.id); }}
+          position={[u.pos.x / S, 0.9, u.pos.y / S]}
+          rotation={[0, 0, Math.PI / 4]}
+          raycast={() => null}
+          visible={false}
+        >
+          <octahedronGeometry args={[0.34, 0]} />
+          <meshBasicMaterial color="#ff5a4a" transparent opacity={0.7} depthWrite={false} />
+        </mesh>
+      ))}
     </group>
   );
+}
+
+/** Last-known-position ghost markers for enemies that broke contact (fade over ~15s). */
+function GhostContactsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
+  const groupRef = useRef<THREE.Group>(null);
+  useFrame(() => {
+    const g = groupRef.current;
+    if (!g) return;
+    const state = gameStateRef.current;
+    const ghosts = state.ghostContacts;
+    // ensure pool size
+    while (g.children.length < ghosts.length) {
+      const m = new THREE.Mesh(
+        new THREE.RingGeometry(0.4, 0.55, 4),
+        new THREE.MeshBasicMaterial({ color: '#ff9b6a', transparent: true, opacity: 0.5, depthWrite: false }),
+      );
+      m.rotation.x = -Math.PI / 2;
+      m.rotation.z = Math.PI / 4;
+      m.raycast = () => null;
+      g.add(m);
+    }
+    for (let i = 0; i < g.children.length; i++) {
+      const m = g.children[i] as THREE.Mesh;
+      const gh = ghosts[i];
+      if (!gh) { m.visible = false; continue; }
+      m.visible = true;
+      m.position.set(gh.pos.x / S, 0.04, gh.pos.y / S);
+      const age = Math.max(0, Math.min(1, (state.time - gh.time) / 15));
+      (m.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - age);
+    }
+  });
+  return <group ref={groupRef} />;
 }
 
 function HealthBar({ u }: { u: Unit }) {
@@ -1241,6 +1303,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <TerrainDebugLayer gameStateRef={gameStateRef} />
         <CapturePoints gameStateRef={gameStateRef} />
         <UnitsLayer gameStateRef={gameStateRef} inputRef={inputRef} />
+        <GhostContactsLayer gameStateRef={gameStateRef} />
         <PathsLayer gameStateRef={gameStateRef} />
         <CommandMarkersLayer gameStateRef={gameStateRef} />
         <EffectsLayer gameStateRef={gameStateRef} />
