@@ -66,6 +66,10 @@ export interface Unit {
   stuckTimer: number;
   lastDamageTime: number;
   passengers: string[]; insideOf: string | null;
+  /** Vehicle the unit is walking toward to mount (cleared on board/abort). */
+  boardTarget: string | null;
+  /** Group-move speed cap so a formation advances at its slowest member's pace. */
+  groupSpeedCap: number | null;
   // movement
   finalDest: Position | null;        // true destination for re-path
   lastProgressDist: number;          // distance to current targetPos at last progress check
