@@ -32,6 +32,7 @@ export function createUnit(type: UnitType, team: Team, x: number, y: number): Un
     homePos: { x, y },
     fatigue: 0, stuckTimer: 0, lastDamageTime: -999,
     passengers: [], insideOf: null,
+    boardTarget: null, groupSpeedCap: null,
     finalDest: null, lastProgressDist: Infinity, lastProgressTime: 0,
     reactionDelay: 0, prone: false, ambushReady: false, rallyUntil: 0,
     digTimer: 0, coverSeekCooldown: 0, lastAllyDeathTime: -999,
@@ -173,6 +174,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       unit.finalDest = null;
       if (unit.waypoints.length === 0 && unit.order !== 'hold_position' && unit.order !== 'patrol') {
         unit.order = 'idle';
+        unit.groupSpeedCap = null;
       }
       unit.vel.x *= 0.4; unit.vel.y *= 0.4;
       return;
@@ -207,7 +209,9 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const suppressionPenalty = 1 - unit.suppression * 0.5;
   const moralePenalty = 0.7 + unit.morale * 0.3;
   const fatiguePenalty = 1 - unit.fatigue * 0.4;
-  const speed = (unit.speed / effectiveCost) * suppressionPenalty * moralePenalty * fatiguePenalty * traction * alignFactor;
+  const baseSpeed = unit.groupSpeedCap != null ? Math.min(unit.speed, unit.groupSpeedCap) : unit.speed;
+  const speed = (baseSpeed / effectiveCost) * suppressionPenalty * moralePenalty * fatiguePenalty * traction * alignFactor;
+
 
   const targetVx = Math.cos(unit.facing) * speed;
   const targetVy = Math.sin(unit.facing) * speed;
