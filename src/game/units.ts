@@ -174,6 +174,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       unit.finalDest = null;
       if (unit.waypoints.length === 0 && unit.order !== 'hold_position' && unit.order !== 'patrol') {
         unit.order = 'idle';
+        unit.groupSpeedCap = null;
       }
       unit.vel.x *= 0.4; unit.vel.y *= 0.4;
       return;
