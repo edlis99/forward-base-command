@@ -70,6 +70,8 @@ export interface Unit {
   boardTarget: string | null;
   /** Group-move speed cap so a formation advances at its slowest member's pace. */
   groupSpeedCap: number | null;
+  /** Shared command id used to pace units in the same moving formation. */
+  moveGroupId: number | null;
   // movement
   finalDest: Position | null;        // true destination for re-path
   lastProgressDist: number;          // distance to current targetPos at last progress check
@@ -212,6 +214,8 @@ export interface GameState {
   fireSupport: FireSupportState;
   fireMissions: FireMission[];
   smokeZones: SmokeZone[];
+  /** Monotonic id for coordinated player movement orders. */
+  nextMoveGroupId: number;
 }
 
 export interface DebugFlags {
