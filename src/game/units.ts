@@ -1,6 +1,6 @@
 import { Unit, UnitType, Team, Position, GameState, Stance } from './types';
 import { UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS } from './constants';
-import { getTerrainAt, hasLineOfSight, losInfo, isPassable, isFootprintPassable } from './terrain';
+import { getTerrainAt, hasLineOfSight, losInfo, isPassable, isFootprintPassable, findNearestPassableWorld } from './terrain';
 import { findPath } from './pathfinding';
 import { isVisibleTo } from './awareness';
 
@@ -32,7 +32,7 @@ export function createUnit(type: UnitType, team: Team, x: number, y: number): Un
     homePos: { x, y },
     fatigue: 0, stuckTimer: 0, lastDamageTime: -999,
     passengers: [], insideOf: null,
-    boardTarget: null, groupSpeedCap: null,
+    boardTarget: null, groupSpeedCap: null, moveGroupId: null,
     finalDest: null, lastProgressDist: Infinity, lastProgressTime: 0,
     reactionDelay: 0, prone: false, ambushReady: false, rallyUntil: 0,
     digTimer: 0, coverSeekCooldown: 0, lastAllyDeathTime: -999,
@@ -83,8 +83,11 @@ function isVehicle(u: Unit) { return u.type === 'tank' || u.type === 'apc'; }
 
 /** Set destination using A* pathfinding. Stores `finalDest` for re-paths. */
 export function setDestination(unit: Unit, state: GameState, dest: Position) {
-  unit.finalDest = { x: dest.x, y: dest.y };
-  const path = findPath(state.terrain, unit.pos, dest, unit.type);
+  const vehicle = isVehicle(unit);
+  const helicopter = unit.type === 'helicopter';
+  const reachableDest = findNearestPassableWorld(state.terrain, dest.x, dest.y, vehicle, helicopter, 12);
+  unit.finalDest = { ...reachableDest };
+  const path = findPath(state.terrain, unit.pos, reachableDest, unit.type);
   if (path.length === 0) {
     unit.targetPos = null;
     unit.path = [];
@@ -100,18 +103,35 @@ function separation(unit: Unit, state: GameState): { x: number; y: number } {
   let sx = 0, sy = 0;
   const radius = unit.type === 'tank' ? 30 : unit.type === 'apc' ? 28 : 18;
   for (const o of state.units) {
-    if (!o.alive || o === unit) continue;
+    if (!o.alive || o === unit || o.team !== unit.team || o.insideOf) continue;
     if ((o.type === 'helicopter') !== (unit.type === 'helicopter')) continue;
     const dx = unit.pos.x - o.pos.x;
     const dy = unit.pos.y - o.pos.y;
     const d = Math.hypot(dx, dy);
-    if (d > 0 && d < radius) {
+    if (d > 0 && d < radius && (o.targetPos || d < radius * 0.55)) {
       const w = (radius - d) / radius;
       sx += (dx / d) * w;
       sy += (dy / d) * w;
     }
   }
   return { x: sx, y: sy };
+}
+
+function groupCohesionFactor(unit: Unit, state: GameState): number {
+  if (unit.moveGroupId == null || !unit.finalDest) return 1;
+  const peers = state.units.filter(peer =>
+    peer.alive && peer.id !== unit.id && peer.moveGroupId === unit.moveGroupId && peer.finalDest && !peer.insideOf
+  );
+  if (peers.length === 0) return 1;
+  const ownRemaining = distance(unit.pos, unit.finalDest);
+  let furthestRemaining = ownRemaining;
+  for (const peer of peers) {
+    if (!peer.finalDest) continue;
+    furthestRemaining = Math.max(furthestRemaining, distance(peer.pos, peer.finalDest));
+  }
+  const lead = furthestRemaining - ownRemaining;
+  if (lead <= CELL_SIZE * 0.75) return 1;
+  return Math.max(0.28, 1 - (lead - CELL_SIZE * 0.75) / (CELL_SIZE * 3));
 }
 
 export function moveUnit(unit: Unit, dt: number, state: GameState) {
@@ -140,12 +160,13 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   // Pop user waypoint when current target reached
   if (!unit.targetPos) {
     if (unit.path.length > 0) {
-      unit.targetPos = unit.path.shift()!;
+      const nextPathPoint = unit.path.shift();
+      if (nextPathPoint) unit.targetPos = nextPathPoint;
       unit.lastProgressDist = distance(unit.pos, unit.targetPos);
       unit.lastProgressTime = state.time;
     } else if (unit.waypoints.length > 0) {
-      const next = unit.waypoints.shift()!;
-      setDestination(unit, state, next);
+      const next = unit.waypoints.shift();
+      if (next) setDestination(unit, state, next);
       if (!unit.targetPos) return;
     } else {
       unit.vel.x *= 0.85; unit.vel.y *= 0.85;
@@ -166,7 +187,8 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   // Pop intermediate path waypoint
   if (distToTarget < popRadius) {
     if (unit.path.length > 0) {
-      unit.targetPos = unit.path.shift()!;
+      const nextPathPoint = unit.path.shift();
+      if (nextPathPoint) unit.targetPos = nextPathPoint;
       unit.lastProgressDist = distance(unit.pos, unit.targetPos);
       unit.lastProgressTime = state.time;
     } else {
@@ -175,6 +197,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       if (unit.waypoints.length === 0 && unit.order !== 'hold_position' && unit.order !== 'patrol') {
         unit.order = 'idle';
         unit.groupSpeedCap = null;
+        unit.moveGroupId = null;
       }
       unit.vel.x *= 0.4; unit.vel.y *= 0.4;
       return;
@@ -210,7 +233,8 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const moralePenalty = 0.7 + unit.morale * 0.3;
   const fatiguePenalty = 1 - unit.fatigue * 0.4;
   const baseSpeed = unit.groupSpeedCap != null ? Math.min(unit.speed, unit.groupSpeedCap) : unit.speed;
-  const speed = (baseSpeed / effectiveCost) * suppressionPenalty * moralePenalty * fatiguePenalty * traction * alignFactor;
+  const cohesionFactor = groupCohesionFactor(unit, state);
+  const speed = (baseSpeed / effectiveCost) * suppressionPenalty * moralePenalty * fatiguePenalty * traction * alignFactor * cohesionFactor;
 
 
   const targetVx = Math.cos(unit.facing) * speed;
@@ -235,21 +259,10 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   } else {
     unit.vel.x *= 0.3; unit.vel.y *= 0.3;
     unit.stuckTimer += dt;
-    if (unit.stuckTimer > 0.25) {
-      // Try a small perpendicular detour first, then a full re-path.
+    if (unit.stuckTimer > 0.45) {
+      // Deterministically rebuild the route to the actual formation slot.
       const dest = unit.finalDest ?? unit.targetPos;
-      if (dest) {
-        const dxToDest = dest.x - unit.pos.x, dyToDest = dest.y - unit.pos.y;
-        const dl = Math.hypot(dxToDest, dyToDest) || 1;
-        const side = Math.random() < 0.5 ? 1 : -1;
-        const detour = {
-          x: unit.pos.x + (dxToDest / dl) * CELL_SIZE * 1.2 + (-dyToDest / dl) * CELL_SIZE * 1.5 * side,
-          y: unit.pos.y + (dyToDest / dl) * CELL_SIZE * 1.2 + (dxToDest / dl) * CELL_SIZE * 1.5 * side,
-        };
-        setDestination(unit, state, detour);
-        // Preserve original goal as follow-up waypoint.
-        if (unit.targetPos) unit.waypoints.unshift(dest);
-      }
+      if (dest) setDestination(unit, state, dest);
       unit.stuckTimer = 0;
     }
   }
@@ -321,8 +334,11 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
     const desired = angleBetween(unit.pos, target.pos);
     const delta = normalizeAngle(desired - unit.facing);
     const maxTurn = unit.turnRate * dt;
-    if (Math.abs(delta) > maxTurn) unit.facing += Math.sign(delta) * maxTurn;
-    else unit.facing = desired;
+    const activelyMoving = unit.targetPos != null && (unit.order === 'move' || unit.order === 'attack_move' || unit.order === 'retreat');
+    if (!activelyMoving) {
+      if (Math.abs(delta) > maxTurn) unit.facing += Math.sign(delta) * maxTurn;
+      else unit.facing = desired;
+    }
 
     // Only abandon current path if unit was idle/holding/patrolling — never override a player order.
     if ((unit.order === 'hold_position' || unit.order === 'idle' || unit.order === 'patrol')

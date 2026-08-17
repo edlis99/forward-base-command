@@ -47,6 +47,7 @@ export function createInitialState(mission: MissionDef, deployment?: import('./t
     fireSupport: { heTokens: 3, smokeTokens: 2, cooldown: 0, armed: null, counterCooldown: 75 },
     fireMissions: [],
     smokeZones: [],
+    nextMoveGroupId: 1,
   };
   state.units = initial.units ?? [];
   // Snap any unit that spawned on impassable terrain to the nearest passable cell.
@@ -219,7 +220,7 @@ export function updateCommandPreview(state: GameState, worldX: number, worldY: n
 export function clearCommandPreview(state: GameState) { state.commandPreview = null; }
 
 export function handleRightClickWorld(worldX: number, worldY: number, state: GameState, shiftKey = false, ctrlKey = false) {
-  const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player');
+  const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player' && !u.insideOf);
   if (selected.length === 0) return;
 
   // Click on enemy unit
@@ -272,19 +273,26 @@ export function handleRightClickWorld(worldX: number, worldY: number, state: Gam
   const destCell = getTerrainAt(state.terrain, worldX, worldY);
   const formType: FormationType = (destCell?.type === 'road' && !state.preferredFormation) ? 'column' : formationType;
   const slots = computeFormation(selected, dest, facing, formType);
+  const groupId = state.nextMoveGroupId++;
+  const slowestSpeed = Math.min(...selected.map(u => u.speed));
 
   for (const slot of slots) {
     const u = selected.find(x => x.id === slot.id);
     if (!u) continue;
     if (shiftKey) {
       u.waypoints.push(slot.pos);
-      if (!u.targetPos && u.path.length === 0) setDestination(u, state, u.waypoints.shift()!);
+      if (!u.targetPos && u.path.length === 0) {
+        const nextWaypoint = u.waypoints.shift();
+        if (nextWaypoint) setDestination(u, state, nextWaypoint);
+      }
     } else {
       u.waypoints = [];
       setDestination(u, state, slot.pos);
       u.attackTarget = null;
       u.order = ctrlKey ? 'attack_move' : 'move';
     }
+    u.groupSpeedCap = slowestSpeed;
+    u.moveGroupId = groupId;
   }
   pushMarker(state, onCapture ? 'capture' : ctrlKey ? 'attack_move' : 'move', dest);
 }
