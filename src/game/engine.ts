@@ -7,7 +7,7 @@ import { updateThreatMap } from './threatMap';
 import { updateSquads } from './squads';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './constants';
 import { getMission } from './missions';
-import { computeFormation, pickFormation, resolveFormationSlots } from './formations';
+import { pickFormation, resolveFormationSlots } from './formations';
 
 export function createInitialState(mission: MissionDef, deployment?: import('./types').DeploymentContext): GameState {
   const terrain = generateTerrain(mission.mapLayout, mission.mapSeed);
