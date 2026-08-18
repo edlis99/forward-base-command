@@ -1123,6 +1123,24 @@ function PathsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<Gam
 
 // ---------- Ground click handler (screen-space drag threshold + preview) ----------
 function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayRef'>) {
+  const { camera, size } = useThree();
+  const projected = useMemo(() => new THREE.Vector3(), []);
+
+  const selectFromScreen = (endX: number, endY: number, shiftKey: boolean) => {
+    const state = gameStateRef.current;
+    const start = inputRef.current.dragStartScreen;
+    if (!start) return;
+    const minX = Math.min(start.x, endX), maxX = Math.max(start.x, endX);
+    const minY = Math.min(start.y, endY), maxY = Math.max(start.y, endY);
+    if (!shiftKey) state.units.forEach(u => { u.selected = false; });
+    for (const unit of state.units) {
+      if (!unit.alive || unit.team !== 'player' || unit.insideOf) continue;
+      projected.set(unit.pos.x / S, 0.5, unit.pos.y / S).project(camera);
+      const sx = (projected.x * 0.5 + 0.5) * size.width;
+      const sy = (-projected.y * 0.5 + 0.5) * size.height;
+      if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) unit.selected = true;
+    }
+  };
   const handleDown = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
     const wx = e.point.x * S;
@@ -1188,8 +1206,7 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
     if (e.nativeEvent.button !== 0) return;
 
     if (inputRef.current.dragPromoted && state.selectionBox) {
-      const { start, end } = state.selectionBox;
-      handleBoxSelect(start.x, start.y, end.x, end.y, state, e.nativeEvent.shiftKey);
+      selectFromScreen(e.nativeEvent.clientX, e.nativeEvent.clientY, e.nativeEvent.shiftKey);
     } else {
       // tap = single-unit select
       const wx = e.point.x * S, wy = e.point.z * S;

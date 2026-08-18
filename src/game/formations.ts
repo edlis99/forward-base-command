@@ -1,5 +1,5 @@
 import { Unit, Position, FormationType } from './types';
-import { findNearestPassableWorld } from './terrain';
+import { findNearestPassableWorld, isFootprintPassable } from './terrain';
 
 export function pickFormation(units: Unit[]): FormationType {
   const hasArmor = units.some(u => u.type === 'tank' || u.type === 'apc');
@@ -116,14 +116,19 @@ export function resolveFormationSlots(
     let pos = findNearestPassableWorld(terrain, slot.pos.x, slot.pos.y, veh, false, 10);
     let key = `${Math.floor(pos.x / cellSize)},${Math.floor(pos.y / cellSize)}`;
     if (claimed.has(key)) {
-      // Nudge outward in a ring until a free, passable cell is found.
-      const ring = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
-      for (const [dx, dy] of ring) {
-        const cand = findNearestPassableWorld(
-          terrain, pos.x + dx * cellSize, pos.y + dy * cellSize, veh, false, 4,
-        );
-        const ck = `${Math.floor(cand.x / cellSize)},${Math.floor(cand.y / cellSize)}`;
-        if (!claimed.has(ck)) { pos = cand; key = ck; break; }
+      // Search deterministic expanding rings. Do not call nearest-passable for
+      // each nudge: it can snap several slots back onto the same cell.
+      const baseX = Math.floor(pos.x / cellSize), baseY = Math.floor(pos.y / cellSize);
+      outer: for (let r = 1; r <= 8; r++) {
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const gx = baseX + dx, gy = baseY + dy;
+          const ck = `${gx},${gy}`;
+          if (claimed.has(ck) || !isFootprintPassable(terrain, gx, gy, veh, false)) continue;
+          pos = { x: gx * cellSize + cellSize / 2, y: gy * cellSize + cellSize / 2 };
+          key = ck;
+          break outer;
+        }
       }
     }
     claimed.add(key);

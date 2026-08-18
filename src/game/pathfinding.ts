@@ -4,6 +4,39 @@ import { isPassable, isFootprintPassable } from './terrain';
 
 interface Node { gx: number; gy: number; g: number; f: number; parent: Node | null; }
 
+class MinHeap {
+  private items: Node[] = [];
+  get length() { return this.items.length; }
+  push(node: Node) {
+    this.items.push(node);
+    let i = this.items.length - 1;
+    while (i > 0) {
+      const parent = Math.floor((i - 1) / 2);
+      if (this.items[parent].f <= node.f) break;
+      this.items[i] = this.items[parent];
+      i = parent;
+    }
+    this.items[i] = node;
+  }
+  pop(): Node | undefined {
+    const root = this.items[0];
+    const last = this.items.pop();
+    if (!root || !last || this.items.length === 0) return root;
+    let i = 0;
+    while (true) {
+      const left = i * 2 + 1;
+      if (left >= this.items.length) break;
+      const right = left + 1;
+      const child = right < this.items.length && this.items[right].f < this.items[left].f ? right : left;
+      if (this.items[child].f >= last.f) break;
+      this.items[i] = this.items[child];
+      i = child;
+    }
+    this.items[i] = last;
+    return root;
+  }
+}
+
 function cellPassable(terrain: TerrainCell[][], gx: number, gy: number, vehicle: boolean, heli: boolean): boolean {
   if (gx < 0 || gx >= MAP_COLS || gy < 0 || gy >= MAP_ROWS) return false;
   if (vehicle) return isFootprintPassable(terrain, gx, gy, true, false, 1);
@@ -57,7 +90,7 @@ export function findPath(
 
   if (sx === gx && sy === gy) return [{ x: goal.x, y: goal.y }];
 
-  const open: Node[] = [];
+  const open = new MinHeap();
   const visited = new Map<number, number>(); // key=gy*COLS+gx -> g
   const key = (x: number, y: number) => y * MAP_COLS + x;
 
@@ -67,13 +100,13 @@ export function findPath(
 
   let goalNode: Node | null = null;
   let iterations = 0;
-  const MAX_ITER = 4000;
+  const MAX_ITER = MAP_COLS * MAP_ROWS;
 
   while (open.length > 0 && iterations++ < MAX_ITER) {
-    // pop best
-    let bestI = 0;
-    for (let i = 1; i < open.length; i++) if (open[i].f < open[bestI].f) bestI = i;
-    const cur = open.splice(bestI, 1)[0];
+    const cur = open.pop();
+    if (!cur) break;
+    // Ignore stale heap entries superseded by a cheaper route.
+    if ((visited.get(key(cur.gx, cur.gy)) ?? Infinity) < cur.g) continue;
     if (cur.gx === gx && cur.gy === gy) { goalNode = cur; break; }
 
     for (const [dx, dy, base] of NEIGH) {

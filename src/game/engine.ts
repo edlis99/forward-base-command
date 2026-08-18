@@ -182,13 +182,14 @@ export function update(state: GameState, input: InputState, dt: number) {
 /** True if the click landed on a friendly unit (and selected it). */
 export function handleLeftClickWorld(worldX: number, worldY: number, state: GameState, shiftKey: boolean) {
   if (!shiftKey) state.units.forEach(u => u.selected = false);
-  for (const unit of state.units) {
-    if (!unit.alive || unit.team !== 'player') continue;
-    const dx = unit.pos.x - worldX, dy = unit.pos.y - worldY;
-    if (Math.sqrt(dx * dx + dy * dy) < 22) {
-      unit.selected = shiftKey ? !unit.selected : true;
-      return true;
-    }
+  const nearest = state.units
+    .filter(u => u.alive && u.team === 'player' && !u.insideOf)
+    .map(unit => ({ unit, d: Math.hypot(unit.pos.x - worldX, unit.pos.y - worldY) }))
+    .filter(hit => hit.d < 22)
+    .sort((a, b) => a.d - b.d || a.unit.id.localeCompare(b.unit.id))[0];
+  if (nearest) {
+    nearest.unit.selected = shiftKey ? !nearest.unit.selected : true;
+    return true;
   }
   return false;
 }
@@ -204,7 +205,7 @@ export function updatePreviewSelection(state: GameState) {
 
 /** Recompute formation ghost slots based on currently selected units + cursor world pos. */
 export function updateCommandPreview(state: GameState, worldX: number, worldY: number) {
-  const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player');
+  const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player' && !u.insideOf);
   if (selected.length === 0) { state.commandPreview = null; return; }
   const cx = selected.reduce((s, u) => s + u.pos.x, 0) / selected.length;
   const cy = selected.reduce((s, u) => s + u.pos.y, 0) / selected.length;
@@ -399,7 +400,7 @@ export function digTrenchLineForSelected(state: GameState) {
 
 export function handleBoxSelect(x1: number, y1: number, x2: number, y2: number, state: GameState, shiftKey: boolean) {
   if (!shiftKey) state.units.forEach(u => u.selected = false);
-  const units = getUnitsInRect(state.units, x1, y1, x2, y2, 'player');
+  const units = getUnitsInRect(state.units, x1, y1, x2, y2, 'player').filter(u => !u.insideOf);
   units.forEach(u => u.selected = true);
   state.previewSelected.clear();
 }
