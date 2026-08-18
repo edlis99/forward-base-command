@@ -1,4 +1,5 @@
 import { Unit, Position, FormationType } from './types';
+import { findNearestPassableWorld } from './terrain';
 
 export function pickFormation(units: Unit[]): FormationType {
   const hasArmor = units.some(u => u.type === 'tank' || u.type === 'apc');
@@ -83,4 +84,49 @@ export function computeFormation(
   });
 
   return out;
+}
+
+/** Spacing scaled by unit mix: vehicles need wider slots than infantry. */
+export function formationSpacing(units: Unit[]): number {
+  const vehicles = units.filter(u => u.type === 'tank' || u.type === 'apc').length;
+  const ratio = units.length ? vehicles / units.length : 0;
+  return 32 + ratio * 26;
+}
+
+/**
+ * Compute formation slots and snap each one to passable ground, claiming cells
+ * so two units never get the same destination cell (prevents bunching and the
+ * endless repathing that happened when a slot landed inside a wall/forest).
+ */
+export function resolveFormationSlots(
+  units: Unit[],
+  anchor: Position,
+  facing: number,
+  type: FormationType,
+  terrain: import('./types').TerrainCell[][],
+  cellSize: number,
+): { id: string; pos: Position }[] {
+  const raw = computeFormation(units, anchor, facing, type, formationSpacing(units));
+  const claimed = new Set<string>();
+  const byId = new Map(units.map(u => [u.id, u]));
+  return raw.map(slot => {
+    const u = byId.get(slot.id);
+    if (!u || u.type === 'helicopter') return slot;
+    const veh = u.type === 'tank' || u.type === 'apc';
+    let pos = findNearestPassableWorld(terrain, slot.pos.x, slot.pos.y, veh, false, 10);
+    let key = `${Math.floor(pos.x / cellSize)},${Math.floor(pos.y / cellSize)}`;
+    if (claimed.has(key)) {
+      // Nudge outward in a ring until a free, passable cell is found.
+      const ring = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
+      for (const [dx, dy] of ring) {
+        const cand = findNearestPassableWorld(
+          terrain, pos.x + dx * cellSize, pos.y + dy * cellSize, veh, false, 4,
+        );
+        const ck = `${Math.floor(cand.x / cellSize)},${Math.floor(cand.y / cellSize)}`;
+        if (!claimed.has(ck)) { pos = cand; key = ck; break; }
+      }
+    }
+    claimed.add(key);
+    return { id: slot.id, pos };
+  });
 }
