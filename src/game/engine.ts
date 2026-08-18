@@ -7,7 +7,7 @@ import { updateThreatMap } from './threatMap';
 import { updateSquads } from './squads';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './constants';
 import { getMission } from './missions';
-import { computeFormation, pickFormation } from './formations';
+import { pickFormation, resolveFormationSlots } from './formations';
 
 export function createInitialState(mission: MissionDef, deployment?: import('./types').DeploymentContext): GameState {
   const terrain = generateTerrain(mission.mapLayout, mission.mapSeed);
@@ -213,7 +213,7 @@ export function updateCommandPreview(state: GameState, worldX: number, worldY: n
   const destCell = getTerrainAt(state.terrain, worldX, worldY);
   const formType: FormationType = state.preferredFormation
     ?? (destCell?.type === 'road' ? 'column' : pickFormation(selected));
-  const slots = computeFormation(selected, dest, facing, formType);
+  const slots = resolveFormationSlots(selected, dest, facing, formType, state.terrain, state.cellSize);
   state.commandPreview = { slots: slots.map(s => s.pos) };
 }
 
@@ -272,7 +272,7 @@ export function handleRightClickWorld(worldX: number, worldY: number, state: Gam
   const formationType: FormationType = state.preferredFormation ?? pickFormation(selected);
   const destCell = getTerrainAt(state.terrain, worldX, worldY);
   const formType: FormationType = (destCell?.type === 'road' && !state.preferredFormation) ? 'column' : formationType;
-  const slots = computeFormation(selected, dest, facing, formType);
+  const slots = resolveFormationSlots(selected, dest, facing, formType, state.terrain, state.cellSize);
   const groupId = state.nextMoveGroupId++;
   const slowestSpeed = Math.min(...selected.map(u => u.speed));
 
