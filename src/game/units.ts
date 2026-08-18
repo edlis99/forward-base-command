@@ -91,6 +91,9 @@ export function setDestination(unit: Unit, state: GameState, dest: Position) {
   if (path.length === 0) {
     unit.targetPos = null;
     unit.path = [];
+    unit.finalDest = null;
+    unit.groupSpeedCap = null;
+    unit.moveGroupId = null;
     return;
   }
   unit.path = path;
@@ -237,8 +240,12 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const speed = (baseSpeed / effectiveCost) * suppressionPenalty * moralePenalty * fatiguePenalty * traction * alignFactor * cohesionFactor;
 
 
-  const targetVx = Math.cos(unit.facing) * speed;
-  const targetVy = Math.sin(unit.facing) * speed;
+  // Infantry can sidestep and should track the route directly. Driving them by
+  // facing caused wide arcs that clipped obstacles and repeatedly rebuilt A*.
+  const travelX = veh ? Math.cos(unit.facing) : dirX;
+  const travelY = veh ? Math.sin(unit.facing) : dirY;
+  const targetVx = travelX * speed;
+  const targetVy = travelY * speed;
   const accel = veh ? 3 : 8;
   unit.vel.x += (targetVx - unit.vel.x) * Math.min(1, accel * dt);
   unit.vel.y += (targetVy - unit.vel.y) * Math.min(1, accel * dt);
@@ -257,10 +264,12 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       nextT.trampled = true;
     }
   } else {
-    unit.vel.x *= 0.3; unit.vel.y *= 0.3;
+    unit.vel.x = 0; unit.vel.y = 0;
     unit.stuckTimer += dt;
     if (unit.stuckTimer > 0.45) {
-      // Deterministically rebuild the route to the actual formation slot.
+      // Recover from terrain changes or an invalid edge before rebuilding.
+      const recovered = findNearestPassableWorld(state.terrain, unit.pos.x, unit.pos.y, veh, heli, 4);
+      unit.pos.x = recovered.x; unit.pos.y = recovered.y;
       const dest = unit.finalDest ?? unit.targetPos;
       if (dest) setDestination(unit, state, dest);
       unit.stuckTimer = 0;
