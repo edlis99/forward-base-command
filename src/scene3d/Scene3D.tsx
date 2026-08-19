@@ -8,6 +8,8 @@ import {
   updatePreviewSelection, updateCommandPreview, clearCommandPreview,
 } from '../game/engine';
 import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor } from '../game/tactical';
+import { GroundSurface, WaterSheet, GrassTufts, GroundDetail } from './GroundSurface';
+
 
 const S = CELL_SIZE;
 const W = MAP_COLS;
@@ -42,13 +44,23 @@ interface SceneProps {
 }
 
 // ---------- Terrain ----------
+/**
+ * Terrain types whose surface is drawn by the continuous landscape mesh.
+ * Anything listed here must NOT be extruded as a per-cell box, otherwise the
+ * map reads as a grid of squares.
+ */
+const FLAT_TYPES = new Set([
+  'open', 'road', 'gravel', 'mud', 'crater', 'water', 'forest',
+  'tall_grass', 'trench', 'hedgerow',
+]);
+
 function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
   const groups = useMemo(() => {
     const byType: Record<string, { positions: [number, number, number][]; sizes: [number, number, number][] }> = {};
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const c = terrain[y][x];
       const t = c.type;
-      if (t === 'trench') continue; // rendered by TrenchInstances
+      if (FLAT_TYPES.has(t)) continue; // drawn by GroundSurface / prop layers
       const h = TERRAIN_HEIGHT[t] ?? 0;
       if (!byType[t]) byType[t] = { positions: [], sizes: [] };
       byType[t].positions.push([x + 0.5, h / 2, y + 0.5]);
@@ -59,10 +71,15 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
 
   return (
     <group>
-      <mesh position={[W / 2, -0.5, H / 2]} receiveShadow>
-        <boxGeometry args={[W, 1, H]} />
-        <meshStandardMaterial color="#3a4a32" />
+      {/* Deep sub-surface slab so the landscape silhouette has thickness. */}
+      <mesh position={[W / 2, -1.6, H / 2]} receiveShadow raycast={() => null}>
+        <boxGeometry args={[W, 3, H]} />
+        <meshStandardMaterial color="#3a3428" />
       </mesh>
+      <GroundSurface terrain={terrain} />
+      <WaterSheet terrain={terrain} />
+      <GrassTufts terrain={terrain} />
+      <GroundDetail terrain={terrain} />
       {Object.entries(groups).map(([type, g]) => (
         <InstancedTerrainGroup key={type} type={type} positions={g.positions} sizes={g.sizes} />
       ))}
@@ -73,6 +90,7 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
     </group>
   );
 }
+
 
 /**
  * Zig-zag trench system with a sunken floor, firing step, and mixed
@@ -384,13 +402,13 @@ function HedgerowInstances({ terrain }: { terrain: TerrainCell[][] }) {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       if (terrain[y][x].type !== 'hedgerow') continue;
       const seed = (x * 91 + y * 47) % 997;
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 7; i++) {
         const a = seed + i * 137;
         out.push({
           x: x + 0.15 + ((a * 17) % 70) / 100,
           z: y + 0.15 + ((a * 29) % 70) / 100,
           sx: 0.32 + ((a * 11) % 22) / 100,
-          sy: 0.35 + ((a * 7) % 25) / 100,
+          sy: 0.72 + ((a * 7) % 40) / 100,
           sz: 0.26 + ((a * 19) % 26) / 100,
           rot: ((a * 13) % 360) * Math.PI / 180,
           tint: 0.82 + ((a * 5) % 28) / 100,
@@ -1126,27 +1144,41 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
   const { camera, size } = useThree();
   const projected = useMemo(() => new THREE.Vector3(), []);
 
-  const selectFromScreen = (endX: number, endY: number, shiftKey: boolean) => {
+  /** Pointer position relative to the canvas (matches r3f `size`). */
+  const canvasPos = (e: ThreeEvent<PointerEvent>) => {
+    const el = e.nativeEvent.target as HTMLElement | null;
+    const rect = el?.getBoundingClientRect?.();
+    return {
+      x: e.nativeEvent.clientX - (rect?.left ?? 0),
+      y: e.nativeEvent.clientY - (rect?.top ?? 0),
+    };
+  };
+
+  /** Units whose on-screen position falls inside the drag rectangle. */
+  const unitsInScreenRect = (endX: number, endY: number): Unit[] => {
     const state = gameStateRef.current;
     const start = inputRef.current.dragStartScreen;
-    if (!start) return;
+    if (!start) return [];
     const minX = Math.min(start.x, endX), maxX = Math.max(start.x, endX);
     const minY = Math.min(start.y, endY), maxY = Math.max(start.y, endY);
-    if (!shiftKey) state.units.forEach(u => { u.selected = false; });
+    const hits: Unit[] = [];
     for (const unit of state.units) {
       if (!unit.alive || unit.team !== 'player' || unit.insideOf) continue;
       projected.set(unit.pos.x / S, 0.5, unit.pos.y / S).project(camera);
+      if (projected.z > 1) continue; // behind the camera
       const sx = (projected.x * 0.5 + 0.5) * size.width;
       const sy = (-projected.y * 0.5 + 0.5) * size.height;
-      if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) unit.selected = true;
+      if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) hits.push(unit);
     }
+    return hits;
   };
+
   const handleDown = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
     const wx = e.point.x * S;
     const wy = e.point.z * S;
     const state = gameStateRef.current;
-    const sx = e.nativeEvent.clientX, sy = e.nativeEvent.clientY;
+    const sp = canvasPos(e);
 
     if (e.nativeEvent.button === 2) {
       inputRef.current.rightMouseDown = true;
@@ -1155,7 +1187,8 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
       onChange();
     } else if (e.nativeEvent.button === 0) {
       inputRef.current.dragStart = { x: wx, y: wy };
-      inputRef.current.dragStartScreen = { x: sx, y: sy };
+      inputRef.current.dragStartScreen = { x: sp.x, y: sp.y };
+      inputRef.current.mousePos = { x: sp.x, y: sp.y };
       inputRef.current.dragPromoted = false;
       inputRef.current.isDragging = true;
       // selection box waits until threshold is crossed; no flicker on tap.
@@ -1168,8 +1201,9 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
   const handleMove = (e: ThreeEvent<PointerEvent>) => {
     const wx = e.point.x * S, wy = e.point.z * S;
     const state = gameStateRef.current;
+    const sp = canvasPos(e);
     inputRef.current.mouseWorldPos = { x: wx, y: wy };
-    inputRef.current.mousePos = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
+    inputRef.current.mousePos = { x: sp.x, y: sp.y };
 
     // Live formation preview while RMB held
     if (inputRef.current.rightMouseDown) {
@@ -1178,16 +1212,17 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
 
     if (inputRef.current.isDragging && inputRef.current.dragStartScreen && inputRef.current.dragStart) {
       const ds = inputRef.current.dragStartScreen;
-      const dx = e.nativeEvent.clientX - ds.x;
-      const dy = e.nativeEvent.clientY - ds.y;
-      const screenDist = Math.hypot(dx, dy);
+      const screenDist = Math.hypot(sp.x - ds.x, sp.y - ds.y);
       if (!inputRef.current.dragPromoted && screenDist > DRAG_THRESHOLD_PX) {
         inputRef.current.dragPromoted = true;
         state.selectionBox = { start: { ...inputRef.current.dragStart }, end: { x: wx, y: wy } };
       }
       if (inputRef.current.dragPromoted && state.selectionBox) {
         state.selectionBox.end = { x: wx, y: wy };
-        updatePreviewSelection(state);
+        // Preview uses the SAME screen-space test as the commit below, so the
+        // highlighted units always match what release actually selects.
+        state.previewSelected.clear();
+        for (const u of unitsInScreenRect(sp.x, sp.y)) state.previewSelected.add(u.id);
       }
     }
   };
@@ -1206,7 +1241,10 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
     if (e.nativeEvent.button !== 0) return;
 
     if (inputRef.current.dragPromoted && state.selectionBox) {
-      selectFromScreen(e.nativeEvent.clientX, e.nativeEvent.clientY, e.nativeEvent.shiftKey);
+      const sp = canvasPos(e);
+      const hits = unitsInScreenRect(sp.x, sp.y);
+      if (!e.nativeEvent.shiftKey) state.units.forEach(u => { u.selected = false; });
+      for (const u of hits) u.selected = true;
     } else {
       // tap = single-unit select
       const wx = e.point.x * S, wy = e.point.z * S;
@@ -1220,6 +1258,7 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
     inputRef.current.dragStartScreen = null;
     onChange();
   };
+
 
   return (
     <mesh
