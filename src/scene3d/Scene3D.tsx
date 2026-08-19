@@ -402,13 +402,13 @@ function HedgerowInstances({ terrain }: { terrain: TerrainCell[][] }) {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       if (terrain[y][x].type !== 'hedgerow') continue;
       const seed = (x * 91 + y * 47) % 997;
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 7; i++) {
         const a = seed + i * 137;
         out.push({
           x: x + 0.15 + ((a * 17) % 70) / 100,
           z: y + 0.15 + ((a * 29) % 70) / 100,
           sx: 0.32 + ((a * 11) % 22) / 100,
-          sy: 0.35 + ((a * 7) % 25) / 100,
+          sy: 0.72 + ((a * 7) % 40) / 100,
           sz: 0.26 + ((a * 19) % 26) / 100,
           rot: ((a * 13) % 360) * Math.PI / 180,
           tint: 0.82 + ((a * 5) % 28) / 100,
