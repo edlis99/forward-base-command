@@ -8,6 +8,8 @@ import {
   updatePreviewSelection, updateCommandPreview, clearCommandPreview,
 } from '../game/engine';
 import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor } from '../game/tactical';
+import { GroundSurface, WaterSheet, GrassTufts, GroundDetail } from './GroundSurface';
+
 
 const S = CELL_SIZE;
 const W = MAP_COLS;
