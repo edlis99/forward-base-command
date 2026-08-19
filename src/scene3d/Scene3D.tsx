@@ -42,13 +42,23 @@ interface SceneProps {
 }
 
 // ---------- Terrain ----------
+/**
+ * Terrain types whose surface is drawn by the continuous landscape mesh.
+ * Anything listed here must NOT be extruded as a per-cell box, otherwise the
+ * map reads as a grid of squares.
+ */
+const FLAT_TYPES = new Set([
+  'open', 'road', 'gravel', 'mud', 'crater', 'water', 'forest',
+  'tall_grass', 'trench', 'hedgerow',
+]);
+
 function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
   const groups = useMemo(() => {
     const byType: Record<string, { positions: [number, number, number][]; sizes: [number, number, number][] }> = {};
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const c = terrain[y][x];
       const t = c.type;
-      if (t === 'trench') continue; // rendered by TrenchInstances
+      if (FLAT_TYPES.has(t)) continue; // drawn by GroundSurface / prop layers
       const h = TERRAIN_HEIGHT[t] ?? 0;
       if (!byType[t]) byType[t] = { positions: [], sizes: [] };
       byType[t].positions.push([x + 0.5, h / 2, y + 0.5]);
@@ -59,10 +69,15 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
 
   return (
     <group>
-      <mesh position={[W / 2, -0.5, H / 2]} receiveShadow>
-        <boxGeometry args={[W, 1, H]} />
-        <meshStandardMaterial color="#3a4a32" />
+      {/* Deep sub-surface slab so the landscape silhouette has thickness. */}
+      <mesh position={[W / 2, -1.6, H / 2]} receiveShadow raycast={() => null}>
+        <boxGeometry args={[W, 3, H]} />
+        <meshStandardMaterial color="#3a3428" />
       </mesh>
+      <GroundSurface terrain={terrain} />
+      <WaterSheet terrain={terrain} />
+      <GrassTufts terrain={terrain} />
+      <GroundDetail terrain={terrain} />
       {Object.entries(groups).map(([type, g]) => (
         <InstancedTerrainGroup key={type} type={type} positions={g.positions} sizes={g.sizes} />
       ))}
@@ -73,6 +88,7 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
     </group>
   );
 }
+
 
 /**
  * Zig-zag trench system with a sunken floor, firing step, and mixed
