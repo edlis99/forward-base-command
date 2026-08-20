@@ -17,11 +17,12 @@ const H = MAP_ROWS;
 const DRAG_THRESHOLD_PX = 5;
 
 const TERRAIN_COLORS: Record<string, string> = {
-  open: '#5e7548', urban: '#827a70', forest: '#2f4a26', road: '#464338',
-  water: '#264e6b', wall: '#6b665e', trench: '#2a2018', rubble: '#766f64',
-  sandbag: '#a9986a', mud: '#57442b', crater: '#55432d', hedgerow: '#34522a',
-  tall_grass: '#6f834a', gravel: '#8a7e6a',
+  open: '#8a9c62', urban: '#a89c8c', forest: '#5b7444', road: '#7d7568',
+  water: '#3a6c8c', wall: '#9a9287', trench: '#6d5a3d', rubble: '#a49c90',
+  sandbag: '#c6b487', mud: '#7a6647', crater: '#7a6546', hedgerow: '#5f7c46',
+  tall_grass: '#93a566', gravel: '#b0a68e',
 };
+
 
 const TERRAIN_HEIGHT: Record<string, number> = {
   open: 0.02, urban: 1.6, forest: 0.05, road: 0.01,
@@ -71,11 +72,14 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
 
   return (
     <group>
-      {/* Deep sub-surface slab so the landscape silhouette has thickness. */}
-      <mesh position={[W / 2, -1.6, H / 2]} receiveShadow raycast={() => null}>
-        <boxGeometry args={[W, 3, H]} />
-        <meshStandardMaterial color="#3a3428" />
+      {/* Deep sub-surface slab so the landscape silhouette has thickness. Its
+          top must sit well below the lowest terrain valley, or it pokes through
+          hollows and reads as large dark patches. */}
+      <mesh position={[W / 2, -10, H / 2]} receiveShadow raycast={() => null}>
+        <boxGeometry args={[W, 14, H]} />
+        <meshStandardMaterial color="#6f6450" />
       </mesh>
+
       <GroundSurface terrain={terrain} />
       <WaterSheet terrain={terrain} />
       <GrassTufts terrain={terrain} />
@@ -287,11 +291,11 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
       </instancedMesh>
       <instancedMesh ref={parapetRef} args={[undefined, undefined, parapetCount]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#ffffff" vertexColors flatShading roughness={1} />
+        <meshStandardMaterial color="#ffffff" flatShading roughness={1} />
       </instancedMesh>
       <instancedMesh ref={capRef} args={[undefined, undefined, capCount]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#ffffff" vertexColors flatShading roughness={1} />
+        <meshStandardMaterial color="#ffffff" flatShading roughness={1} />
       </instancedMesh>
     </group>
   );
@@ -360,7 +364,7 @@ function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
     if (!foliageRef.current || !trunkRef.current) return;
     const tmp = new THREE.Object3D();
     const col = new THREE.Color();
-    const base = new THREE.Color('#2d4a25');
+    const base = new THREE.Color('#557a3d');
     for (let i = 0; i < positions.length; i++) {
       const p = positions[i];
       tmp.position.set(p.x, 1.0 * p.s + 0.4, p.z);
@@ -386,7 +390,7 @@ function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
     <group>
       <instancedMesh ref={trunkRef} args={[undefined, undefined, positions.length]} castShadow raycast={() => null}>
         <cylinderGeometry args={[1, 1, 1, 6]} />
-        <meshStandardMaterial color="#3a2a1c" flatShading />
+        <meshStandardMaterial color="#6b5238" flatShading />
       </instancedMesh>
       <instancedMesh ref={foliageRef} args={[undefined, undefined, positions.length]} castShadow raycast={() => null}>
         <coneGeometry args={[0.55, 1.8, 7]} />
@@ -423,7 +427,7 @@ function HedgerowInstances({ terrain }: { terrain: TerrainCell[][] }) {
     if (!ref.current) return;
     const tmp = new THREE.Object3D();
     const col = new THREE.Color();
-    const base = new THREE.Color('#344f2a');
+    const base = new THREE.Color('#5d7b42');
     for (let i = 0; i < bushes.length; i++) {
       const b = bushes[i];
       tmp.position.set(b.x, b.sy * 0.5, b.z);
@@ -442,7 +446,7 @@ function HedgerowInstances({ terrain }: { terrain: TerrainCell[][] }) {
   return (
     <instancedMesh ref={ref} args={[undefined, undefined, bushes.length]} castShadow receiveShadow raycast={() => null}>
       <dodecahedronGeometry args={[1, 0]} />
-      <meshStandardMaterial color="#ffffff" vertexColors flatShading roughness={0.95} />
+      <meshStandardMaterial color="#ffffff" flatShading roughness={0.95} />
     </instancedMesh>
   );
 }
@@ -453,7 +457,7 @@ function BuildingDetails({ terrain }: { terrain: TerrainCell[][] }) {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       if (terrain[y][x].type !== 'urban') continue;
       const seed = (x * 113 + y * 61) % 100;
-      out.push({ x, y, rot: (seed % 4) * Math.PI / 2, roof: seed % 3 === 0 ? '#5f4a38' : '#6b5945', damaged: seed > 72 });
+      out.push({ x, y, rot: (seed % 4) * Math.PI / 2, roof: seed % 3 === 0 ? '#a4705a' : '#b07f63', damaged: seed > 72 });
     }
     return out;
   }, [terrain]);
@@ -473,7 +477,7 @@ function BuildingDetails({ terrain }: { terrain: TerrainCell[][] }) {
         tmp.rotation.y = c.rot + Math.PI / 4;
         tmp.updateMatrix();
         roofRef.current.setMatrixAt(i, tmp.matrix);
-        col.setStyle(c.damaged ? '#4b4033' : c.roof);
+        col.setStyle(c.damaged ? '#8a7361' : c.roof);
         roofRef.current.setColorAt(i, col);
       }
       roofRef.current.instanceMatrix.needsUpdate = true;
@@ -516,15 +520,15 @@ function BuildingDetails({ terrain }: { terrain: TerrainCell[][] }) {
     <group>
       <instancedMesh ref={roofRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
         <coneGeometry args={[0.75, 0.55, 4]} />
-        <meshStandardMaterial color="#ffffff" vertexColors flatShading roughness={0.9} />
+        <meshStandardMaterial color="#ffffff" flatShading roughness={0.9} />
       </instancedMesh>
       <instancedMesh ref={windowRef} args={[undefined, undefined, cells.length * 2]} raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#3a3932" roughness={0.85} />
+        <meshStandardMaterial color="#6d6a5c" roughness={0.85} />
       </instancedMesh>
       <instancedMesh ref={debrisRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#6b6358" flatShading roughness={1} />
+        <meshStandardMaterial color="#a2998b" flatShading roughness={1} />
       </instancedMesh>
     </group>
   );
@@ -1333,6 +1337,34 @@ function CameraRig({ inputRef }: { inputRef: React.MutableRefObject<InputState> 
   return null;
 }
 
+/**
+ * Sun light whose shadow camera is aimed at the centre of the map and sized to
+ * enclose it, so no region falls outside the shadow frustum (which would render
+ * as a large permanently dark patch).
+ */
+function SunLight() {
+  const ref = useRef<THREE.DirectionalLight>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.target.position.set(W / 2, 0, H / 2);
+    ref.current.target.updateMatrixWorld();
+  }, []);
+  return (
+    <>
+      <directionalLight
+        ref={ref}
+        position={[W / 2 + 120, 190, H / 2 + 90]}
+        intensity={1.3} color="#fff3da"
+        shadow-mapSize-width={4096} shadow-mapSize-height={4096}
+        shadow-bias={-0.0006} shadow-normalBias={0.05}
+        shadow-camera-near={1} shadow-camera-far={520}
+        shadow-camera-left={-190} shadow-camera-right={190}
+        shadow-camera-top={190} shadow-camera-bottom={-190}
+      />
+    </>
+  );
+}
+
 // ---------- Scene root ----------
 const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, inputRef, onChange }) => {
   const terrain = gameStateRef.current.terrain;
@@ -1344,16 +1376,20 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         shadows
         camera={{ position: [W / 2, 35, H / 2 + 20], fov: 50 }}
         onContextMenu={(e) => e.preventDefault()}
-        gl={{ antialias: true }}
-        style={{ background: '#1a201a' }}
+        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15 }}
+        style={{ background: '#b9c6bd' }}
       >
-        <fog attach="fog" args={['#1a201a', 240, 560]} />
-        <ambientLight intensity={0.55} />
-        <directionalLight
-          position={[40, 60, 20]} intensity={1.1}
-          castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024}
-          shadow-camera-left={-50} shadow-camera-right={50} shadow-camera-top={50} shadow-camera-bottom={-50}
-        />
+        <fog attach="fog" args={['#b3c1b6', 320, 760]} />
+        {/* Sky/bounce fill so shaded slopes never read as black patches */}
+        <hemisphereLight args={['#cfe0e8', '#5f6b48', 0.95]} />
+        <ambientLight intensity={0.45} />
+        {/* Sun. Shadow frustum must cover the whole 220x160 map, otherwise
+            everything outside it clamps to fully shadowed dark patches. */}
+        <SunLight />
+
+        {/* Cool counter-light from the opposite side to lift shadow interiors */}
+        <directionalLight position={[-50, 40, -35]} intensity={0.35} color="#9fb6c8" />
+
         <CameraRig inputRef={inputRef} />
         <TerrainMesh terrain={terrain} />
         <TerrainDebugLayer gameStateRef={gameStateRef} />
