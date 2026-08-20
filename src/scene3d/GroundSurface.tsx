@@ -15,20 +15,20 @@ const SUB = 2;
  * contributes trampled dirt, and forest contributes leaf litter.
  */
 const GROUND_TINT: Record<TerrainType | string, string> = {
-  open: '#5c7042',
-  tall_grass: '#6b7f45',
-  forest: '#3b4426',
-  hedgerow: '#4e6337',
-  road: '#4a463c',
-  gravel: '#7d7360',
-  urban: '#6d6355',
-  wall: '#6a6055',
-  rubble: '#79736a',
-  sandbag: '#8d7f5f',
-  mud: '#4f4029',
-  crater: '#4a3c28',
-  trench: '#6a5638',
-  water: '#1e3f57',
+  open: '#8a9c62',
+  tall_grass: '#93a566',
+  forest: '#5f6d3e',
+  hedgerow: '#74874f',
+  road: '#7d7568',
+  gravel: '#b0a68e',
+  urban: '#968b78',
+  wall: '#928778',
+  rubble: '#a49c90',
+  sandbag: '#b6a67e',
+  mud: '#7a6647',
+  crater: '#6f5c40',
+  trench: '#94794f',
+  water: '#365f7a',
 };
 
 /** Vertical offset of the soil surface for each type (world/cell units). */
@@ -45,6 +45,7 @@ const RELIEF: Record<TerrainType | string, number> = {
   gravel: 0.35, urban: 0.15, wall: 0.3, rubble: 1.2, sandbag: 0.8,
   mud: 0.9, crater: 1.3, trench: 0.5, water: 0.25,
 };
+
 
 function hash2(x: number, y: number) {
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
@@ -120,31 +121,35 @@ export function GroundSurface({ terrain }: { terrain: TerrainCell[][] }) {
           elev += ((c.elevation ?? 1) - 1) * w;
         }
 
-        // Terrain relief: broad rolling hills + medium undulation + fine grain.
-        const hills = (fbm(gx * 0.035, gz * 0.035) - 0.5) * 2.6;
-        const mid = (fbm(gx * 0.14, gz * 0.14) - 0.5) * 0.7;
-        const fine = (fbm(gx * 0.65, gz * 0.65) - 0.5) * 0.22;
-        const height = level + elev * 1.1 + (hills + mid + fine) * relief;
+        // Terrain relief: broad rolling hills + gentle undulation. Fine grain is
+        // kept very low — high-frequency displacement was tilting triangles hard
+        // enough to read as dark speckled patches under the sun light.
+        const hills = (fbm(gx * 0.03, gz * 0.03) - 0.5) * 2.4;
+        const mid = (fbm(gx * 0.11, gz * 0.11) - 0.5) * 0.36;
+        const fine = (fbm(gx * 0.45, gz * 0.45) - 0.5) * 0.06;
+        const height = level + elev * 1.05 + (hills + mid + fine) * relief;
 
-        // Break the grid: nudge interior vertices off the lattice.
+        // Break the grid: small nudge only, so normals stay coherent.
         const edge = i === 0 || j === 0 || i === nx - 1 || j === nz - 1;
-        const jx = edge ? 0 : (hash2(i * 1.7, j * 2.3) - 0.5) * 0.36;
-        const jz = edge ? 0 : (hash2(i * 3.1, j * 1.3) - 0.5) * 0.36;
+        const jx = edge ? 0 : (hash2(i * 1.7, j * 2.3) - 0.5) * 0.2;
+        const jz = edge ? 0 : (hash2(i * 3.1, j * 1.3) - 0.5) * 0.2;
 
         const o = (j * nx + i) * 3;
         positions[o] = gx + jx / SUB;
         positions[o + 1] = height;
         positions[o + 2] = gz + jz / SUB;
 
-        // Colour variation: patchy dryness + fine speckle + slope shading.
-        const patch = 0.86 + fbm(gx * 0.08, gz * 0.08) * 0.3;
-        const speckle = 0.94 + hash2(i, j) * 0.13;
+        // Colour variation: broad patchiness only, biased bright so no cell
+        // darkens into a black blotch.
+        const patch = 0.95 + fbm(gx * 0.07, gz * 0.07) * 0.16;
+        const speckle = 0.98 + hash2(i, j) * 0.05;
         const dry = fbm(gx * 0.05 + 11, gz * 0.05 + 7);
         col.setRGB(r, g, b).multiplyScalar(patch * speckle);
         // Sun-bleached patches lean ochre, damp hollows lean cool green.
-        col.r *= 1 + (dry - 0.5) * 0.16;
-        col.b *= 1 - (dry - 0.5) * 0.14;
-        colors[o] = col.r; colors[o + 1] = col.g; colors[o + 2] = col.b;
+        col.r *= 1 + (dry - 0.5) * 0.1;
+        col.b *= 1 - (dry - 0.5) * 0.08;
+        colors[o] = Math.min(1, col.r); colors[o + 1] = Math.min(1, col.g); colors[o + 2] = Math.min(1, col.b);
+
       }
     }
 
@@ -262,7 +267,7 @@ export function GrassTufts({ terrain }: { terrain: TerrainCell[][] }) {
   return (
     <instancedMesh key={tufts.length} ref={ref} args={[undefined, undefined, tufts.length]} castShadow raycast={() => null}>
       <coneGeometry args={[0.5, 1.1, 5]} />
-      <meshStandardMaterial vertexColors flatShading roughness={0.95} />
+      <meshStandardMaterial flatShading roughness={0.95} />
     </instancedMesh>
   );
 }
@@ -335,13 +340,13 @@ export function GroundDetail({ terrain }: { terrain: TerrainCell[][] }) {
       {rocks.length > 0 && (
         <instancedMesh key={`r${rocks.length}`} ref={rockRef} args={[undefined, undefined, rocks.length]} castShadow receiveShadow raycast={() => null}>
           <dodecahedronGeometry args={[1, 0]} />
-          <meshStandardMaterial vertexColors flatShading roughness={1} />
+          <meshStandardMaterial flatShading roughness={1} />
         </instancedMesh>
       )}
       {scrub.length > 0 && (
         <instancedMesh key={`s${scrub.length}`} ref={scrubRef} args={[undefined, undefined, scrub.length]} castShadow raycast={() => null}>
           <icosahedronGeometry args={[1, 0]} />
-          <meshStandardMaterial vertexColors flatShading roughness={0.95} />
+          <meshStandardMaterial flatShading roughness={0.95} />
         </instancedMesh>
       )}
     </group>
