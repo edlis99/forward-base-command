@@ -72,11 +72,14 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
 
   return (
     <group>
-      {/* Deep sub-surface slab so the landscape silhouette has thickness. */}
-      <mesh position={[W / 2, -1.6, H / 2]} receiveShadow raycast={() => null}>
-        <boxGeometry args={[W, 3, H]} />
-        <meshStandardMaterial color="#3a3428" />
+      {/* Deep sub-surface slab so the landscape silhouette has thickness. Its
+          top must sit well below the lowest terrain valley, or it pokes through
+          hollows and reads as large dark patches. */}
+      <mesh position={[W / 2, -10, H / 2]} receiveShadow raycast={() => null}>
+        <boxGeometry args={[W, 14, H]} />
+        <meshStandardMaterial color="#6f6450" />
       </mesh>
+
       <GroundSurface terrain={terrain} />
       <WaterSheet terrain={terrain} />
       <GrassTufts terrain={terrain} />
