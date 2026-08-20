@@ -1352,7 +1352,7 @@ function SunLight() {
         ref={ref}
         position={[W / 2 + 120, 190, H / 2 + 90]}
         intensity={1.3} color="#fff3da"
-        castShadow shadow-mapSize-width={4096} shadow-mapSize-height={4096}
+        shadow-mapSize-width={4096} shadow-mapSize-height={4096}
         shadow-bias={-0.0006} shadow-normalBias={0.05}
         shadow-camera-near={1} shadow-camera-far={520}
         shadow-camera-left={-190} shadow-camera-right={190}
