@@ -187,9 +187,20 @@ export function WaterSheet({ terrain }: { terrain: TerrainCell[][] }) {
   const geometry = useMemo(() => {
     const positions: number[] = [];
     const indices: number[] = [];
+    const isWater = (x: number, y: number) =>
+      x >= 0 && y >= 0 && x < W && y < H && terrain[y][x].type === 'water';
+    /** How enclosed a grid corner is by water (0..1) — drives organic bank taper. */
+    const cornerWetness = (cx: number, cy: number) => {
+      let n = 0;
+      if (isWater(cx - 1, cy - 1)) n++;
+      if (isWater(cx, cy - 1)) n++;
+      if (isWater(cx - 1, cy)) n++;
+      if (isWater(cx, cy)) n++;
+      return n / 4;
+    };
     const cornerOffset = (cx: number, cy: number) => ({
-      x: (hash2(cx * 5.3, cy * 7.1) - 0.5) * 0.55,
-      z: (hash2(cx * 9.7, cy * 3.9) - 0.5) * 0.55,
+      x: (hash2(cx * 5.3, cy * 7.1) - 0.5) * 0.7,
+      z: (hash2(cx * 9.7, cy * 3.9) - 0.5) * 0.7,
     });
     let base = 0;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -197,7 +208,13 @@ export function WaterSheet({ terrain }: { terrain: TerrainCell[][] }) {
       const corners: Array<[number, number]> = [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]];
       for (const [cx, cy] of corners) {
         const o = cornerOffset(cx, cy);
-        positions.push(cx + o.x, -0.14, cy + o.z);
+        // Pull shoreline corners toward the cell centre so the bank curves in
+        // instead of leaving a hard 90-degree stair step.
+        const wet = cornerWetness(cx, cy);
+        const pull = (1 - wet) * 0.42;
+        const px = cx + (x + 0.5 - cx) * pull + o.x * (0.35 + wet * 0.65);
+        const pz = cy + (y + 0.5 - cy) * pull + o.z * (0.35 + wet * 0.65);
+        positions.push(px, -0.14 - wet * 0.06, pz);
       }
       indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
       base += 4;
