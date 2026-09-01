@@ -264,7 +264,27 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       nextT.trampled = true;
     }
   } else {
-    unit.vel.x = 0; unit.vel.y = 0;
+    // Try a lateral slide before giving up: walking along a wall/hedge edge is
+    // what a real squad does instead of stalling and rebuilding the whole route.
+    const perpX = -unit.vel.y, perpY = unit.vel.x;
+    const plen = Math.hypot(perpX, perpY) || 1;
+    let slid = false;
+    for (const sign of [1, -1]) {
+      const sx = unit.pos.x + (perpX / plen) * speed * dt * sign;
+      const sy = unit.pos.y + (perpY / plen) * speed * dt * sign;
+      const sgx = Math.floor(sx / CELL_SIZE), sgy = Math.floor(sy / CELL_SIZE);
+      const ok = veh
+        ? isFootprintPassable(state.terrain, sgx, sgy, true, false, 1)
+        : isPassable(getTerrainAt(state.terrain, sx, sy), false, false);
+      if (ok) {
+        unit.pos.x = sx; unit.pos.y = sy;
+        unit.vel.x = (perpX / plen) * speed * sign * 0.6;
+        unit.vel.y = (perpY / plen) * speed * sign * 0.6;
+        slid = true;
+        break;
+      }
+    }
+    if (!slid) { unit.vel.x = 0; unit.vel.y = 0; }
     unit.stuckTimer += dt;
     if (unit.stuckTimer > 0.45) {
       // Recover from terrain changes or an invalid edge before rebuilding.
