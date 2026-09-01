@@ -211,7 +211,7 @@ export function WaterSheet({ terrain }: { terrain: TerrainCell[][] }) {
         // Pull shoreline corners toward the cell centre so the bank curves in
         // instead of leaving a hard 90-degree stair step.
         const wet = cornerWetness(cx, cy);
-        const pull = (1 - wet) * 0.42;
+        const pull = wet === 0 ? 0.14 : 0;
         const px = cx + (x + 0.5 - cx) * pull + o.x * (0.35 + wet * 0.65);
         const pz = cy + (y + 0.5 - cy) * pull + o.z * (0.35 + wet * 0.65);
         positions.push(px, -0.14 - wet * 0.06, pz);
