@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import * as THREE from 'three';
 import { TerrainCell, TerrainType } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
+import { groundHeightAt } from './terrainHeight';
 
 const W = MAP_COLS;
 const H = MAP_ROWS;
@@ -268,7 +269,7 @@ export function GrassTufts({ terrain }: { terrain: TerrainCell[][] }) {
     const bse = new THREE.Color('#7a8a4a');
     for (let i = 0; i < tufts.length; i++) {
       const t = tufts[i];
-      tmp.position.set(t.x, t.s * 0.55, t.z);
+      tmp.position.set(t.x, groundHeightAt(terrain, t.x, t.z) + t.s * 0.55, t.z);
       tmp.scale.set(t.s * 1.3, t.s * 1.5, t.s * 1.3);
       tmp.rotation.set(0, t.rot, 0);
       tmp.updateMatrix();
@@ -278,7 +279,7 @@ export function GrassTufts({ terrain }: { terrain: TerrainCell[][] }) {
     }
     ref.current.instanceMatrix.needsUpdate = true;
     if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
-  }, [tufts]);
+  }, [tufts, terrain]);
 
   if (tufts.length === 0) return null;
   return (
@@ -325,7 +326,7 @@ export function GroundDetail({ terrain }: { terrain: TerrainCell[][] }) {
     if (rockRef.current) {
       const base = new THREE.Color('#7b756c');
       rocks.forEach((p, i) => {
-        tmp.position.set(p.x, p.sy * 0.4, p.z);
+        tmp.position.set(p.x, groundHeightAt(terrain, p.x, p.z) + p.sy * 0.4, p.z);
         tmp.scale.set(p.sx, p.sy, p.sz);
         tmp.rotation.set(p.rot * 0.3, p.rot, p.rot * 0.2);
         tmp.updateMatrix();
@@ -339,7 +340,7 @@ export function GroundDetail({ terrain }: { terrain: TerrainCell[][] }) {
     if (scrubRef.current) {
       const base = new THREE.Color('#54622f');
       scrub.forEach((p, i) => {
-        tmp.position.set(p.x, p.sy * 0.6, p.z);
+        tmp.position.set(p.x, groundHeightAt(terrain, p.x, p.z) + p.sy * 0.6, p.z);
         tmp.scale.set(p.sx * 1.4, p.sy * 1.6, p.sz * 1.4);
         tmp.rotation.set(0, p.rot, 0);
         tmp.updateMatrix();
@@ -350,7 +351,7 @@ export function GroundDetail({ terrain }: { terrain: TerrainCell[][] }) {
       scrubRef.current.instanceMatrix.needsUpdate = true;
       if (scrubRef.current.instanceColor) scrubRef.current.instanceColor.needsUpdate = true;
     }
-  }, [rocks, scrub]);
+  }, [rocks, scrub, terrain]);
 
   return (
     <group>

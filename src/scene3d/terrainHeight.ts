@@ -84,3 +84,24 @@ export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number,
   const fine = (fbm(gx * 0.45, gz * 0.45) - 0.5) * 0.06;
   return level + elev * 1.05 + (hills + mid + fine) * relief;
 }
+
+/**
+ * Active terrain cache. Layers that only receive a `gameStateRef` (VFX,
+ * markers, ghosts) can sample the surface without threading the terrain
+ * array through every component. Set once per frame by the scene root.
+ */
+let activeTerrain: TerrainCell[][] | undefined;
+
+export function setActiveTerrain(t: TerrainCell[][] | undefined) {
+  activeTerrain = t;
+}
+
+/** Surface Y at continuous grid coords, using the cached active terrain. */
+export function surfaceY(gx: number, gz: number): number {
+  return groundHeightAt(activeTerrain, gx, gz);
+}
+
+/** Surface Y from engine world coordinates (pixels), given CELL_SIZE. */
+export function surfaceYWorld(wx: number, wy: number, cellSize: number): number {
+  return groundHeightAt(activeTerrain, wx / cellSize, wy / cellSize);
+}

@@ -9,6 +9,7 @@ import {
 } from '../game/engine';
 import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor } from '../game/tactical';
 import { GroundSurface, WaterSheet, GrassTufts, GroundDetail } from './GroundSurface';
+import { setActiveTerrain, surfaceY, groundHeightAt } from './terrainHeight';
 
 
 const S = CELL_SIZE;
@@ -64,7 +65,8 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
       if (FLAT_TYPES.has(t)) continue; // drawn by GroundSurface / prop layers
       const h = TERRAIN_HEIGHT[t] ?? 0;
       if (!byType[t]) byType[t] = { positions: [], sizes: [] };
-      byType[t].positions.push([x + 0.5, h / 2, y + 0.5]);
+      const gY = groundHeightAt(terrain, x + 0.5, y + 0.5);
+      byType[t].positions.push([x + 0.5, gY + h / 2, y + 0.5]);
       byType[t].sizes.push([1, Math.max(0.02, Math.abs(h)), 1]);
     }
     return byType;
@@ -165,9 +167,10 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
         const { cx, cz } = trenchCenter(c);
+        const gY = groundHeightAt(terrain, cx, cz);
         // Keep the excavated floor just above the base terrain. The old floor
         // sat below the world slab and read as a featureless black square.
-        tmp.position.set(cx, 0.018, cz);
+        tmp.position.set(cx, gY + 0.018, cz);
         tmp.scale.set(c.horiz ? 1.02 : 0.54, 0.035, c.horiz ? 0.54 : 1.02);
         tmp.rotation.y = 0;
         tmp.updateMatrix();
@@ -181,11 +184,12 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
         const { cx, cz } = trenchCenter(c);
+        const gY = groundHeightAt(terrain, cx, cz);
         if (c.horiz) {
-          tmp.position.set(cx, 0.075, cz + 0.19);
+          tmp.position.set(cx, gY + 0.075, cz + 0.19);
           tmp.scale.set(0.96, 0.11, 0.16);
         } else {
-          tmp.position.set(cx + 0.19, 0.075, cz);
+          tmp.position.set(cx + 0.19, gY + 0.075, cz);
           tmp.scale.set(0.16, 0.11, 0.96);
         }
         tmp.rotation.y = 0;
@@ -202,6 +206,7 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
         const { cx, cz } = trenchCenter(c);
+        const gY = groundHeightAt(terrain, cx, cz);
         const kinkSign = ((c.x + c.y) % 2 === 0 ? 1 : -1);
         const kink = kinkSign * (0.1 + jitter(c.x, c.y, 7) * 0.13);
         const hBase = 0.28 + jitter(c.x, c.y, 1) * 0.09;
@@ -223,12 +228,12 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
             if (c.horiz) {
               const zPos = cz + side * (0.5 - th * 0.5);
               const xPos = cx + half * halfLen * 0.5;
-              tmp.position.set(xPos, 0.025 + h * 0.5, zPos);
+              tmp.position.set(xPos, gY + 0.025 + h * 0.5, zPos);
               tmp.scale.set(halfLen, h, th);
             } else {
               const xPos = cx + side * (0.5 - th * 0.5);
               const zPos = cz + half * halfLen * 0.5;
-              tmp.position.set(xPos, 0.025 + h * 0.5, zPos);
+              tmp.position.set(xPos, gY + 0.025 + h * 0.5, zPos);
               tmp.scale.set(th, h, halfLen);
             }
             tmp.rotation.y = yaw;
@@ -252,7 +257,7 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
           }
           col.setStyle(capHex);
           const capH = mat === 2 ? 0.07 : 0.14;
-           const capY = 0.025 + hBase + capH * 0.5;
+           const capY = gY + 0.025 + hBase + capH * 0.5;
           if (c.horiz) {
             const zPos = cz + side * (0.5 - th * 0.5);
             tmp.position.set(cx, capY, zPos);
@@ -367,7 +372,8 @@ function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
     const base = new THREE.Color('#557a3d');
     for (let i = 0; i < positions.length; i++) {
       const p = positions[i];
-      tmp.position.set(p.x, 1.0 * p.s + 0.4, p.z);
+      const gY = groundHeightAt(terrain, p.x, p.z);
+      tmp.position.set(p.x, gY + 1.0 * p.s + 0.4, p.z);
       tmp.scale.set(p.s, p.s * 1.3, p.s);
       tmp.rotation.y = p.rot;
       tmp.updateMatrix();
@@ -375,7 +381,7 @@ function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
       col.copy(base).multiplyScalar(p.hue);
       foliageRef.current.setColorAt(i, col);
       // trunk
-      tmp.position.set(p.x, 0.35 * p.s, p.z);
+      tmp.position.set(p.x, gY + 0.35 * p.s, p.z);
       tmp.scale.set(p.s * 0.18, p.s * 0.7, p.s * 0.18);
       tmp.rotation.y = 0;
       tmp.updateMatrix();
@@ -384,7 +390,7 @@ function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
     foliageRef.current.instanceMatrix.needsUpdate = true;
     if (foliageRef.current.instanceColor) foliageRef.current.instanceColor.needsUpdate = true;
     trunkRef.current.instanceMatrix.needsUpdate = true;
-  }, [positions]);
+  }, [positions, terrain]);
 
   return (
     <group>
@@ -430,7 +436,7 @@ function HedgerowInstances({ terrain }: { terrain: TerrainCell[][] }) {
     const base = new THREE.Color('#5d7b42');
     for (let i = 0; i < bushes.length; i++) {
       const b = bushes[i];
-      tmp.position.set(b.x, b.sy * 0.5, b.z);
+      tmp.position.set(b.x, groundHeightAt(terrain, b.x, b.z) + b.sy * 0.5, b.z);
       tmp.scale.set(b.sx, b.sy, b.sz);
       tmp.rotation.y = b.rot;
       tmp.updateMatrix();
@@ -440,7 +446,7 @@ function HedgerowInstances({ terrain }: { terrain: TerrainCell[][] }) {
     }
     ref.current.instanceMatrix.needsUpdate = true;
     if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
-  }, [bushes]);
+  }, [bushes, terrain]);
 
   if (bushes.length === 0) return null;
   return (
@@ -472,7 +478,8 @@ function BuildingDetails({ terrain }: { terrain: TerrainCell[][] }) {
     if (roofRef.current) {
       for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
-        tmp.position.set(c.x + 0.5, 1.83, c.y + 0.5);
+        const gY = groundHeightAt(terrain, c.x + 0.5, c.y + 0.5);
+        tmp.position.set(c.x + 0.5, gY + 1.83, c.y + 0.5);
         tmp.scale.set(c.damaged ? 0.72 : 0.82, c.damaged ? 0.28 : 0.36, c.damaged ? 0.72 : 0.82);
         tmp.rotation.y = c.rot + Math.PI / 4;
         tmp.updateMatrix();
@@ -487,7 +494,7 @@ function BuildingDetails({ terrain }: { terrain: TerrainCell[][] }) {
       let idx = 0;
       for (const c of cells) {
         for (const side of [-1, 1] as const) {
-          tmp.position.set(c.x + 0.5, 1.18, c.y + 0.5 + side * 0.505);
+          tmp.position.set(c.x + 0.5, groundHeightAt(terrain, c.x + 0.5, c.y + 0.5) + 1.18, c.y + 0.5 + side * 0.505);
           tmp.scale.set(0.42, 0.16, 0.025);
           tmp.rotation.y = c.rot;
           tmp.updateMatrix();
@@ -503,7 +510,7 @@ function BuildingDetails({ terrain }: { terrain: TerrainCell[][] }) {
         if (!c.damaged) {
           tmp.scale.set(0, 0, 0);
         } else {
-          tmp.position.set(c.x + 0.22, 0.16, c.y + 0.78);
+          tmp.position.set(c.x + 0.22, groundHeightAt(terrain, c.x + 0.5, c.y + 0.5) + 0.16, c.y + 0.78);
           tmp.scale.set(0.34, 0.22, 0.24);
           tmp.rotation.y = c.rot * 0.7;
         }
@@ -513,7 +520,7 @@ function BuildingDetails({ terrain }: { terrain: TerrainCell[][] }) {
       }
       debrisRef.current.instanceMatrix.needsUpdate = true;
     }
-  }, [cells]);
+  }, [cells, terrain]);
 
   if (cells.length === 0) return null;
   return (
@@ -675,7 +682,8 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         const gy = Math.floor(u.pos.y / S);
         const cell = state.terrain[gy]?.[gx];
         const inTrench = cell?.type === 'trench' && u.type === 'infantry';
-        const targetY = inTrench ? -0.08 : 0;
+        const gY = surfaceY(u.pos.x / S, u.pos.y / S);
+        const targetY = gY + (inTrench ? -0.08 : 0);
         const k = 1 - Math.exp(-dt * 8); // ~0.4s ease
         ref.position.y += (targetY - ref.position.y) * k;
         // Prone / digging crouch: squash + slight bob while digging — tweened too.
@@ -695,7 +703,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         const contactOnly = u.team === 'enemy' && !(u.spottedByEnemy && u.detectionLevel >= 0.7) && u.detectionLevel > 0.3;
         bl.visible = contactOnly;
         if (contactOnly) {
-          bl.position.set(u.pos.x / S, 0.9, u.pos.y / S);
+          bl.position.set(u.pos.x / S, surfaceY(u.pos.x / S, u.pos.y / S) + 0.9, u.pos.y / S);
           bl.rotation.y = t * 1.2;
           const s3 = 1 + Math.sin(t * 4) * 0.1;
           bl.scale.set(s3, s3, s3);
@@ -734,7 +742,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         <group
           key={u.id}
           ref={(el) => { if (el) unitRefs.current.set(u.id, el); else unitRefs.current.delete(u.id); }}
-          position={[u.pos.x / S, 0, u.pos.y / S]}
+          position={[u.pos.x / S, surfaceY(u.pos.x / S, u.pos.y / S), u.pos.y / S]}
         >
           {unitModel(u)}
 
@@ -806,7 +814,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         <mesh
           key={`blip-${u.id}`}
           ref={(el) => { if (el) blipRefs.current.set(u.id, el); else blipRefs.current.delete(u.id); }}
-          position={[u.pos.x / S, 0.9, u.pos.y / S]}
+          position={[u.pos.x / S, surfaceY(u.pos.x / S, u.pos.y / S) + 0.9, u.pos.y / S]}
           rotation={[0, 0, Math.PI / 4]}
           raycast={() => null}
           visible={false}
@@ -843,7 +851,7 @@ function GhostContactsLayer({ gameStateRef }: { gameStateRef: React.MutableRefOb
       const gh = ghosts[i];
       if (!gh) { m.visible = false; continue; }
       m.visible = true;
-      m.position.set(gh.pos.x / S, 0.04, gh.pos.y / S);
+      m.position.set(gh.pos.x / S, surfaceY(gh.pos.x / S, gh.pos.y / S) + 0.06, gh.pos.y / S);
       const age = Math.max(0, Math.min(1, (state.time - gh.time) / 15));
       (m.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - age);
     }
@@ -883,8 +891,8 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
     for (const p of state.projectiles) {
       if (count + 2 > 500) break;
       const i = count * 3;
-      positions[i] = p.from.x / S; positions[i + 1] = 0.5; positions[i + 2] = p.from.y / S;
-      positions[i + 3] = p.to.x / S; positions[i + 4] = 0.5; positions[i + 5] = p.to.y / S;
+      positions[i] = p.from.x / S; positions[i + 1] = surfaceY(p.from.x / S, p.from.y / S) + 0.5; positions[i + 2] = p.from.y / S;
+      positions[i + 3] = p.to.x / S; positions[i + 4] = surfaceY(p.to.x / S, p.to.y / S) + 0.5; positions[i + 5] = p.to.y / S;
       // Player: cool blue-white. Enemy: hot orange-red.
       const base = p.team === 'player' ? [0.55, 0.85, 1.2] : [1.3, 0.55, 0.25];
       // Fade linearly — timer starts ~0.2-0.4, becomes 0. Use clamp.
@@ -920,14 +928,15 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
           new THREE.SphereGeometry((heavy ? 0.3 : 0.16) + 0.16 * flashOpacity, 10, 7),
           new THREE.MeshBasicMaterial({ color: flashCol, transparent: true, opacity: flashOpacity, depthWrite: false }),
         );
-        flash.position.set(mx, heavy ? 0.72 : 0.55, mz);
+        const gFrom = surfaceY(mx, mz);
+        flash.position.set(mx, gFrom + (heavy ? 0.72 : 0.55), mz);
         flashRef.current.add(flash);
         const dust = new THREE.Mesh(
           new THREE.SphereGeometry(heavy ? 0.38 : 0.2, 8, 5),
           new THREE.MeshBasicMaterial({ color: new THREE.Color(0.72, 0.62, 0.46), transparent: true, opacity: flashOpacity * (heavy ? 0.42 : 0.22), depthWrite: false }),
         );
         dust.scale.set(1.4, 0.35, 1.4);
-        dust.position.set(mx - (dx / len) * 0.08, 0.22, mz - (dy / len) * 0.08);
+        dust.position.set(mx - (dx / len) * 0.08, gFrom + 0.22, mz - (dy / len) * 0.08);
         flashRef.current.add(dust);
         // Impact spark: only if it's a hit and near end of life (looks like arrival).
         if (p.hit && fresh > 0.7) {
@@ -936,7 +945,7 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
             new THREE.SphereGeometry(0.14 + (p.crit ? 0.1 : 0), 6, 4),
             new THREE.MeshBasicMaterial({ color: sparkCol, transparent: true, opacity: flashOpacity * 0.8, depthWrite: false }),
           );
-          spark.position.set(p.to.x / S, 0.5, p.to.y / S);
+          spark.position.set(p.to.x / S, surfaceY(p.to.x / S, p.to.y / S) + 0.5, p.to.y / S);
           flashRef.current.add(spark);
         }
         const impactDust = new THREE.Mesh(
@@ -944,7 +953,7 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
           new THREE.MeshBasicMaterial({ color: new THREE.Color(0.58, 0.5, 0.38), transparent: true, opacity: flashOpacity * (p.hit ? 0.28 : 0.44), depthWrite: false }),
         );
         impactDust.scale.set(1.5, 0.28, 1.5);
-        impactDust.position.set(p.to.x / S, 0.18, p.to.y / S);
+        impactDust.position.set(p.to.x / S, surfaceY(p.to.x / S, p.to.y / S) + 0.18, p.to.y / S);
         flashRef.current.add(impactDust);
       }
     }
@@ -958,21 +967,22 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
           new THREE.SphereGeometry(r, 12, 8),
           new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.5 + t * 0.3, 0.2), transparent: true, opacity: t })
         );
-        mesh.position.set(e.pos.x / S, 0.5, e.pos.y / S);
+        const gE = surfaceY(e.pos.x / S, e.pos.y / S);
+        mesh.position.set(e.pos.x / S, gE + 0.5, e.pos.y / S);
         explRef.current.add(mesh);
         const shock = new THREE.Mesh(
           new THREE.RingGeometry(Math.max(0.05, r * 0.75), Math.max(0.08, r * 0.92), 32),
           new THREE.MeshBasicMaterial({ color: new THREE.Color(0.85, 0.72, 0.48), transparent: true, opacity: t * 0.45, side: THREE.DoubleSide, depthWrite: false }),
         );
         shock.rotation.x = -Math.PI / 2;
-        shock.position.set(e.pos.x / S, 0.08, e.pos.y / S);
+        shock.position.set(e.pos.x / S, gE + 0.08, e.pos.y / S);
         explRef.current.add(shock);
         const smoke = new THREE.Mesh(
           new THREE.SphereGeometry(Math.max(0.2, r * 0.55), 10, 7),
           new THREE.MeshBasicMaterial({ color: new THREE.Color(0.22, 0.21, 0.18), transparent: true, opacity: Math.min(0.42, (1 - t) * 0.55), depthWrite: false }),
         );
         smoke.scale.set(1, 1.6, 1);
-        smoke.position.set(e.pos.x / S, 0.55 + (1 - t) * 0.9, e.pos.y / S);
+        smoke.position.set(e.pos.x / S, gE + 0.55 + (1 - t) * 0.9, e.pos.y / S);
         explRef.current.add(smoke);
       }
     }
@@ -1007,7 +1017,8 @@ function CommandMarkersLayer({ gameStateRef }: { gameStateRef: React.MutableRefO
         new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op, side: THREE.DoubleSide, depthWrite: false }),
       );
       ring.rotation.x = -Math.PI / 2;
-      ring.position.set(m.pos.x / S, 0.06, m.pos.y / S);
+      const gM = surfaceY(m.pos.x / S, m.pos.y / S);
+      ring.position.set(m.pos.x / S, gM + 0.06, m.pos.y / S);
       groupRef.current.add(ring);
       // center dot
       const dot = new THREE.Mesh(
@@ -1015,7 +1026,7 @@ function CommandMarkersLayer({ gameStateRef }: { gameStateRef: React.MutableRefO
         new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op * 0.8, depthWrite: false }),
       );
       dot.rotation.x = -Math.PI / 2;
-      dot.position.set(m.pos.x / S, 0.07, m.pos.y / S);
+      dot.position.set(m.pos.x / S, gM + 0.07, m.pos.y / S);
       groupRef.current.add(dot);
     }
     // formation preview ghosts
@@ -1026,7 +1037,7 @@ function CommandMarkersLayer({ gameStateRef }: { gameStateRef: React.MutableRefO
           new THREE.MeshBasicMaterial({ color: '#7ec0ff', transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }),
         );
         ring.rotation.x = -Math.PI / 2;
-        ring.position.set(slot.x / S, 0.05, slot.y / S);
+        ring.position.set(slot.x / S, surfaceY(slot.x / S, slot.y / S) + 0.05, slot.y / S);
         groupRef.current.add(ring);
       }
     }
@@ -1063,7 +1074,7 @@ function TerrainDebugLayer({ gameStateRef }: { gameStateRef: React.MutableRefObj
         const v = layer === 'cover' ? cellCoverScore(c)
           : layer === 'concealment' ? cellConcealmentScore(c)
           : cellTacticalScore(c);
-        dummy.position.set(x + 0.5, 1.6, y + 0.5);
+        dummy.position.set(x + 0.5, surfaceY(x + 0.5, y + 0.5) + 1.6, y + 0.5);
         dummy.scale.set(0.94, 0.02, 0.94);
         dummy.updateMatrix();
         mesh.setMatrixAt(i, dummy.matrix);
@@ -1099,7 +1110,7 @@ function CapturePoints({ gameStateRef }: { gameStateRef: React.MutableRefObject<
         new THREE.MeshBasicMaterial({ color: ringColor, transparent: true, opacity: 0.6, side: THREE.DoubleSide })
       );
       ring.rotation.x = -Math.PI / 2;
-      ring.position.set(cp.pos.x / S, 0.05, cp.pos.y / S);
+      ring.position.set(cp.pos.x / S, surfaceY(cp.pos.x / S, cp.pos.y / S) + 0.12, cp.pos.y / S);
       groupRef.current.add(ring);
     }
   });
@@ -1117,8 +1128,8 @@ function PathsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<Gam
     const push = (a: { x: number; y: number }, b: { x: number; y: number }) => {
       if (count + 2 > 500) return;
       const i = count * 3;
-      positions[i] = a.x / S; positions[i + 1] = 0.2; positions[i + 2] = a.y / S;
-      positions[i + 3] = b.x / S; positions[i + 4] = 0.2; positions[i + 5] = b.y / S;
+      positions[i] = a.x / S; positions[i + 1] = surfaceY(a.x / S, a.y / S) + 0.25; positions[i + 2] = a.y / S;
+      positions[i + 3] = b.x / S; positions[i + 4] = surfaceY(b.x / S, b.y / S) + 0.25; positions[i + 5] = b.y / S;
       count += 2;
     };
     for (const u of state.units) {
@@ -1148,6 +1159,27 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
   const { camera, size } = useThree();
   const projected = useMemo(() => new THREE.Vector3(), []);
 
+  /**
+   * Convert a pointer event to engine world coords on the *displaced* ground.
+   * The pick plane is flat at y=0, so on a hill the naive hit point lands
+   * behind the real surface. Iteratively re-intersect the ray with the plane
+   * at the sampled surface height until it converges (3-4 steps is plenty).
+   */
+  const pickWorld = (e: ThreeEvent<PointerEvent>) => {
+    let px = e.point.x, pz = e.point.z;
+    const ray = e.ray;
+    if (ray && Math.abs(ray.direction.y) > 1e-4) {
+      for (let i = 0; i < 4; i++) {
+        const h = surfaceY(px, pz);
+        const t = (h - ray.origin.y) / ray.direction.y;
+        if (!isFinite(t) || t <= 0) break;
+        px = ray.origin.x + ray.direction.x * t;
+        pz = ray.origin.z + ray.direction.z * t;
+      }
+    }
+    return { x: px * S, y: pz * S };
+  };
+
   /** Pointer position relative to the canvas (matches r3f `size`). */
   const canvasPos = (e: ThreeEvent<PointerEvent>) => {
     const el = e.nativeEvent.target as HTMLElement | null;
@@ -1168,7 +1200,8 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
     const hits: Unit[] = [];
     for (const unit of state.units) {
       if (!unit.alive || unit.team !== 'player' || unit.insideOf) continue;
-      projected.set(unit.pos.x / S, 0.5, unit.pos.y / S).project(camera);
+      const uy = surfaceY(unit.pos.x / S, unit.pos.y / S) + (unit.type === 'helicopter' ? 1.5 : 0.5);
+      projected.set(unit.pos.x / S, uy, unit.pos.y / S).project(camera);
       if (projected.z > 1) continue; // behind the camera
       const sx = (projected.x * 0.5 + 0.5) * size.width;
       const sy = (-projected.y * 0.5 + 0.5) * size.height;
@@ -1179,8 +1212,9 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
 
   const handleDown = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
-    const wx = e.point.x * S;
-    const wy = e.point.z * S;
+    const pw = pickWorld(e);
+    const wx = pw.x;
+    const wy = pw.y;
     const state = gameStateRef.current;
     const sp = canvasPos(e);
 
@@ -1203,7 +1237,7 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
   };
 
   const handleMove = (e: ThreeEvent<PointerEvent>) => {
-    const wx = e.point.x * S, wy = e.point.z * S;
+    const { x: wx, y: wy } = pickWorld(e);
     const state = gameStateRef.current;
     const sp = canvasPos(e);
     inputRef.current.mouseWorldPos = { x: wx, y: wy };
@@ -1235,7 +1269,7 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
     const state = gameStateRef.current;
     if (e.nativeEvent.button === 2) {
       // commit right-click on release using cursor world pos
-      const wx = e.point.x * S, wy = e.point.z * S;
+      const { x: wx, y: wy } = pickWorld(e);
       handleRightClickWorld(wx, wy, state, e.nativeEvent.shiftKey, e.nativeEvent.ctrlKey || e.nativeEvent.metaKey);
       inputRef.current.rightMouseDown = false;
       clearCommandPreview(state);
@@ -1251,7 +1285,7 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
       for (const u of hits) u.selected = true;
     } else {
       // tap = single-unit select
-      const wx = e.point.x * S, wy = e.point.z * S;
+      const { x: wx, y: wy } = pickWorld(e);
       handleLeftClickWorld(wx, wy, state, e.nativeEvent.shiftKey);
     }
     state.selectionBox = null;
@@ -1293,7 +1327,7 @@ function SelectionOverlayUpdater({ gameStateRef, overlayRef }: { gameStateRef: R
     const ys = [sb.start.y, sb.end.y];
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const wx of xs) for (const wy of ys) {
-      v.set(wx / S, 0, wy / S);
+      v.set(wx / S, surfaceY(wx / S, wy / S) + 0.4, wy / S);
       v.project(camera);
       const sx = (v.x * 0.5 + 0.5) * size.width;
       const sy = (-v.y * 0.5 + 0.5) * size.height;
@@ -1332,7 +1366,7 @@ function CameraRig({ inputRef }: { inputRef: React.MutableRefObject<InputState> 
     targetRef.current.z = Math.max(5, Math.min(H - 5, targetRef.current.z));
     const d = distRef.current;
     camera.position.set(targetRef.current.x, d * 0.85, targetRef.current.z + d * 0.55);
-    camera.lookAt(targetRef.current.x, 0, targetRef.current.z);
+    camera.lookAt(targetRef.current.x, surfaceY(targetRef.current.x, targetRef.current.z), targetRef.current.z);
   });
   return null;
 }
@@ -1369,6 +1403,8 @@ function SunLight() {
 // ---------- Scene root ----------
 const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, inputRef, onChange }) => {
   const terrain = gameStateRef.current.terrain;
+  // Shared height sampler used by every layer that only holds a gameStateRef.
+  setActiveTerrain(terrain);
   const overlayRef = useRef<HTMLDivElement | null>(null);
 
   return (
