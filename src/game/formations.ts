@@ -105,9 +105,9 @@ export function resolveFormationSlots(
   type: FormationType,
   terrain: import('./types').TerrainCell[][],
   cellSize: number,
+  claimed: Set<string> = new Set<string>(),
 ): { id: string; pos: Position }[] {
   const raw = computeFormation(units, anchor, facing, type, formationSpacing(units));
-  const claimed = new Set<string>();
   const byId = new Map(units.map(u => [u.id, u]));
   return raw.map(slot => {
     const u = byId.get(slot.id);
@@ -135,3 +135,84 @@ export function resolveFormationSlots(
     return { id: slot.id, pos };
   });
 }
+
+/**
+ * Cluster units into squads by proximity (BFS within `radius`). Two groups of
+ * troops 300m apart are two squads, and each keeps its own block in the
+ * destination formation instead of being blended into one long line.
+ */
+export function clusterSquads(units: Unit[], radius = 110): Unit[][] {
+  const used = new Set<string>();
+  const out: Unit[][] = [];
+  for (const seed of units) {
+    if (used.has(seed.id)) continue;
+    const members = [seed];
+    used.add(seed.id);
+    for (let i = 0; i < members.length; i++) {
+      for (const u of units) {
+        if (used.has(u.id)) continue;
+        const d = Math.hypot(members[i].pos.x - u.pos.x, members[i].pos.y - u.pos.y);
+        if (d <= radius) { members.push(u); used.add(u.id); }
+      }
+    }
+    out.push(members);
+  }
+  return out;
+}
+
+/**
+ * Squad-coordinated destination layout.
+ *
+ * Instead of one giant formation, each proximity squad gets its own sub-block
+ * placed side-by-side along the formation front, in the same left-to-right
+ * order the squads currently occupy. Armoured squads are pushed slightly
+ * forward and infantry squads trail, so a mixed force arrives as a coherent
+ * line of squads rather than a scrambled blob.
+ */
+export function resolveSquadFormations(
+  units: Unit[],
+  anchor: Position,
+  facing: number,
+  preferred: FormationType | undefined,
+  terrain: import('./types').TerrainCell[][],
+  cellSize: number,
+): { id: string; pos: Position; squad: number }[] {
+  const fwd = { x: Math.cos(facing), y: Math.sin(facing) };
+  const right = { x: -fwd.y, y: fwd.x };
+  const squads = clusterSquads(units);
+
+  // Order squads by their current lateral offset so nobody crosses paths.
+  const info = squads.map((members, i) => {
+    const cx = members.reduce((s, u) => s + u.pos.x, 0) / members.length;
+    const cy = members.reduce((s, u) => s + u.pos.y, 0) / members.length;
+    const lateral = (cx - anchor.x) * right.x + (cy - anchor.y) * right.y;
+    const spacing = formationSpacing(members);
+    const armorRatio = members.filter(u => u.type === 'tank' || u.type === 'apc').length / members.length;
+    const cols = Math.max(1, Math.ceil(Math.sqrt(members.length)));
+    return { i, members, lateral, spacing, armorRatio, width: cols * spacing };
+  });
+  info.sort((a, b) => a.lateral - b.lateral || a.i - b.i);
+
+  const gap = 34;
+  const total = info.reduce((s, g) => s + g.width, 0) + gap * (info.length - 1);
+  let cursor = -total / 2;
+  const claimed = new Set<string>();
+  const out: { id: string; pos: Position; squad: number }[] = [];
+
+  info.forEach((g, order) => {
+    const center = cursor + g.width / 2;
+    cursor += g.width + gap;
+    // Armour leads, infantry echelons back a little.
+    const depth = (g.armorRatio - 0.5) * 30;
+    const subAnchor: Position = {
+      x: anchor.x + right.x * center + fwd.x * depth,
+      y: anchor.y + right.y * center + fwd.y * depth,
+    };
+    const type = preferred ?? pickFormation(g.members);
+    const slots = resolveFormationSlots(g.members, subAnchor, facing, type, terrain, cellSize, claimed);
+    for (const s of slots) out.push({ id: s.id, pos: s.pos, squad: order });
+  });
+
+  return out;
+}
+
