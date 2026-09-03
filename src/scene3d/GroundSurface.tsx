@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import * as THREE from 'three';
 import { TerrainCell, TerrainType } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
-import { groundHeightAt } from './terrainHeight';
+import { groundHeightAt, GROUND_LEVEL, RELIEF, hash2, fbm } from './terrainHeight';
 
 const W = MAP_COLS;
 const H = MAP_ROWS;
@@ -32,46 +32,10 @@ const GROUND_TINT: Record<TerrainType | string, string> = {
   water: '#365f7a',
 };
 
-/** Vertical offset of the soil surface for each type (world/cell units). */
-const GROUND_LEVEL: Record<TerrainType | string, number> = {
-  open: 0, tall_grass: 0.01, forest: 0.02, hedgerow: 0.02,
-  road: -0.03, gravel: -0.01, urban: 0, wall: 0,
-  rubble: 0.04, sandbag: 0.02, mud: -0.06, crater: -0.42,
-  trench: -0.02, water: -0.55,
-};
+// Height tables and noise live in terrainHeight.ts — the single source of
+// truth shared with every layer that sits on the ground. Do not re-declare
+// them here or the mesh and the sampler will drift apart.
 
-/** How strongly natural micro-relief shows through (roads/urban are graded). */
-const RELIEF: Record<TerrainType | string, number> = {
-  open: 1, tall_grass: 1, forest: 1.15, hedgerow: 1, road: 0.12,
-  gravel: 0.35, urban: 0.15, wall: 0.3, rubble: 1.2, sandbag: 0.8,
-  mud: 0.9, crater: 1.3, trench: 0.5, water: 0.25,
-};
-
-
-function hash2(x: number, y: number) {
-  const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
-  return s - Math.floor(s);
-}
-
-function valueNoise(x: number, y: number) {
-  const ix = Math.floor(x), iy = Math.floor(y);
-  const fx = x - ix, fy = y - iy;
-  const sx = fx * fx * (3 - 2 * fx);
-  const sy = fy * fy * (3 - 2 * fy);
-  const a = hash2(ix, iy), b = hash2(ix + 1, iy);
-  const c = hash2(ix, iy + 1), d = hash2(ix + 1, iy + 1);
-  return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
-}
-
-function fbm(x: number, y: number) {
-  let sum = 0, amp = 0.5, f = 1;
-  for (let o = 0; o < 4; o++) {
-    sum += valueNoise(x * f, y * f) * amp;
-    amp *= 0.5;
-    f *= 2.07;
-  }
-  return sum;
-}
 
 /**
  * One continuous, vertex-coloured landscape mesh for the whole map.
@@ -206,6 +170,9 @@ export function WaterSheet({ terrain }: { terrain: TerrainCell[][] }) {
     let base = 0;
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       if (terrain[y][x].type !== 'water') continue;
+      // Riverbed follows the displaced landscape, so the sheet must ride on the
+      // sampled bed height (flat per cell) rather than a fixed world Y.
+      const bed = groundHeightAt(terrain, x + 0.5, y + 0.5);
       const corners: Array<[number, number]> = [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]];
       for (const [cx, cy] of corners) {
         const o = cornerOffset(cx, cy);
@@ -215,7 +182,7 @@ export function WaterSheet({ terrain }: { terrain: TerrainCell[][] }) {
         const pull = wet === 0 ? 0.14 : 0;
         const px = cx + (x + 0.5 - cx) * pull + o.x * (0.35 + wet * 0.65);
         const pz = cy + (y + 0.5 - cy) * pull + o.z * (0.35 + wet * 0.65);
-        positions.push(px, -0.14 - wet * 0.06, pz);
+        positions.push(px, bed + 0.41 - wet * 0.06, pz);
       }
       indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
       base += 4;
