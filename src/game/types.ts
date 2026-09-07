@@ -145,6 +145,24 @@ export interface CapturePoint {
 
 export interface GhostContact { team: Team; pos: Position; type: UnitType; time: number; }
 
+/** Coordinated player formation created by a move order (see playerSquads.ts). */
+export interface PlayerSquad {
+  id: number;
+  memberIds: string[];
+  dest: Position;
+  anchor: Position;
+  facing: number;
+  targetFacing: number;
+  travelSpeed: number;
+  cohesionRadius: number;
+  slots: Record<string, Position>;
+  localOffsets: Record<string, Position>;
+  compression: number;
+  state: 'moving' | 'arrived';
+  lastReslot: number;
+  maxRemaining: number;
+}
+
 export type CommandMarkerType = 'move' | 'attack' | 'capture' | 'board' | 'hold' | 'attack_move';
 export interface CommandMarker {
   pos: Position;
