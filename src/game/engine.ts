@@ -43,11 +43,12 @@ export function createInitialState(mission: MissionDef, deployment?: import('./t
     rewardCP: initial.rewardCP ?? 0,
     script: initial.script ?? {},
     detectionMultiplier: initial.detectionMultiplier ?? 1,
-    debug: { showCover: false, showConcealment: false, showTactical: false },
+    debug: { showCover: false, showConcealment: false, showTactical: false, showMovement: false },
     fireSupport: { heTokens: 3, smokeTokens: 2, cooldown: 0, armed: null, counterCooldown: 75 },
     fireMissions: [],
     smokeZones: [],
     nextMoveGroupId: 1,
+    playerSquads: [],
   };
   state.units = initial.units ?? [];
   // Snap any unit that spawned on impassable terrain to the nearest passable cell.
@@ -102,7 +103,9 @@ export function update(state: GameState, input: InputState, dt: number) {
     }
   }
 
+  refreshUnitGrid(state);
   for (const unit of state.units) if (unit.alive) moveUnit(unit, dt, state);
+  updatePlayerSquads(state, dt);
 
   // Dig-on-arrive: units flagged by digTrenchLineForSelected start entrenching at destination
   for (const unit of state.units) {

@@ -238,12 +238,15 @@ export interface GameState {
   smokeZones: SmokeZone[];
   /** Monotonic id for coordinated player movement orders. */
   nextMoveGroupId: number;
+  /** Active coordinated player formations. */
+  playerSquads: PlayerSquad[];
 }
 
 export interface DebugFlags {
   showCover: boolean;
   showConcealment: boolean;
   showTactical: boolean;
+  showMovement: boolean;
 }
 
 export interface InputState {
