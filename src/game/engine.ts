@@ -8,6 +8,8 @@ import { updateSquads } from './squads';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './constants';
 import { getMission } from './missions';
 import { pickFormation, resolveFormationSlots } from './formations';
+import { issueSquadMove, updatePlayerSquads } from './playerSquads';
+import { refreshUnitGrid } from './spatialGrid';
 
 export function createInitialState(mission: MissionDef, deployment?: import('./types').DeploymentContext): GameState {
   const terrain = generateTerrain(mission.mapLayout, mission.mapSeed);
@@ -268,36 +270,10 @@ export function handleRightClickWorld(worldX: number, worldY: number, state: Gam
     if (Math.hypot(cp.pos.x - worldX, cp.pos.y - worldY) < cp.radius) { onCapture = true; break; }
   }
 
-  // Move with formation
-  const centerX = selected.reduce((s, u) => s + u.pos.x, 0) / selected.length;
-  const centerY = selected.reduce((s, u) => s + u.pos.y, 0) / selected.length;
-  const facing = Math.atan2(worldY - centerY, worldX - centerX);
+  // Move with coordinated squads (formation layer above pathfinding)
   const dest: Position = { x: worldX, y: worldY };
-  const formationType: FormationType = state.preferredFormation ?? pickFormation(selected);
-  const destCell = getTerrainAt(state.terrain, worldX, worldY);
-  const formType: FormationType = (destCell?.type === 'road' && !state.preferredFormation) ? 'column' : formationType;
-  const slots = resolveFormationSlots(selected, dest, facing, formType, state.terrain, state.cellSize);
-  const groupId = state.nextMoveGroupId++;
-  const slowestSpeed = Math.min(...selected.map(u => u.speed));
+  issueSquadMove(state, selected, dest, { queue: shiftKey, attackMove: ctrlKey });
 
-  for (const slot of slots) {
-    const u = selected.find(x => x.id === slot.id);
-    if (!u) continue;
-    if (shiftKey) {
-      u.waypoints.push(slot.pos);
-      if (!u.targetPos && u.path.length === 0) {
-        const nextWaypoint = u.waypoints.shift();
-        if (nextWaypoint) setDestination(u, state, nextWaypoint);
-      }
-    } else {
-      u.waypoints = [];
-      setDestination(u, state, slot.pos);
-      u.attackTarget = null;
-      u.order = ctrlKey ? 'attack_move' : 'move';
-    }
-    u.groupSpeedCap = slowestSpeed;
-    u.moveGroupId = groupId;
-  }
   pushMarker(state, onCapture ? 'capture' : ctrlKey ? 'attack_move' : 'move', dest);
 }
 
