@@ -72,6 +72,10 @@ export interface Unit {
   groupSpeedCap: number | null;
   /** Shared command id used to pace units in the same moving formation. */
   moveGroupId: number | null;
+  /** Squad (formation layer) this unit currently belongs to. */
+  squadId: number | null;
+  /** True once the unit reached its formation slot. */
+  settled: boolean;
   // movement
   finalDest: Position | null;        // true destination for re-path
   lastProgressDist: number;          // distance to current targetPos at last progress check
