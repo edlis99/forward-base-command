@@ -95,6 +95,7 @@ const GameUI: React.FC = () => {
       if (k === 'f1') { e.preventDefault(); toggleDebugLayer(state, 'showCover'); triggerHudUpdate(); }
       if (k === 'f2') { e.preventDefault(); toggleDebugLayer(state, 'showConcealment'); triggerHudUpdate(); }
       if (k === 'f3') { e.preventDefault(); toggleDebugLayer(state, 'showTactical'); triggerHudUpdate(); }
+      if (k === 'f4') { e.preventDefault(); toggleDebugLayer(state, 'showMovement'); triggerHudUpdate(); }
       if (k === 'escape') { state.units.forEach(u => u.selected = false); triggerHudUpdate(); }
     };
     const onUp = (e: KeyboardEvent) => inputRef.current.keys.delete(e.key.toLowerCase());

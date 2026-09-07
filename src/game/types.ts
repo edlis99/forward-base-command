@@ -72,6 +72,10 @@ export interface Unit {
   groupSpeedCap: number | null;
   /** Shared command id used to pace units in the same moving formation. */
   moveGroupId: number | null;
+  /** Squad (formation layer) this unit currently belongs to. */
+  squadId: number | null;
+  /** True once the unit reached its formation slot. */
+  settled: boolean;
   // movement
   finalDest: Position | null;        // true destination for re-path
   lastProgressDist: number;          // distance to current targetPos at last progress check
@@ -140,6 +144,24 @@ export interface CapturePoint {
 }
 
 export interface GhostContact { team: Team; pos: Position; type: UnitType; time: number; }
+
+/** Coordinated player formation created by a move order (see playerSquads.ts). */
+export interface PlayerSquad {
+  id: number;
+  memberIds: string[];
+  dest: Position;
+  anchor: Position;
+  facing: number;
+  targetFacing: number;
+  travelSpeed: number;
+  cohesionRadius: number;
+  slots: Record<string, Position>;
+  localOffsets: Record<string, Position>;
+  compression: number;
+  state: 'moving' | 'arrived';
+  lastReslot: number;
+  maxRemaining: number;
+}
 
 export type CommandMarkerType = 'move' | 'attack' | 'capture' | 'board' | 'hold' | 'attack_move';
 export interface CommandMarker {
@@ -216,12 +238,15 @@ export interface GameState {
   smokeZones: SmokeZone[];
   /** Monotonic id for coordinated player movement orders. */
   nextMoveGroupId: number;
+  /** Active coordinated player formations. */
+  playerSquads: PlayerSquad[];
 }
 
 export interface DebugFlags {
   showCover: boolean;
   showConcealment: boolean;
   showTactical: boolean;
+  showMovement: boolean;
 }
 
 export interface InputState {

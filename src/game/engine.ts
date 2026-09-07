@@ -8,6 +8,8 @@ import { updateSquads } from './squads';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './constants';
 import { getMission } from './missions';
 import { pickFormation, resolveFormationSlots } from './formations';
+import { issueSquadMove, updatePlayerSquads } from './playerSquads';
+import { refreshUnitGrid } from './spatialGrid';
 
 export function createInitialState(mission: MissionDef, deployment?: import('./types').DeploymentContext): GameState {
   const terrain = generateTerrain(mission.mapLayout, mission.mapSeed);
@@ -43,11 +45,12 @@ export function createInitialState(mission: MissionDef, deployment?: import('./t
     rewardCP: initial.rewardCP ?? 0,
     script: initial.script ?? {},
     detectionMultiplier: initial.detectionMultiplier ?? 1,
-    debug: { showCover: false, showConcealment: false, showTactical: false },
+    debug: { showCover: false, showConcealment: false, showTactical: false, showMovement: false },
     fireSupport: { heTokens: 3, smokeTokens: 2, cooldown: 0, armed: null, counterCooldown: 75 },
     fireMissions: [],
     smokeZones: [],
     nextMoveGroupId: 1,
+    playerSquads: [],
   };
   state.units = initial.units ?? [];
   // Snap any unit that spawned on impassable terrain to the nearest passable cell.
@@ -102,7 +105,9 @@ export function update(state: GameState, input: InputState, dt: number) {
     }
   }
 
+  refreshUnitGrid(state);
   for (const unit of state.units) if (unit.alive) moveUnit(unit, dt, state);
+  updatePlayerSquads(state, dt);
 
   // Dig-on-arrive: units flagged by digTrenchLineForSelected start entrenching at destination
   for (const unit of state.units) {
@@ -265,36 +270,10 @@ export function handleRightClickWorld(worldX: number, worldY: number, state: Gam
     if (Math.hypot(cp.pos.x - worldX, cp.pos.y - worldY) < cp.radius) { onCapture = true; break; }
   }
 
-  // Move with formation
-  const centerX = selected.reduce((s, u) => s + u.pos.x, 0) / selected.length;
-  const centerY = selected.reduce((s, u) => s + u.pos.y, 0) / selected.length;
-  const facing = Math.atan2(worldY - centerY, worldX - centerX);
+  // Move with coordinated squads (formation layer above pathfinding)
   const dest: Position = { x: worldX, y: worldY };
-  const formationType: FormationType = state.preferredFormation ?? pickFormation(selected);
-  const destCell = getTerrainAt(state.terrain, worldX, worldY);
-  const formType: FormationType = (destCell?.type === 'road' && !state.preferredFormation) ? 'column' : formationType;
-  const slots = resolveFormationSlots(selected, dest, facing, formType, state.terrain, state.cellSize);
-  const groupId = state.nextMoveGroupId++;
-  const slowestSpeed = Math.min(...selected.map(u => u.speed));
+  issueSquadMove(state, selected, dest, { queue: shiftKey, attackMove: ctrlKey });
 
-  for (const slot of slots) {
-    const u = selected.find(x => x.id === slot.id);
-    if (!u) continue;
-    if (shiftKey) {
-      u.waypoints.push(slot.pos);
-      if (!u.targetPos && u.path.length === 0) {
-        const nextWaypoint = u.waypoints.shift();
-        if (nextWaypoint) setDestination(u, state, nextWaypoint);
-      }
-    } else {
-      u.waypoints = [];
-      setDestination(u, state, slot.pos);
-      u.attackTarget = null;
-      u.order = ctrlKey ? 'attack_move' : 'move';
-    }
-    u.groupSpeedCap = slowestSpeed;
-    u.moveGroupId = groupId;
-  }
   pushMarker(state, onCapture ? 'capture' : ctrlKey ? 'attack_move' : 'move', dest);
 }
 
@@ -456,6 +435,7 @@ export function toggleDebugLayer(state: GameState, layer: keyof DebugFlags) {
   state.debug.showCover = false;
   state.debug.showConcealment = false;
   state.debug.showTactical = false;
+  state.debug.showMovement = false;
   state.debug[layer] = !wasOn;
 }
 

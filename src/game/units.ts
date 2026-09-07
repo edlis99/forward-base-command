@@ -3,6 +3,8 @@ import { UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_
 import { getTerrainAt, hasLineOfSight, losInfo, isPassable, isFootprintPassable, findNearestPassableWorld } from './terrain';
 import { findPath } from './pathfinding';
 import { isVisibleTo } from './awareness';
+import { getUnitGrid, queryNeighbors } from './spatialGrid';
+import { spacingRadius, getSquad, cohesionSpeedFactor, ARRIVE_TOLERANCE } from './playerSquads';
 
 let nextId = 1;
 
@@ -33,6 +35,7 @@ export function createUnit(type: UnitType, team: Team, x: number, y: number): Un
     fatigue: 0, stuckTimer: 0, lastDamageTime: -999,
     passengers: [], insideOf: null,
     boardTarget: null, groupSpeedCap: null, moveGroupId: null,
+    squadId: null, settled: false,
     finalDest: null, lastProgressDist: Infinity, lastProgressTime: 0,
     reactionDelay: 0, prone: false, ambushReady: false, rallyUntil: 0,
     digTimer: 0, coverSeekCooldown: 0, lastAllyDeathTime: -999,
@@ -102,39 +105,27 @@ export function setDestination(unit: Unit, state: GameState, dest: Position) {
   unit.lastProgressTime = state.time;
 }
 
+/** Local avoidance via spatial grid: keeps per-type personal spacing. */
 function separation(unit: Unit, state: GameState): { x: number; y: number } {
   let sx = 0, sy = 0;
-  const radius = unit.type === 'tank' ? 30 : unit.type === 'apc' ? 28 : 18;
-  for (const o of state.units) {
-    if (!o.alive || o === unit || o.team !== unit.team || o.insideOf) continue;
+  const radius = spacingRadius(unit) * 2;
+  const grid = getUnitGrid(state);
+  for (const o of queryNeighbors(grid, unit.pos.x, unit.pos.y, radius, unit)) {
+    if (!o.alive || o.team !== unit.team || o.insideOf) continue;
     if ((o.type === 'helicopter') !== (unit.type === 'helicopter')) continue;
+    const min = spacingRadius(unit) + spacingRadius(o);
     const dx = unit.pos.x - o.pos.x;
     const dy = unit.pos.y - o.pos.y;
     const d = Math.hypot(dx, dy);
-    if (d > 0 && d < radius && (o.targetPos || d < radius * 0.55)) {
-      const w = (radius - d) / radius;
+    if (d > 0 && d < min) {
+      const w = (min - d) / min;
       sx += (dx / d) * w;
       sy += (dy / d) * w;
     }
   }
+  const len = Math.hypot(sx, sy);
+  if (len > 1.5) { sx = (sx / len) * 1.5; sy = (sy / len) * 1.5; }
   return { x: sx, y: sy };
-}
-
-function groupCohesionFactor(unit: Unit, state: GameState): number {
-  if (unit.moveGroupId == null || !unit.finalDest) return 1;
-  const peers = state.units.filter(peer =>
-    peer.alive && peer.id !== unit.id && peer.moveGroupId === unit.moveGroupId && peer.finalDest && !peer.insideOf
-  );
-  if (peers.length === 0) return 1;
-  const ownRemaining = distance(unit.pos, unit.finalDest);
-  let furthestRemaining = ownRemaining;
-  for (const peer of peers) {
-    if (!peer.finalDest) continue;
-    furthestRemaining = Math.max(furthestRemaining, distance(peer.pos, peer.finalDest));
-  }
-  const lead = furthestRemaining - ownRemaining;
-  if (lead <= CELL_SIZE * 0.75) return 1;
-  return Math.max(0.28, 1 - (lead - CELL_SIZE * 0.75) / (CELL_SIZE * 3));
 }
 
 export function moveUnit(unit: Unit, dt: number, state: GameState) {
@@ -236,8 +227,15 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const moralePenalty = 0.7 + unit.morale * 0.3;
   const fatiguePenalty = 1 - unit.fatigue * 0.4;
   const baseSpeed = unit.groupSpeedCap != null ? Math.min(unit.speed, unit.groupSpeedCap) : unit.speed;
-  const cohesionFactor = groupCohesionFactor(unit, state);
-  const speed = (baseSpeed / effectiveCost) * suppressionPenalty * moralePenalty * fatiguePenalty * traction * alignFactor * cohesionFactor;
+  const squad = getSquad(state, unit);
+  const cohesionFactor = squad ? cohesionSpeedFactor(unit, squad) : 1;
+  // Arrival easing: ramp down over the last stretch so units settle in slot
+  // instead of overshooting and circling.
+  const remaining = unit.finalDest ? distance(unit.pos, unit.finalDest) : 999;
+  const arrivalFactor = unit.path.length === 0 && remaining < ARRIVE_TOLERANCE * 3
+    ? Math.max(0.35, remaining / (ARRIVE_TOLERANCE * 3))
+    : 1;
+  const speed = (baseSpeed / effectiveCost) * suppressionPenalty * moralePenalty * fatiguePenalty * traction * alignFactor * cohesionFactor * arrivalFactor;
 
 
   // Infantry can sidestep and should track the route directly. Driving them by
@@ -246,7 +244,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const travelY = veh ? Math.sin(unit.facing) : dirY;
   const targetVx = travelX * speed;
   const targetVy = travelY * speed;
-  const accel = veh ? 3 : 8;
+  const accel = veh ? 5 : 11;
   unit.vel.x += (targetVx - unit.vel.x) * Math.min(1, accel * dt);
   unit.vel.y += (targetVy - unit.vel.y) * Math.min(1, accel * dt);
 
