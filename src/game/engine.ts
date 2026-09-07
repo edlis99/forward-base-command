@@ -435,6 +435,7 @@ export function toggleDebugLayer(state: GameState, layer: keyof DebugFlags) {
   state.debug.showCover = false;
   state.debug.showConcealment = false;
   state.debug.showTactical = false;
+  state.debug.showMovement = false;
   state.debug[layer] = !wasOn;
 }
 

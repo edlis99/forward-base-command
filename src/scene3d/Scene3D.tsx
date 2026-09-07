@@ -9,6 +9,7 @@ import {
 } from '../game/engine';
 import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor } from '../game/tactical';
 import { GroundSurface, WaterSheet, GrassTufts, GroundDetail } from './GroundSurface';
+import { spacingRadius } from '../game/playerSquads';
 import { setActiveTerrain, surfaceY, groundHeightAt } from './terrainHeight';
 
 
@@ -1154,6 +1155,63 @@ function PathsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<Gam
   );
 }
 
+/** Squad movement debug: squad centre, destination, slots, unit->slot links,
+ *  cohesion + avoidance radii. Fully hidden unless debug.showMovement. */
+function MovementDebugLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
+  const ref = useRef<THREE.LineSegments>(null);
+  const posBuf = useRef<Float32Array>(new Float32Array(30000));
+  useFrame(() => {
+    const state = gameStateRef.current;
+    const positions = posBuf.current;
+    let count = 0;
+    const MAX = 4800;
+    const push = (ax: number, ay: number, bx: number, by: number) => {
+      if (count + 2 > MAX) return;
+      const i = count * 3;
+      positions[i] = ax / S; positions[i + 1] = surfaceY(ax / S, ay / S) + 0.3; positions[i + 2] = ay / S;
+      positions[i + 3] = bx / S; positions[i + 4] = surfaceY(bx / S, by / S) + 0.3; positions[i + 5] = by / S;
+      count += 2;
+    };
+    const ring = (cx: number, cy: number, r: number, seg = 24) => {
+      for (let i = 0; i < seg; i++) {
+        const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+        push(cx + Math.cos(a0) * r, cy + Math.sin(a0) * r, cx + Math.cos(a1) * r, cy + Math.sin(a1) * r);
+      }
+    };
+    if (state.debug.showMovement) {
+      const byId = new Map(state.units.map(u => [u.id, u]));
+      for (const sq of state.playerSquads) {
+        ring(sq.anchor.x, sq.anchor.y, 10, 12);
+        ring(sq.anchor.x, sq.anchor.y, sq.cohesionRadius, 32);
+        push(sq.anchor.x, sq.anchor.y, sq.dest.x, sq.dest.y);
+        ring(sq.dest.x, sq.dest.y, 14, 12);
+        for (const id of sq.memberIds) {
+          const u = byId.get(id);
+          const slot = sq.slots[id];
+          if (!u || !slot) continue;
+          ring(slot.x, slot.y, 6, 10);
+          push(u.pos.x, u.pos.y, slot.x, slot.y);
+          ring(u.pos.x, u.pos.y, spacingRadius(u), 12);
+        }
+      }
+    }
+    const mesh = ref.current;
+    if (mesh) {
+      mesh.visible = count > 0;
+      const geo = mesh.geometry as THREE.BufferGeometry;
+      geo.setAttribute('position', new THREE.BufferAttribute(positions.slice(0, count * 3), 3));
+      geo.setDrawRange(0, count);
+      geo.attributes.position.needsUpdate = true;
+    }
+  });
+  return (
+    <lineSegments ref={ref}>
+      <bufferGeometry />
+      <lineBasicMaterial color="#ffd166" transparent opacity={0.7} />
+    </lineSegments>
+  );
+}
+
 // ---------- Ground click handler (screen-space drag threshold + preview) ----------
 function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayRef'>) {
   const { camera, size } = useThree();
@@ -1434,6 +1492,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <UnitsLayer gameStateRef={gameStateRef} inputRef={inputRef} />
         <GhostContactsLayer gameStateRef={gameStateRef} />
         <PathsLayer gameStateRef={gameStateRef} />
+        <MovementDebugLayer gameStateRef={gameStateRef} />
         <CommandMarkersLayer gameStateRef={gameStateRef} />
         <EffectsLayer gameStateRef={gameStateRef} />
         <Ground gameStateRef={gameStateRef} inputRef={inputRef} onChange={onChange} />

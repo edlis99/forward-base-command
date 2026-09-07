@@ -144,6 +144,7 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
           ['showCover', 'Cover [F1]'],
           ['showConcealment', 'Conceal [F2]'],
           ['showTactical', 'Tactical [F3]'],
+          ['showMovement', 'Squads [F4]'],
         ] as [keyof DebugFlags, string][]).map(([k, label]) => (
           <button key={k} onClick={() => onToggleDebug(k)}
             className="px-2 py-0.5 border text-left"
