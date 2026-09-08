@@ -277,7 +277,7 @@ export function handleRightClickWorld(
 
   // Move with coordinated squads (formation layer above pathfinding)
   const dest: Position = { x: worldX, y: worldY };
-  issueSquadMove(state, selected, dest, { queue: shiftKey, attackMove: ctrlKey });
+  issueSquadMove(state, selected, dest, { queue: shiftKey, attackMove: ctrlKey, facing, widthScale });
 
   pushMarker(state, onCapture ? 'capture' : ctrlKey ? 'attack_move' : 'move', dest);
 }
