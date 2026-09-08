@@ -1030,17 +1030,54 @@ function CommandMarkersLayer({ gameStateRef }: { gameStateRef: React.MutableRefO
       dot.position.set(m.pos.x / S, gM + 0.07, m.pos.y / S);
       groupRef.current.add(dot);
     }
-    // formation preview ghosts
-    if (state.commandPreview) {
-      for (const slot of state.commandPreview.slots) {
-        const ring = new THREE.Mesh(
-          new THREE.RingGeometry(0.5, 0.62, 24),
-          new THREE.MeshBasicMaterial({ color: '#7ec0ff', transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }),
-        );
-        ring.rotation.x = -Math.PI / 2;
-        ring.position.set(slot.x / S, surfaceY(slot.x / S, slot.y / S) + 0.05, slot.y / S);
-        groupRef.current.add(ring);
+    // formation placement preview: per-squad coloured silhouettes + front arrow
+    const prev = state.commandPreview;
+    if (prev) {
+      const SQUAD_COLORS = ['#7ec0ff', '#8ef0c0', '#ffd98e', '#e59bff', '#9fe8ff'];
+      for (const slot of prev.slots) {
+        const p = slot.pos;
+        const col = SQUAD_COLORS[slot.squad % SQUAD_COLORS.length];
+        const gY = surfaceY(p.x / S, p.y / S) + 0.06;
+        // silhouette: infantry = small circle, vehicles = oriented rectangle
+        let mesh: THREE.Mesh;
+        if (slot.type === 'infantry') {
+          mesh = new THREE.Mesh(
+            new THREE.RingGeometry(0.28, 0.42, 20),
+            new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }),
+          );
+        } else {
+          const w = slot.type === 'tank' ? 1.5 : 1.2;
+          const l = slot.type === 'helicopter' ? 1.6 : w * 1.7;
+          mesh = new THREE.Mesh(
+            new THREE.PlaneGeometry(w, l),
+            new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false }),
+          );
+        }
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.rotation.z = -prev.facing + Math.PI / 2;
+        mesh.position.set(p.x / S, gY, p.y / S);
+        groupRef.current.add(mesh);
       }
+      // front arrow showing arrival facing
+      const dx = Math.cos(prev.facing), dz = Math.sin(prev.facing);
+      const cx = prev.dest.x / S, cz = prev.dest.y / S;
+      const tipX = cx + dx * 4.2, tipZ = cz + dz * 4.2;
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(cx, surfaceY(cx, cz) + 0.2, cz),
+          new THREE.Vector3(tipX, surfaceY(tipX, tipZ) + 0.2, tipZ),
+        ]),
+        new THREE.LineBasicMaterial({ color: '#cfe8ff', transparent: true, opacity: 0.85 }),
+      );
+      groupRef.current.add(line);
+      const head = new THREE.Mesh(
+        new THREE.ConeGeometry(0.4, 1.0, 12),
+        new THREE.MeshBasicMaterial({ color: '#cfe8ff', transparent: true, opacity: 0.85, depthWrite: false }),
+      );
+      head.position.set(tipX, surfaceY(tipX, tipZ) + 0.3, tipZ);
+      head.rotation.z = -Math.PI / 2;
+      head.rotation.y = -prev.facing;
+      groupRef.current.add(head);
     }
   });
   return <group ref={groupRef} />;
