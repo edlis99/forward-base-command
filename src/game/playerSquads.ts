@@ -153,22 +153,39 @@ export interface SquadMoveOptions {
   queue?: boolean;
   /** Advance with weapons free. */
   attackMove?: boolean;
+  /** Explicit arrival facing (radians). Defaults to army-centre -> destination. */
+  facing?: number;
+  /** Drag-controlled frontage multiplier (1 = default spacing). */
+  widthScale?: number;
+}
+
+export interface PlannedSlot { id: string; pos: Position; type: Unit['type']; squad: number; }
+export interface PlannedBlock {
+  members: Unit[];
+  dest: Position;
+  facing: number;
+  compression: number;
+  slots: Record<string, Position>;
+  localOffsets: Record<string, Position>;
+  order: number;
 }
 
 /**
- * PLAYER MOVE COMMAND -> squads -> squad destinations -> formation slots ->
- * slot assignment -> individual pathfinding.
+ * Pure planner: works out squad destinations and formation slots for a move
+ * command WITHOUT touching unit state. Used both by the placement preview and
+ * by issueSquadMove so the preview shows exactly what the order will do.
  */
-export function issueSquadMove(
+export function planSquadMove(
   state: GameState, selected: Unit[], dest: Position, opts: SquadMoveOptions = {},
-): PlayerSquad[] {
+): PlannedBlock[] {
   const ground = selected.filter(u => u.alive && !u.insideOf);
   if (ground.length === 0) return [];
 
   const armyCenter = centroid(ground);
-  const baseFacing = Math.atan2(dest.y - armyCenter.y, dest.x - armyCenter.x);
+  const baseFacing = opts.facing ?? Math.atan2(dest.y - armyCenter.y, dest.x - armyCenter.x);
   const fwd = { x: Math.cos(baseFacing), y: Math.sin(baseFacing) };
   const right = { x: -fwd.y, y: fwd.x };
+  const widthScale = Math.max(0.6, Math.min(2.2, opts.widthScale ?? 1));
 
   const groups = clusterSelected(ground);
 
@@ -179,14 +196,14 @@ export function issueSquadMove(
     const lateral = (c.x - armyCenter.x) * right.x + (c.y - armyCenter.y) * right.y;
     const spacing = Math.max(...members.map(slotSpacing));
     const cols = Math.max(2, Math.min(6, Math.ceil(Math.sqrt(members.length * 1.5))));
-    return { i, members, lateral, width: cols * spacing };
+    return { i, members, lateral, width: cols * spacing * widthScale };
   });
   blocks.sort((a, b) => a.lateral - b.lateral || a.i - b.i);
 
   const totalWidth = blocks.reduce((s, b) => s + b.width, 0) + SQUAD_GAP * (blocks.length - 1);
   let cursor = -totalWidth / 2;
   const claimed = new Set<string>();
-  const squads: PlayerSquad[] = [];
+  const out: PlannedBlock[] = [];
 
   blocks.forEach((block, order) => {
     const center = cursor + block.width / 2;
@@ -198,17 +215,15 @@ export function issueSquadMove(
       y: dest.y + right.y * center + fwd.y * depth,
     };
 
-    const compression = 0.6 + 0.4 * opennessAt(state, squadDest);
+    const compression = (0.6 + 0.4 * opennessAt(state, squadDest)) * widthScale;
     const squadCenter = centroid(block.members);
-    const facing = Math.atan2(squadDest.y - squadCenter.y, squadDest.x - squadCenter.x);
+    const facing = opts.facing ?? Math.atan2(squadDest.y - squadCenter.y, squadDest.x - squadCenter.x);
     const sf = { x: Math.cos(facing), y: Math.sin(facing) };
     const sr = { x: -sf.y, y: sf.x };
     const lateralOf = (u: Unit) =>
       (u.pos.x - squadCenter.x) * sr.x + (u.pos.y - squadCenter.y) * sr.y;
 
     const local = localSlots(block.members, compression, lateralOf);
-
-    const id = state.nextMoveGroupId++;
     const slots: Record<string, Position> = {};
     const localOffsets: Record<string, Position> = {};
 
@@ -225,22 +240,53 @@ export function issueSquadMove(
     // Reassignment pass: swap slots wherever that removes a crossing.
     resolveCrossings(block.members, slots);
 
+    out.push({ members: block.members, dest: squadDest, facing, compression, slots, localOffsets, order });
+  });
+
+  return out;
+}
+
+/** Flatten a plan into preview markers. */
+export function planToSlots(plan: PlannedBlock[]): PlannedSlot[] {
+  const out: PlannedSlot[] = [];
+  plan.forEach(b => {
+    for (const u of b.members) {
+      const p = b.slots[u.id];
+      if (p) out.push({ id: u.id, pos: p, type: u.type, squad: b.order });
+    }
+  });
+  return out;
+}
+
+/**
+ * PLAYER MOVE COMMAND -> squads -> squad destinations -> formation slots ->
+ * slot assignment -> individual pathfinding.
+ */
+export function issueSquadMove(
+  state: GameState, selected: Unit[], dest: Position, opts: SquadMoveOptions = {},
+): PlayerSquad[] {
+  const plan = planSquadMove(state, selected, dest, opts);
+  const squads: PlayerSquad[] = [];
+
+  for (const block of plan) {
+    const id = state.nextMoveGroupId++;
     const groundSpeeds = block.members.filter(u => u.type !== 'helicopter').map(u => u.speed);
     const travelSpeed = (groundSpeeds.length ? Math.min(...groundSpeeds) : Math.min(...block.members.map(u => u.speed))) * TRAVEL_SPEED_BOOST;
-
     const spread = Math.max(...block.members.map(slotSpacing));
+    const squadCenter = centroid(block.members);
+
     const squad: PlayerSquad = {
       id,
       memberIds: block.members.map(u => u.id),
-      dest: squadDest,
+      dest: block.dest,
       anchor: { ...squadCenter },
-      facing,
-      targetFacing: facing,
+      facing: Math.atan2(block.dest.y - squadCenter.y, block.dest.x - squadCenter.x),
+      targetFacing: block.facing,
       travelSpeed,
       cohesionRadius: Math.max(90, spread * Math.ceil(Math.sqrt(block.members.length)) * 0.9),
-      slots,
-      localOffsets,
-      compression,
+      slots: block.slots,
+      localOffsets: block.localOffsets,
+      compression: block.compression,
       state: 'moving',
       lastReslot: state.time,
       maxRemaining: 0,
@@ -254,18 +300,18 @@ export function issueSquadMove(
       u.settled = false;
       u.attackTarget = null;
       if (opts.queue) {
-        u.waypoints.push(slots[u.id]);
+        u.waypoints.push(block.slots[u.id]);
         if (!u.targetPos && u.path.length === 0) {
           const next = u.waypoints.shift();
           if (next) setDestination(u, state, next);
         }
       } else {
         u.waypoints = [];
-        setDestination(u, state, slots[u.id]);
+        setDestination(u, state, block.slots[u.id]);
       }
       u.order = opts.attackMove ? 'attack_move' : 'move';
     }
-  });
+  }
 
   // Drop squads whose members were all re-tasked into the new squads.
   const live = new Map(state.units.map(u => [u.id, u]));
