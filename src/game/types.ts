@@ -211,8 +211,12 @@ export interface GameState {
   previewSelected: Set<string>;
   /** Transient ping markers for issued commands. */
   commandMarkers: CommandMarker[];
-  /** Ghost formation slots shown while right-button is held. */
-  commandPreview: { slots: Position[] } | null;
+  /** Ghost formation plan shown while right-button is held (press-drag placement). */
+  commandPreview: {
+    slots: { pos: Position; type: UnitType; squad: number }[];
+    dest: Position;
+    facing: number;
+  } | null;
   gameOver: boolean; gameResult: 'win' | 'lose' | null;
   time: number;
   paused: boolean;

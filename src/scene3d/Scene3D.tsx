@@ -1030,17 +1030,54 @@ function CommandMarkersLayer({ gameStateRef }: { gameStateRef: React.MutableRefO
       dot.position.set(m.pos.x / S, gM + 0.07, m.pos.y / S);
       groupRef.current.add(dot);
     }
-    // formation preview ghosts
-    if (state.commandPreview) {
-      for (const slot of state.commandPreview.slots) {
-        const ring = new THREE.Mesh(
-          new THREE.RingGeometry(0.5, 0.62, 24),
-          new THREE.MeshBasicMaterial({ color: '#7ec0ff', transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }),
-        );
-        ring.rotation.x = -Math.PI / 2;
-        ring.position.set(slot.x / S, surfaceY(slot.x / S, slot.y / S) + 0.05, slot.y / S);
-        groupRef.current.add(ring);
+    // formation placement preview: per-squad coloured silhouettes + front arrow
+    const prev = state.commandPreview;
+    if (prev) {
+      const SQUAD_COLORS = ['#7ec0ff', '#8ef0c0', '#ffd98e', '#e59bff', '#9fe8ff'];
+      for (const slot of prev.slots) {
+        const p = slot.pos;
+        const col = SQUAD_COLORS[slot.squad % SQUAD_COLORS.length];
+        const gY = surfaceY(p.x / S, p.y / S) + 0.06;
+        // silhouette: infantry = small circle, vehicles = oriented rectangle
+        let mesh: THREE.Mesh;
+        if (slot.type === 'infantry') {
+          mesh = new THREE.Mesh(
+            new THREE.RingGeometry(0.28, 0.42, 20),
+            new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }),
+          );
+        } else {
+          const w = slot.type === 'tank' ? 1.5 : 1.2;
+          const l = slot.type === 'helicopter' ? 1.6 : w * 1.7;
+          mesh = new THREE.Mesh(
+            new THREE.PlaneGeometry(w, l),
+            new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false }),
+          );
+        }
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.rotation.z = -prev.facing + Math.PI / 2;
+        mesh.position.set(p.x / S, gY, p.y / S);
+        groupRef.current.add(mesh);
       }
+      // front arrow showing arrival facing
+      const dx = Math.cos(prev.facing), dz = Math.sin(prev.facing);
+      const cx = prev.dest.x / S, cz = prev.dest.y / S;
+      const tipX = cx + dx * 4.2, tipZ = cz + dz * 4.2;
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(cx, surfaceY(cx, cz) + 0.2, cz),
+          new THREE.Vector3(tipX, surfaceY(tipX, tipZ) + 0.2, tipZ),
+        ]),
+        new THREE.LineBasicMaterial({ color: '#cfe8ff', transparent: true, opacity: 0.85 }),
+      );
+      groupRef.current.add(line);
+      const head = new THREE.Mesh(
+        new THREE.ConeGeometry(0.4, 1.0, 12),
+        new THREE.MeshBasicMaterial({ color: '#cfe8ff', transparent: true, opacity: 0.85, depthWrite: false }),
+      );
+      head.position.set(tipX, surfaceY(tipX, tipZ) + 0.3, tipZ);
+      head.rotation.z = -Math.PI / 2;
+      head.rotation.y = -prev.facing;
+      groupRef.current.add(head);
     }
   });
   return <group ref={groupRef} />;
@@ -1268,6 +1305,9 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
     return hits;
   };
 
+  /** Press-and-drag placement: press locks the destination, drag sets arrival facing + frontage. */
+  const placeRef = useRef<{ dest: { x: number; y: number }; facing?: number; width?: number } | null>(null);
+
   const handleDown = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
     const pw = pickWorld(e);
@@ -1278,7 +1318,8 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
 
     if (e.nativeEvent.button === 2) {
       inputRef.current.rightMouseDown = true;
-      // Live formation preview begins on press; commit on release.
+      // Destination locks on press; dragging only steers facing/width.
+      placeRef.current = { dest: { x: wx, y: wy } };
       updateCommandPreview(state, wx, wy);
       onChange();
     } else if (e.nativeEvent.button === 0) {
@@ -1301,9 +1342,19 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
     inputRef.current.mouseWorldPos = { x: wx, y: wy };
     inputRef.current.mousePos = { x: sp.x, y: sp.y };
 
-    // Live formation preview while RMB held
-    if (inputRef.current.rightMouseDown) {
-      updateCommandPreview(state, wx, wy);
+    // Live placement preview while RMB held: destination stays where pressed,
+    // the drag vector sets arrival facing and how wide the formation spreads.
+    if (inputRef.current.rightMouseDown && placeRef.current) {
+      const d = placeRef.current.dest;
+      const dist = Math.hypot(wx - d.x, wy - d.y);
+      if (dist > 22) {
+        placeRef.current.facing = Math.atan2(wy - d.y, wx - d.x);
+        placeRef.current.width = Math.max(0.6, Math.min(2.2, dist / 150));
+      } else {
+        placeRef.current.facing = undefined;
+        placeRef.current.width = undefined;
+      }
+      updateCommandPreview(state, d.x, d.y, placeRef.current.facing, placeRef.current.width);
     }
 
     if (inputRef.current.isDragging && inputRef.current.dragStartScreen && inputRef.current.dragStart) {
@@ -1326,9 +1377,16 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
   const handleUp = (e: ThreeEvent<PointerEvent>) => {
     const state = gameStateRef.current;
     if (e.nativeEvent.button === 2) {
-      // commit right-click on release using cursor world pos
-      const { x: wx, y: wy } = pickWorld(e);
-      handleRightClickWorld(wx, wy, state, e.nativeEvent.shiftKey, e.nativeEvent.ctrlKey || e.nativeEvent.metaKey);
+      // Commit the previewed plan: locked destination + dragged facing/frontage.
+      const pw = pickWorld(e);
+      const plc = placeRef.current;
+      const dx = plc ? plc.dest.x : pw.x;
+      const dy = plc ? plc.dest.y : pw.y;
+      handleRightClickWorld(
+        dx, dy, state, e.nativeEvent.shiftKey, e.nativeEvent.ctrlKey || e.nativeEvent.metaKey,
+        plc?.facing, plc?.width,
+      );
+      placeRef.current = null;
       inputRef.current.rightMouseDown = false;
       clearCommandPreview(state);
       onChange();
