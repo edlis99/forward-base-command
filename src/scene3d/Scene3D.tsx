@@ -1342,9 +1342,19 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
     inputRef.current.mouseWorldPos = { x: wx, y: wy };
     inputRef.current.mousePos = { x: sp.x, y: sp.y };
 
-    // Live formation preview while RMB held
-    if (inputRef.current.rightMouseDown) {
-      updateCommandPreview(state, wx, wy);
+    // Live placement preview while RMB held: destination stays where pressed,
+    // the drag vector sets arrival facing and how wide the formation spreads.
+    if (inputRef.current.rightMouseDown && placeRef.current) {
+      const d = placeRef.current.dest;
+      const dist = Math.hypot(wx - d.x, wy - d.y);
+      if (dist > 22) {
+        placeRef.current.facing = Math.atan2(wy - d.y, wx - d.x);
+        placeRef.current.width = Math.max(0.6, Math.min(2.2, dist / 150));
+      } else {
+        placeRef.current.facing = undefined;
+        placeRef.current.width = undefined;
+      }
+      updateCommandPreview(state, d.x, d.y, placeRef.current.facing, placeRef.current.width);
     }
 
     if (inputRef.current.isDragging && inputRef.current.dragStartScreen && inputRef.current.dragStart) {
