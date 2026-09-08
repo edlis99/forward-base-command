@@ -1377,9 +1377,16 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
   const handleUp = (e: ThreeEvent<PointerEvent>) => {
     const state = gameStateRef.current;
     if (e.nativeEvent.button === 2) {
-      // commit right-click on release using cursor world pos
-      const { x: wx, y: wy } = pickWorld(e);
-      handleRightClickWorld(wx, wy, state, e.nativeEvent.shiftKey, e.nativeEvent.ctrlKey || e.nativeEvent.metaKey);
+      // Commit the previewed plan: locked destination + dragged facing/frontage.
+      const pw = pickWorld(e);
+      const plc = placeRef.current;
+      const dx = plc ? plc.dest.x : pw.x;
+      const dy = plc ? plc.dest.y : pw.y;
+      handleRightClickWorld(
+        dx, dy, state, e.nativeEvent.shiftKey, e.nativeEvent.ctrlKey || e.nativeEvent.metaKey,
+        plc?.facing, plc?.width,
+      );
+      placeRef.current = null;
       inputRef.current.rightMouseDown = false;
       clearCommandPreview(state);
       onChange();
