@@ -208,19 +208,21 @@ export function updatePreviewSelection(state: GameState) {
   for (const u of units) state.previewSelected.add(u.id);
 }
 
-/** Recompute formation ghost slots based on currently selected units + cursor world pos. */
-export function updateCommandPreview(state: GameState, worldX: number, worldY: number) {
+/**
+ * Recompute the formation placement preview. `facing`/`widthScale` come from the
+ * press-and-drag gesture (press = destination, drag = arrival facing + frontage).
+ */
+export function updateCommandPreview(
+  state: GameState, worldX: number, worldY: number, facing?: number, widthScale?: number,
+) {
   const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player' && !u.insideOf);
   if (selected.length === 0) { state.commandPreview = null; return; }
+  const dest: Position = { x: worldX, y: worldY };
   const cx = selected.reduce((s, u) => s + u.pos.x, 0) / selected.length;
   const cy = selected.reduce((s, u) => s + u.pos.y, 0) / selected.length;
-  const facing = Math.atan2(worldY - cy, worldX - cx);
-  const dest: Position = { x: worldX, y: worldY };
-  const destCell = getTerrainAt(state.terrain, worldX, worldY);
-  const formType: FormationType = state.preferredFormation
-    ?? (destCell?.type === 'road' ? 'column' : pickFormation(selected));
-  const slots = resolveFormationSlots(selected, dest, facing, formType, state.terrain, state.cellSize);
-  state.commandPreview = { slots: slots.map(s => s.pos) };
+  const face = facing ?? Math.atan2(worldY - cy, worldX - cx);
+  const plan = planSquadMove(state, selected, dest, { facing, widthScale });
+  state.commandPreview = { slots: planToSlots(plan), dest, facing: face };
 }
 
 export function clearCommandPreview(state: GameState) { state.commandPreview = null; }
