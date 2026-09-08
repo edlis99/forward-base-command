@@ -8,7 +8,7 @@ import { updateSquads } from './squads';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './constants';
 import { getMission } from './missions';
 import { pickFormation, resolveFormationSlots } from './formations';
-import { issueSquadMove, updatePlayerSquads } from './playerSquads';
+import { issueSquadMove, updatePlayerSquads, planSquadMove, planToSlots } from './playerSquads';
 import { refreshUnitGrid } from './spatialGrid';
 
 export function createInitialState(mission: MissionDef, deployment?: import('./types').DeploymentContext): GameState {
