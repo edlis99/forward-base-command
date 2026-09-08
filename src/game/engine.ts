@@ -227,7 +227,10 @@ export function updateCommandPreview(
 
 export function clearCommandPreview(state: GameState) { state.commandPreview = null; }
 
-export function handleRightClickWorld(worldX: number, worldY: number, state: GameState, shiftKey = false, ctrlKey = false) {
+export function handleRightClickWorld(
+  worldX: number, worldY: number, state: GameState, shiftKey = false, ctrlKey = false,
+  facing?: number, widthScale?: number,
+) {
   const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player' && !u.insideOf);
   if (selected.length === 0) return;
 
