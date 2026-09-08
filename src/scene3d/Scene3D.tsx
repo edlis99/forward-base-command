@@ -1305,6 +1305,9 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
     return hits;
   };
 
+  /** Press-and-drag placement: press locks the destination, drag sets arrival facing + frontage. */
+  const placeRef = useRef<{ dest: { x: number; y: number }; facing?: number; width?: number } | null>(null);
+
   const handleDown = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
     const pw = pickWorld(e);
@@ -1315,7 +1318,8 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
 
     if (e.nativeEvent.button === 2) {
       inputRef.current.rightMouseDown = true;
-      // Live formation preview begins on press; commit on release.
+      // Destination locks on press; dragging only steers facing/width.
+      placeRef.current = { dest: { x: wx, y: wy } };
       updateCommandPreview(state, wx, wy);
       onChange();
     } else if (e.nativeEvent.button === 0) {
