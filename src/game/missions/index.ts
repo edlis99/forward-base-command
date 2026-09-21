@@ -218,6 +218,8 @@ export const leipalingisMission: MissionDef = {
     s.script!.__startTime = 0;
     s.script!.__killsEnemy = 0;
     s.script!.__lossesPlayer = 0;
+    s.script!.__prevEnemyAlive = s.units!.filter(u => u.alive && u.team === 'enemy').length;
+    s.script!.__prevPlayerAlive = s.units!.filter(u => u.alive && u.team === 'player').length;
 
     const L = LEIPALINGIS_ANCHORS.leipalingis;
     s.capturePoints!.push({
@@ -271,7 +273,7 @@ export const leipalingisMission: MissionDef = {
 
     const cp = state.capturePoints.find(c => c.id === 'town_centre');
     if (cp) {
-      const here = state.units.filter(u => u.alive && distance(u.pos, cp.pos) < cp.radius);
+      const here = state.units.filter(u => u.alive && !u.insideOf && distance(u.pos, cp.pos) < cp.radius);
       const p = here.filter(u => u.team === 'player').length;
       const e = here.filter(u => u.team === 'enemy').length;
       if (p > 0 && e === 0) cp.progress = Math.min(1, cp.progress + dt * (2 / 90));       // 0→1 in ~90s from empty
@@ -311,7 +313,7 @@ export const leipalingisMission: MissionDef = {
         cleared[vid] = true;
         const obj = state.objectives.find(o => o.id === `clear_${vid}`);
         if (obj) obj.status = 'complete';
-        state.reinforcementBudget += 60; // token — ~2 infantry
+        state.reinforcementBudget += 60; // enough for one infantry reinforcement (50)
         state.eventLog.unshift({
           message: `${vid} outpost cleared — reinforcements granted`,
           time: state.time, type: 'reward',
@@ -332,6 +334,7 @@ export const leipalingisMission: MissionDef = {
     if (capObj && capObj.status === 'active' && centreHeld) capObj.status = 'complete';
 
     if (!state.gameOver && centreHeld) {
+      if (armourObj?.status === 'active') armourObj.status = 'complete';
       state.gameOver = true; state.gameResult = 'win';
       state.eventLog.unshift({ message: 'Leipalingis retaken. Silver Birch complete.', time: state.time, type: 'objective' });
     }

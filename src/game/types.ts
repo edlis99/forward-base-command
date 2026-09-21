@@ -68,6 +68,8 @@ export interface Unit {
   passengers: string[]; insideOf: string | null;
   /** Vehicle the unit is walking toward to mount (cleared on board/abort). */
   boardTarget: string | null;
+  /** Start digging after the current trench-line move finishes. */
+  digOnArrive?: boolean;
   /** Group-move speed cap so a formation advances at its slowest member's pace. */
   groupSpeedCap: number | null;
   /** Shared command id used to pace units in the same moving formation. */
@@ -82,6 +84,7 @@ export interface Unit {
   lastProgressTime: number;          // sim time of last progress
   // behavior
   reactionDelay: number;             // seconds until allowed to act on new contact
+  reactionTarget?: string | null;    // contact for which the reaction delay was started
   prone: boolean;                    // suppressed/pinned visual + accuracy
   ambushReady: boolean;              // hold-fire ambush trigger consumed?
   rallyUntil: number;                // sim time until rally complete
@@ -213,7 +216,7 @@ export interface GameState {
   commandMarkers: CommandMarker[];
   /** Ghost formation plan shown while right-button is held (press-drag placement). */
   commandPreview: {
-    slots: { pos: Position; type: UnitType; squad: number }[];
+    slots: { id: string; pos: Position; type: UnitType; squad: number }[];
     dest: Position;
     facing: number;
   } | null;

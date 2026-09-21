@@ -1,6 +1,6 @@
-import { GameState, Position, Unit, PlayerSquad } from './types';
+import { GameState, Position, Unit, PlayerSquad, FormationType } from './types';
 import { findNearestPassableWorld, isFootprintPassable } from './terrain';
-import { setDestination } from './units';
+import { clearUnitOrders, setDestination } from './units';
 
 /**
  * SQUAD / FORMATION LAYER (player orders).
@@ -73,13 +73,31 @@ interface LocalSlot { fwd: number; right: number; row: number; }
  * A single-type selection degrades gracefully into a normal loose block.
  */
 function localSlots(
-  members: Unit[], compression: number, lateralOf: (u: Unit) => number,
+  members: Unit[], compression: number, lateralOf: (u: Unit) => number, preferred?: FormationType,
 ): Map<string, LocalSlot> {
   const slots = new Map<string, LocalSlot>();
   const tanks = members.filter(u => u.type === 'tank');
   const apcs = members.filter(u => u.type === 'apc');
   const inf = members.filter(u => u.type === 'infantry');
   const heli = members.filter(u => u.type === 'helicopter');
+
+  if (preferred) {
+    const ground = members.filter(u => u.type !== 'helicopter');
+    const role = (u: Unit) => u.type === 'tank' ? 0 : u.type === 'apc' ? 1 : 2;
+    ground.sort((a, b) => (preferred === 'line' ? 0 : role(a) - role(b)) || lateralOf(a) - lateralOf(b));
+    const spacing = Math.max(32, ...ground.map(slotSpacing)) * compression;
+    ground.forEach((u, i) => {
+      const row = Math.ceil(i / 2);
+      const side = i % 2 === 1 ? -1 : 1;
+      slots.set(u.id, preferred === 'line'
+        ? { fwd: 0, right: (i - (ground.length - 1) / 2) * spacing, row: 0 }
+        : preferred === 'column'
+          ? { fwd: -i * spacing * 1.4, right: 0, row: i }
+          : { fwd: -row * spacing * 0.8, right: row * side * spacing, row });
+    });
+    heli.forEach((u, i) => slots.set(u.id, { fwd: 40, right: (i % 2 ? -1 : 1) * (110 + Math.floor(i / 2) * 60), row: 0 }));
+    return slots;
+  }
 
   const place = (group: Unit[], baseFwd: number, perRow: number, rowDepth: number) => {
     if (group.length === 0) return baseFwd;
@@ -195,7 +213,9 @@ export function planSquadMove(
     const c = centroid(members);
     const lateral = (c.x - armyCenter.x) * right.x + (c.y - armyCenter.y) * right.y;
     const spacing = Math.max(...members.map(slotSpacing));
-    const cols = Math.max(2, Math.min(6, Math.ceil(Math.sqrt(members.length * 1.5))));
+    const cols = state.preferredFormation === 'column' ? 1
+      : state.preferredFormation ? members.length
+        : Math.max(2, Math.min(6, Math.ceil(Math.sqrt(members.length * 1.5))));
     return { i, members, lateral, width: cols * spacing * widthScale };
   });
   blocks.sort((a, b) => a.lateral - b.lateral || a.i - b.i);
@@ -223,7 +243,7 @@ export function planSquadMove(
     const lateralOf = (u: Unit) =>
       (u.pos.x - squadCenter.x) * sr.x + (u.pos.y - squadCenter.y) * sr.y;
 
-    const local = localSlots(block.members, compression, lateralOf);
+    const local = localSlots(block.members, compression, lateralOf, state.preferredFormation);
     const slots: Record<string, Position> = {};
     const localOffsets: Record<string, Position> = {};
 
@@ -233,7 +253,7 @@ export function planSquadMove(
         x: squadDest.x + sf.x * l.fwd + sr.x * l.right,
         y: squadDest.y + sf.y * l.fwd + sr.y * l.right,
       };
-      slots[u.id] = claimPassable(state, raw, isVehicle(u), claimed);
+      slots[u.id] = u.type === 'helicopter' ? raw : claimPassable(state, raw, isVehicle(u), claimed);
       localOffsets[u.id] = { x: l.fwd, y: l.right };
     }
 
@@ -294,6 +314,9 @@ export function issueSquadMove(
     squads.push(squad);
 
     for (const u of block.members) {
+      if (!opts.queue) clearUnitOrders(u);
+      u.boardTarget = null;
+      u.digOnArrive = false;
       u.squadId = id;
       u.groupSpeedCap = travelSpeed;
       u.moveGroupId = id;
@@ -434,3 +457,4 @@ export function cohesionSpeedFactor(unit: Unit, squad: PlayerSquad): number {
   if (lead < -r * 0.15) return 1.08;
   return 1;
 }
+
