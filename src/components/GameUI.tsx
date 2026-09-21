@@ -4,7 +4,7 @@ import {
   createInitialState, createInputState, update,
   spawnReinforcement, setStanceForSelected, holdPositionForSelected, togglePause,
   digInForSelected, setFormation, toggleDebugLayer, digTrenchLineForSelected,
-  setTimeScale,
+  setTimeScale, disembarkSelected,
 } from '../game/engine';
 import Scene3D from '../scene3d/Scene3D';
 import GameHUD from './GameHUD';
@@ -32,6 +32,7 @@ const GameUI: React.FC = () => {
 
   const beginCombat = useCallback((ctx: DeploymentContext) => {
     if (!mission) return;
+    inputRef.current = createInputState();
     gameStateRef.current = createInitialState(mission, ctx);
     setPhase('combat');
     triggerHudUpdate();
@@ -68,11 +69,14 @@ const GameUI: React.FC = () => {
   useEffect(() => {
     if (phase !== 'combat') return;
     const onDown = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.closest('input, textarea, select, [contenteditable="true"]')) return;
       inputRef.current.keys.add(e.key.toLowerCase());
       const state = gameStateRef.current; if (!state) return;
+      if (state.gameOver || e.repeat) return;
       const k = e.key.toLowerCase();
       if (k === ' ') { e.preventDefault(); togglePause(state); triggerHudUpdate(); }
       if (k === 'h') { holdPositionForSelected(state); triggerHudUpdate(); }
+      if (k === 'u') { disembarkSelected(state); triggerHudUpdate(); }
       if (k === 'f') { setStanceForSelected(state, 'hold_fire'); triggerHudUpdate(); }
       if (k === 'x') { setStanceForSelected(state, 'tight'); triggerHudUpdate(); }
       if (k === 'g') { setStanceForSelected(state, 'defend'); triggerHudUpdate(); }
@@ -99,9 +103,11 @@ const GameUI: React.FC = () => {
       if (k === 'escape') { state.units.forEach(u => u.selected = false); triggerHudUpdate(); }
     };
     const onUp = (e: KeyboardEvent) => inputRef.current.keys.delete(e.key.toLowerCase());
+    const onBlur = () => { inputRef.current = createInputState(); };
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
-    return () => { window.removeEventListener('keydown', onDown); window.removeEventListener('keyup', onUp); };
+    window.addEventListener('blur', onBlur);
+    return () => { window.removeEventListener('keydown', onDown); window.removeEventListener('keyup', onUp); window.removeEventListener('blur', onBlur); };
   }, [phase, triggerHudUpdate]);
 
   const handleSpawn = useCallback((type: UnitType) => {
@@ -146,6 +152,7 @@ const GameUI: React.FC = () => {
         onTogglePause={() => { togglePause(gameStateRef.current!); triggerHudUpdate(); }}
         onExit={exitMission}
         onDig={() => { digInForSelected(gameStateRef.current!); triggerHudUpdate(); }}
+        onUnload={() => { disembarkSelected(gameStateRef.current!); triggerHudUpdate(); }}
         onFormation={(f) => { setFormation(gameStateRef.current!, f); triggerHudUpdate(); }}
         onToggleDebug={(l) => { toggleDebugLayer(gameStateRef.current!, l); triggerHudUpdate(); }}
         onSetTimeScale={(s) => { setTimeScale(gameStateRef.current!, s); triggerHudUpdate(); }}

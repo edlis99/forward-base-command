@@ -1,13 +1,12 @@
 import { GameState, InputState, MissionDef, Position, FormationType, Unit, CommandMarker, CommandMarkerType, DebugFlags } from './types';
-import { generateTerrain, getTerrainAt, canDigHere, digTrench, findNearestPassableWorld } from './terrain';
-import { setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
+import { generateTerrain, getTerrainAt, canDigHere, digTrench, findNearestPassableWorld, isFootprintPassable } from './terrain';
+import { createUnit, clearUnitOrders, setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
 import { updateAI } from './ai';
-import { updateAwareness } from './awareness';
+import { updateAwareness, isVisibleTo } from './awareness';
 import { updateThreatMap } from './threatMap';
 import { updateSquads } from './squads';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './constants';
 import { getMission } from './missions';
-import { pickFormation, resolveFormationSlots } from './formations';
 import { issueSquadMove, updatePlayerSquads, planSquadMove, planToSlots } from './playerSquads';
 import { refreshUnitGrid } from './spatialGrid';
 
@@ -91,36 +90,43 @@ export function update(state: GameState, input: InputState, dt: number) {
   // Boarding intents
   for (const unit of state.units) {
     if (!unit.alive) continue;
-    const intent = (unit as { _boardTarget?: string | null })._boardTarget;
+    const intent = unit.boardTarget;
     if (intent) {
-      const apc = state.units.find(u => u.id === intent && u.alive && u.type === 'apc');
-      if (!apc) { (unit as { _boardTarget?: string | null })._boardTarget = null; continue; }
+      const apc = state.units.find(u => u.id === intent && u.alive && u.type === 'apc' && u.team === unit.team);
+      if (!apc || apc.passengers.length >= 4) { clearUnitOrders(unit); continue; }
       if (Math.hypot(apc.pos.x - unit.pos.x, apc.pos.y - unit.pos.y) < 25 && apc.passengers.length < 4) {
+        clearUnitOrders(unit);
         unit.insideOf = apc.id;
+        unit.selected = false;
+        unit.pos = { ...apc.pos };
         apc.passengers.push(unit.id);
-        unit.targetPos = null; unit.path = []; unit.attackTarget = null;
-        (unit as { _boardTarget?: string | null })._boardTarget = null;
         state.eventLog.unshift({ message: `${unit.type} boarded APC`, time: state.time, type: 'info' });
+      } else if (!unit.finalDest || distance(unit.finalDest, apc.pos) > CELL_SIZE) {
+        setDestination(unit, state, apc.pos);
       }
     }
   }
 
   refreshUnitGrid(state);
   for (const unit of state.units) if (unit.alive) moveUnit(unit, dt, state);
+  for (const unit of state.units) {
+    if (!unit.alive || !unit.insideOf) continue;
+    const carrier = state.units.find(u => u.id === unit.insideOf && u.alive);
+    if (carrier) unit.pos = { ...carrier.pos };
+  }
   updatePlayerSquads(state, dt);
 
   // Dig-on-arrive: units flagged by digTrenchLineForSelected start entrenching at destination
   for (const unit of state.units) {
     if (!unit.alive) continue;
-    const tag = unit as Unit & { _digOnArrive?: boolean };
-    if (!tag._digOnArrive) continue;
+    if (!unit.digOnArrive) continue;
     if (unit.targetPos || unit.path.length > 0 || unit.waypoints.length > 0) continue;
     const cell = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
     if (cell && cell.type !== 'trench' && canDigHere(cell)) {
       unit.order = 'entrench';
       unit.digTimer = 0;
     }
-    tag._digOnArrive = false;
+    unit.digOnArrive = false;
   }
 
   // Dig progress
@@ -234,12 +240,15 @@ export function handleRightClickWorld(
   const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player' && !u.insideOf);
   if (selected.length === 0) return;
 
-  // Click on enemy unit
+  if (state.gameOver) return;
+
+  // Click on a detected enemy unit
   for (const unit of state.units) {
     if (!unit.alive || unit.team !== 'player') {
       const dx = unit.pos.x - worldX, dy = unit.pos.y - worldY;
-      if (unit.alive && unit.team !== 'player' && Math.sqrt(dx * dx + dy * dy) < 22) {
+      if (unit.alive && !unit.insideOf && unit.team !== 'player' && isVisibleTo(unit, 'player') && Math.sqrt(dx * dx + dy * dy) < 22) {
         selected.forEach(u => {
+          clearUnitOrders(u);
           u.attackTarget = unit.id;
           setDestination(u, state, { x: worldX, y: worldY });
           u.waypoints = [];
@@ -258,10 +267,11 @@ export function handleRightClickWorld(
     if (Math.sqrt(dx * dx + dy * dy) < 24) {
       selected.forEach(u => {
         if (u.type === 'infantry' && u.id !== unit.id && unit.passengers.length < 4) {
+          clearUnitOrders(u);
           setDestination(u, state, { x: unit.pos.x, y: unit.pos.y });
           u.attackTarget = null;
           u.order = 'move';
-          (u as { _boardTarget?: string | null })._boardTarget = unit.id;
+          u.boardTarget = unit.id;
         }
       });
       pushMarker(state, 'board', unit.pos);
@@ -287,12 +297,14 @@ export function setFormation(state: GameState, type: FormationType | null) {
 }
 
 export function digInForSelected(state: GameState) {
-  for (const u of state.units.filter(x => x.alive && x.selected && x.team === 'player' && x.type === 'infantry')) {
+  if (state.gameOver) return;
+  for (const u of state.units.filter(x => x.alive && !x.insideOf && x.selected && x.team === 'player' && x.type === 'infantry')) {
     const cell = getTerrainAt(state.terrain, u.pos.x, u.pos.y);
     if (!canDigHere(cell)) {
       state.eventLog.unshift({ message: `${u.type} cannot dig here`, time: state.time, type: 'info' });
       continue;
     }
+    clearUnitOrders(u);
     u.order = 'entrench';
     u.digTimer = 0;
     u.targetPos = null; u.path = []; u.waypoints = []; u.finalDest = null;
@@ -308,8 +320,9 @@ export function digInForSelected(state: GameState) {
  * Existing trench cells along the path are skipped (so segments auto-connect).
  */
 export function digTrenchLineForSelected(state: GameState) {
+  if (state.gameOver) return;
   const cs = state.cellSize;
-  const sel = state.units.filter(u => u.alive && u.selected && u.team === 'player' && u.type === 'infantry');
+  const sel = state.units.filter(u => u.alive && !u.insideOf && u.selected && u.team === 'player' && u.type === 'infantry');
   if (sel.length < 2) { digInForSelected(state); return; }
 
   // Find the two farthest-apart units to use as endpoints
@@ -367,12 +380,13 @@ export function digTrenchLineForSelected(state: GameState) {
   }
 
   for (const { unit, tgt } of assignments) {
+    clearUnitOrders(unit);
     unit.waypoints = [];
     unit.attackTarget = null;
     unit.order = 'move';
     setDestination(unit, state, { x: tgt.wx, y: tgt.wy });
     // Tag so engine.update flips the unit into 'entrench' when it arrives
-    (unit as Unit & { _digOnArrive?: boolean })._digOnArrive = true;
+    unit.digOnArrive = unit.targetPos !== null;
     pushMarker(state, 'move', { x: tgt.wx, y: tgt.wy });
   }
 
@@ -394,9 +408,10 @@ export function setStanceForSelected(state: GameState, stance: import('./types')
 }
 
 export function holdPositionForSelected(state: GameState) {
-  const sel = state.units.filter(u => u.alive && u.selected && u.team === 'player');
+  if (state.gameOver) return;
+  const sel = state.units.filter(u => u.alive && !u.insideOf && u.selected && u.team === 'player');
   sel.forEach(u => {
-    u.targetPos = null; u.path = []; u.waypoints = [];
+    clearUnitOrders(u);
     u.order = 'hold_position'; u.homePos = { ...u.pos };
   });
   if (sel.length > 0) {
@@ -406,7 +421,44 @@ export function holdPositionForSelected(state: GameState) {
   }
 }
 
+/** Unload selected APCs into separate, passable cells near the carrier. */
+export function disembarkSelected(state: GameState) {
+  if (state.gameOver) return;
+  const cs = state.cellSize;
+  for (const apc of state.units.filter(u => u.alive && u.selected && u.team === 'player' && u.type === 'apc')) {
+    for (const unit of state.units.filter(u => u.boardTarget === apc.id)) clearUnitOrders(unit);
+    let unloaded = 0;
+    for (const id of [...apc.passengers]) {
+      const passenger = state.units.find(u => u.id === id && u.alive && u.insideOf === apc.id);
+      if (!passenger) { apc.passengers = apc.passengers.filter(pid => pid !== id); continue; }
+      let destination: Position | null = null;
+      const gx = Math.floor(apc.pos.x / cs), gy = Math.floor(apc.pos.y / cs);
+      search: for (let r = 1; r <= 5; r++) {
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          if (!isFootprintPassable(state.terrain, gx + dx, gy + dy, false, false)) continue;
+          const pos = { x: (gx + dx + 0.5) * cs, y: (gy + dy + 0.5) * cs };
+          if (state.units.some(u => u.alive && !u.insideOf && u.type !== 'helicopter' && distance(u.pos, pos) < cs)) continue;
+          destination = pos;
+          break search;
+        }
+      }
+      if (!destination) continue; // Keep passengers aboard if no safe exit exists.
+      clearUnitOrders(passenger);
+      passenger.insideOf = null;
+      passenger.pos = destination;
+      passenger.homePos = { ...destination };
+      passenger.facing = apc.facing;
+      passenger.order = 'hold_position';
+      apc.passengers = apc.passengers.filter(pid => pid !== id);
+      unloaded++;
+    }
+    state.eventLog.unshift({ message: unloaded ? `APC unloaded ${unloaded} infantry` : 'APC: no safe dismount space or no passengers', time: state.time, type: 'info' });
+  }
+}
+
 export function spawnReinforcement(type: import('./types').UnitType, state: GameState) {
+  if (state.gameOver) return false;
   const cost = UNIT_STATS[type].cost;
   const pool = state.reinforcementBudget + (state.mission.rewardKills ? state.rewardCP : 0);
   if (pool < cost) return false;
@@ -421,7 +473,6 @@ export function spawnReinforcement(type: import('./types').UnitType, state: Game
   const veh = type === 'tank' || type === 'apc';
   const heli = type === 'helicopter';
   const spawn = findNearestPassableWorld(state.terrain, rawSpawn.x, rawSpawn.y, veh, heli, 12);
-  const { createUnit } = require('./units') as typeof import('./units');
   const u = createUnit(type, 'player', spawn.x, spawn.y);
   u.homePos = { x: spawn.x, y: spawn.y };
   state.units.push(u);

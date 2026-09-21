@@ -74,12 +74,12 @@ export function updateAI(state: GameState, dt: number) {
     }
   }
 
-  // Hold-fire ambush trigger: any hold_fire unit with an engageable target + nearby ally LOS,
-  // switches to aggressive momentarily (coordinated first volley).
+  // Enemy ambushes may open fire together. Player hold-fire orders stay in force.
   for (const u of state.units) {
-    if (!u.alive || u.stance !== 'hold_fire' || u.ambushReady) continue;
+    if (!u.alive || u.insideOf || u.team === 'player' || u.stance !== 'hold_fire' || u.ambushReady) continue;
     const enemies = state.units.filter(e => e.alive && e.team !== u.team && !e.insideOf);
     for (const e of enemies) {
+      if (!isVisibleTo(e, u.team)) continue;
       const d = distance(u.pos, e.pos);
       if (d > u.range) continue;
       if (!hasLineOfSight(state.terrain, u.pos.x, u.pos.y, e.pos.x, e.pos.y, u.type === 'helicopter')) continue;
@@ -149,8 +149,9 @@ function runEnemyBehavior(unit: Unit, state: GameState, dt: number) {
   }
 
   // Apply reaction delay on first contact
-  if (closest && unit.attackTarget !== closest.id && unit.reactionDelay <= 0) {
-    unit.reactionDelay = 0.3 + Math.random() * 0.5;
+  if (unit.reactionTarget !== (closest?.id ?? null)) {
+    unit.reactionTarget = closest?.id ?? null;
+    unit.reactionDelay = closest ? 0.3 + Math.random() * 0.5 : 0;
   }
   if (unit.reactionDelay > 0) return;
 

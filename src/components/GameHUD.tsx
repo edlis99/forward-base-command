@@ -10,13 +10,14 @@ interface Props {
   onTogglePause: () => void;
   onExit: () => void;
   onDig: () => void;
+  onUnload: () => void;
   onFormation: (f: FormationType | null) => void;
   onToggleDebug: (layer: keyof DebugFlags) => void;
   onSetTimeScale: (s: number) => void;
 }
 
-const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogglePause, onExit, onDig, onFormation, onToggleDebug, onSetTimeScale }) => {
-  const selected = gameState.units.filter(u => u.alive && u.selected && u.team === 'player');
+const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogglePause, onExit, onDig, onUnload, onFormation, onToggleDebug, onSetTimeScale }) => {
+  const selected = gameState.units.filter(u => u.alive && !u.insideOf && u.selected && u.team === 'player');
   const pool = gameState.reinforcementBudget + (gameState.mission.rewardKills ? gameState.rewardCP : 0);
 
   const unitTypes: { type: UnitType; label: string }[] = [
@@ -130,9 +131,10 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
         style={{ background: 'rgba(15,20,15,0.85)', border: '1px solid #2a3a2a', color: '#8a9a7a' }}>
         <div>Space: pause · 1/2/3/4: time ¼×/½×/1×/2× · WASD: pan · Wheel: zoom</div>
         <div>LClick: select · Drag: box-select · Shift: add</div>
-        <div>RClick: move/attack · Shift+R: queue · Ctrl+R: attack-move</div>
+        <div>RClick: move/attack · Shift+RClick: queue · Ctrl+RClick: attack-move</div>
         <div>H: hold · F: hold-fire · X: tight · G: defend · Y: aggressive</div>
-        <div>T: dig-in · Shift+T: dig trench line · 5/6/7: line/wedge/column · 0: auto</div>
+        <div>T: dig-in · Shift+T: trench line · U: unload APC</div>
+        <div>5/6/7: line/wedge/column · 0: auto</div>
         <div>F1: cover · F2: concealment · F3: tactical</div>
       </div>
 
@@ -203,6 +205,10 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
             <button onClick={onDig} className="px-2 py-0.5 border" style={{ background: 'rgba(60,55,30,0.8)', borderColor: '#7a6a3a', color: '#e4d488' }}>
               dig-in [T]
             </button>
+            <button onClick={onUnload} disabled={!selected.some(u => u.type === 'apc' && u.passengers.length > 0)}
+              className="px-2 py-0.5 border disabled:opacity-40" style={{ background: 'rgba(40,50,40,0.8)', borderColor: '#5a6a5a' }}>
+              unload [U]
+            </button>
           </div>
           <div className="flex gap-1 mt-1">
             <span style={{ color: '#7a8a6a' }}>Form:</span>
@@ -229,6 +235,7 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
             {selected.length === 1 && (
               <div className="grid grid-cols-2 gap-x-3">
                 <span>{selected[0].type} · {selected[0].order}</span>
+                {selected[0].type === 'apc' && <span>Passengers {selected[0].passengers.length}/4</span>}
                 <span>HP {Math.ceil(selected[0].health)}/{selected[0].maxHealth}</span>
                 <span>Ammo {selected[0].ammo}/{selected[0].maxAmmo}{selected[0].reloadTimer > 0 ? ' ⟳' : ''}</span>
                 <span>Stance {selected[0].stance}</span>

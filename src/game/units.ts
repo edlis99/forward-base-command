@@ -59,7 +59,7 @@ function normalizeAngle(a: number): number {
 }
 
 export function getFlankingBonus(attacker: Unit, target: Unit): number {
-  const attackAngle = angleBetween(attacker.pos, target.pos);
+  const attackAngle = angleBetween(target.pos, attacker.pos);
   const facingDiff = Math.abs(normalizeAngle(attackAngle - target.facing));
   if (facingDiff > Math.PI * 0.67) return 0.4;
   if (facingDiff > Math.PI * 0.33) return 0.2;
@@ -83,6 +83,23 @@ export function checkVeterancy(unit: Unit): string | null {
 }
 
 function isVehicle(u: Unit) { return u.type === 'tank' || u.type === 'apc'; }
+
+/** Cancel deferred actions as well as movement when replacing a player order. */
+export function clearUnitOrders(unit: Unit) {
+  unit.targetPos = null;
+  unit.path = [];
+  unit.waypoints = [];
+  unit.finalDest = null;
+  unit.attackTarget = null;
+  unit.boardTarget = null;
+  unit.digOnArrive = false;
+  unit.groupSpeedCap = null;
+  unit.moveGroupId = null;
+  unit.squadId = null;
+  unit.settled = false;
+  unit.vel = { x: 0, y: 0 };
+  unit.order = 'idle';
+}
 
 /** Set destination using A* pathfinding. Stores `finalDest` for re-paths. */
 export function setDestination(unit: Unit, state: GameState, dest: Position) {
@@ -338,7 +355,7 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
 
   let target: Unit | undefined;
   if (unit.attackTarget) {
-    target = enemies.find(e => e.id === unit.attackTarget);
+    target = enemies.find(e => e.id === unit.attackTarget && isVisibleTo(e, unit.team));
     if (!target) unit.attackTarget = null;
   }
 
