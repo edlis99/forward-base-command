@@ -34,7 +34,7 @@ export function roadJunctions(roads: MapRoad[]): { x: number; y: number; radius:
 
 /** Draw an opaque union of the complete network into ONE surface. No stacked
  * road meshes, no independent end caps at intersections, no depth fighting. */
-export function paintRoadNetwork(ctx: CanvasRenderingContext2D, roads: MapRoad[], markings = false) {
+export function paintRoadNetwork(ctx: CanvasRenderingContext2D, roads: MapRoad[], markings = false, junctions?: ReturnType<typeof roadJunctions>) {
   const stroke = (road: MapRoad, color: string, width: number) => {
     ctx.beginPath(); road.points.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
     ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
@@ -55,7 +55,7 @@ export function paintRoadNetwork(ctx: CanvasRenderingContext2D, roads: MapRoad[]
       lines.beginPath(); road.points.forEach((p, i) => i ? lines.lineTo(p[0], p[1]) : lines.moveTo(p[0], p[1])); lines.stroke();
     }
     lines.setLineDash([]); lines.globalCompositeOperation = 'destination-out';
-    for (const j of roadJunctions(roads.filter(r => r.class !== 'track'))) {
+    for (const j of junctions ?? roadJunctions(roads.filter(r => r.class !== 'track'))) {
       lines.beginPath(); lines.arc(j.x, j.y, j.radius, 0, Math.PI * 2); lines.fill();
     }
     ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(canvas, 0, 0); ctx.restore();

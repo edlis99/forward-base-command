@@ -11,7 +11,7 @@ export function drawCampaignMap(ctx: CanvasRenderingContext2D, terrain: TerrainC
   ctx.save(); ctx.setTransform(width / MAP_COLS, 0, 0, height / MAP_ROWS, 0, 0);
   ctx.fillStyle = COLORS.open; ctx.fillRect(0, 0, MAP_COLS, MAP_ROWS);
   terrain.forEach((row, y) => row.forEach((c, x) => {
-    ctx.fillStyle = COLORS[c.roadName ? 'open' : c.type] ?? COLORS.open;
+    ctx.fillStyle = c.yard ? '#91a168' : COLORS[c.roadName ? 'open' : c.type] ?? COLORS.open;
     ctx.fillRect(x, y, 1, 1);
   }));
   for (const town of SETTLEMENTS) {
@@ -27,9 +27,9 @@ export function drawCampaignMap(ctx: CanvasRenderingContext2D, terrain: TerrainC
     ctx.fillRect(x + .14, y + .14, .72, .72);
   }));
   if (labels) {
-    ctx.font = '4px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.font = `${18 * MAP_COLS / width}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     for (const town of SETTLEMENTS) {
-      ctx.lineWidth = 1.2; ctx.strokeStyle = '#17271c'; ctx.strokeText(town.name, town.x, town.y - town.ry - 1);
+      ctx.lineWidth = 3 * MAP_COLS / width; ctx.strokeStyle = '#17271c'; ctx.strokeText(town.name, town.x, town.y - town.ry - 1);
       ctx.fillStyle = '#f2e9cc'; ctx.fillText(town.name, town.x, town.y - town.ry - 1);
     }
   }

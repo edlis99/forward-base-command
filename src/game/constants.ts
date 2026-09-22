@@ -1,7 +1,7 @@
 import { UnitStats, UnitType } from './types';
 
-export const MAP_COLS = 220;
-export const MAP_ROWS = 160;
+export const MAP_COLS = 440;
+export const MAP_ROWS = 320;
 export const CELL_SIZE = 32;
 export const MAP_WIDTH = MAP_COLS * CELL_SIZE;
 export const MAP_HEIGHT = MAP_ROWS * CELL_SIZE;
@@ -38,3 +38,4 @@ export const MOVING_ACC_PENALTY = 0.7;
 
 // Defense mission only
 export const CP_PER_KILL = 25;
+

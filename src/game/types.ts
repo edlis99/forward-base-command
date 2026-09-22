@@ -109,6 +109,7 @@ export interface TerrainCell {
   prop?: 'logs' | 'hay' | 'stone_wall' | 'wreck' | 'barricade';
   propAngle?: number;
   roadName?: string;
+  yard?: 'courtyard' | 'garden' | 'orchard';
   settlementId?: string;
   buildingKind?: 'house' | 'barn' | 'church' | 'civic' | 'workshop';
   /** Detection multiplier; paved roads expose moving and stationary units. */

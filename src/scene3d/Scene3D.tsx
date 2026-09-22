@@ -9,6 +9,7 @@ import {
 } from '../game/engine';
 import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor } from '../game/tactical';
 import { GroundSurface, WaterSheet, GrassTufts, GroundDetail } from './GroundSurface';
+import { MAP_SECTIONS, MapSection } from './mapSections';
 import { CampaignMap } from '../components/CampaignMap';
 import { SETTLEMENTS } from '../game/maps/settlements';
 import { SettlementLabelPositions } from './SettlementLabels';
@@ -63,10 +64,38 @@ const FLAT_TYPES = new Set([
   'tall_grass', 'trench', 'hedgerow', 'urban',
 ]);
 
+// Only nearby sections allocate geometry, vegetation and road textures. Unit
+// simulation remains global: leaving the camera does not freeze a battle.
 function TerrainMesh({ terrain, regional }: { terrain: TerrainCell[][]; regional: boolean }) {
+  const { camera, gl } = useThree();
+  const frustum = useMemo(() => new THREE.Frustum(), []);
+  const matrix = useMemo(() => new THREE.Matrix4(), []);
+  const boxes = useMemo(() => MAP_SECTIONS.map(s => new THREE.Box3(
+    new THREE.Vector3(s.x - 8, -5, s.y - 8), new THREE.Vector3(s.x + s.width + 8, 7, s.y + s.height + 8))), []);
+  const [visible, setVisible] = useState<MapSection[]>([]);
+  const previous = useRef('');
+  useFrame(() => {
+    camera.updateMatrixWorld();
+    frustum.setFromProjectionMatrix(matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    const next = MAP_SECTIONS.filter((_, i) => frustum.intersectsBox(boxes[i]));
+    const key = next.map(s => s.id).join('|');
+    if (key !== previous.current) {
+      previous.current = key; setVisible(next);
+      gl.domElement.dataset.terrainSections = String(next.length);
+    }
+  }, -1);
+  return <group>
+    <mesh position={[W / 2, -10, H / 2]} receiveShadow raycast={() => null}>
+      <boxGeometry args={[W, 14, H]} /><meshStandardMaterial color="#6f6450" />
+    </mesh>
+    {visible.map(section => <TerrainSection key={section.id} terrain={terrain} regional={regional} section={section} />)}
+  </group>;
+}
+
+function TerrainSection({ terrain, regional, section }: { terrain: TerrainCell[][]; regional: boolean; section: MapSection }) {
   const groups = useMemo(() => {
     const byType: Record<string, { positions: [number, number, number][]; sizes: [number, number, number][] }> = {};
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    for (let y = section.y; y < section.y + section.height; y++) for (let x = section.x; x < section.x + section.width; x++) {
       const c = terrain[y][x];
       const t = c.type;
       if (FLAT_TYPES.has(t) || c.prop) continue; // drawn by GroundSurface / prop layers
@@ -77,29 +106,21 @@ function TerrainMesh({ terrain, regional }: { terrain: TerrainCell[][]; regional
       byType[t].sizes.push([1, Math.max(0.02, Math.abs(h)), 1]);
     }
     return byType;
-  }, [terrain]);
+  }, [terrain, section]);
 
   return (
     <group>
-      {/* Deep sub-surface slab so the landscape silhouette has thickness. Its
-          top must sit well below the lowest terrain valley, or it pokes through
-          hollows and reads as large dark patches. */}
-      <mesh position={[W / 2, -10, H / 2]} receiveShadow raycast={() => null}>
-        <boxGeometry args={[W, 14, H]} />
-        <meshStandardMaterial color="#6f6450" />
-      </mesh>
-
-      <GroundSurface terrain={terrain} regional={regional} />
-      <WaterSheet terrain={terrain} />
-      <GrassTufts terrain={terrain} />
-      <GroundDetail terrain={terrain} />
+      <GroundSurface terrain={terrain} section={section} regional={regional} />
+      <WaterSheet terrain={terrain} section={section} />
+      <GrassTufts terrain={terrain} section={section} />
+      <GroundDetail terrain={terrain} section={section} />
       {Object.entries(groups).map(([type, g]) => (
         <InstancedTerrainGroup key={type} type={type} positions={g.positions} sizes={g.sizes} />
       ))}
-      <TrenchInstances terrain={terrain} />
-      <Woodland terrain={terrain} />
-      <HedgerowInstances terrain={terrain} />
-      <RuralBuildingsAndProps terrain={terrain} />
+      <TrenchInstances terrain={terrain} section={section} />
+      <Woodland terrain={terrain} section={section} />
+      <HedgerowInstances terrain={terrain} section={section} />
+      <RuralBuildingsAndProps terrain={terrain} section={section} />
     </group>
   );
 }
@@ -111,10 +132,10 @@ function TerrainMesh({ terrain, regional }: { terrain: TerrainCell[][]; regional
  * Each cell's parapet is split into two half-length yawed segments so the
  * fortification kinks every cell instead of forming a straight box.
  */
-function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
+function TrenchInstances({ terrain, section }: { terrain: TerrainCell[][]; section: MapSection }) {
   const computeCells = () => {
     const out: Array<{ x: number; y: number; horiz: boolean }> = [];
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    for (let y = section.y; y < section.y + section.height; y++) for (let x = section.x; x < section.x + section.width; x++) {
       if (terrain[y][x].type !== 'trench') continue;
       const e = x + 1 < W && terrain[y][x + 1].type === 'trench';
       const w = x - 1 >= 0 && terrain[y][x - 1].type === 'trench';
@@ -349,10 +370,10 @@ function InstancedTerrainGroup({ type, positions, sizes }: { type: string; posit
   );
 }
 
-function HedgerowInstances({ terrain }: { terrain: TerrainCell[][] }) {
+function HedgerowInstances({ terrain, section }: { terrain: TerrainCell[][]; section: MapSection }) {
   const bushes = useMemo(() => {
     const out: Array<{ x: number; z: number; sx: number; sy: number; sz: number; rot: number; tint: number }> = [];
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    for (let y = section.y; y < section.y + section.height; y++) for (let x = section.x; x < section.x + section.width; x++) {
       if (terrain[y][x].type !== 'hedgerow') continue;
       const seed = (x * 91 + y * 47) % 997;
       for (let i = 0; i < 7; i++) {
@@ -369,7 +390,7 @@ function HedgerowInstances({ terrain }: { terrain: TerrainCell[][] }) {
       }
     }
     return out;
-  }, [terrain]);
+  }, [terrain, section]);
 
   const ref = useRef<THREE.InstancedMesh>(null);
   useEffect(() => {
@@ -1324,7 +1345,7 @@ function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObjec
   const distRef = useRef(32);
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
-      distRef.current = Math.max(16, Math.min(250, distRef.current + (e.deltaY > 0 ? 10 : -10)));
+      distRef.current = Math.max(16, Math.min(400, distRef.current + (e.deltaY > 0 ? 10 : -10)));
     };
     window.addEventListener('wheel', onWheel);
     return () => window.removeEventListener('wheel', onWheel);
@@ -1351,7 +1372,7 @@ function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObjec
     const d = distRef.current;
     camera.position.set(targetRef.current.x, d * 0.85, targetRef.current.z + d * 0.55);
     camera.lookAt(targetRef.current.x, surfaceY(targetRef.current.x, targetRef.current.z), targetRef.current.z);
-  });
+  }, -2);
   return null;
 }
 
@@ -1434,8 +1455,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         {/* Sky/bounce fill so shaded slopes never read as black patches */}
         <hemisphereLight args={['#cfe0e8', '#5f6b48', 0.95]} />
         <ambientLight intensity={0.45} />
-        {/* Sun. Shadow frustum must cover the whole 220x160 map, otherwise
-            everything outside it clamps to fully shadowed dark patches. */}
+        {/* Shadows follow the camera across the expanded region. */}
         <SunLight key={String(highQuality)} high={highQuality} />
 
         {/* Cool counter-light from the opposite side to lift shadow interiors */}

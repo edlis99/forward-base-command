@@ -2,6 +2,7 @@ import { MissionDef, GameState, Unit, DeploymentContext, DeploymentTown, Positio
 import { createUnit, distance, setDestination } from '../units';
 import { CELL_SIZE } from '../constants';
 import { LEIPALINGIS_ANCHORS } from '../terrain';
+import { GEOGRAPHIC_SCALE } from '../maps/geography';
 import { STAGING_AREAS } from '../maps/leipalingis';
 
 const tx = (gx: number) => gx * CELL_SIZE + CELL_SIZE / 2;
@@ -48,13 +49,13 @@ function garrisonLeipalingis(units: Unit[], reserveIds: string[], outposts: Reco
   // ---------- Outer trench line: N / E / S / W approaches ----------
   const trenchLine: Array<[number, number]> = [
     // North approach
-    [L.x - 4, L.y - 18], [L.x, L.y - 18], [L.x + 4, L.y - 18],
+    [L.x - 4 * GEOGRAPHIC_SCALE, L.y - 18 * GEOGRAPHIC_SCALE], [L.x, L.y - 18 * GEOGRAPHIC_SCALE], [L.x + 4 * GEOGRAPHIC_SCALE, L.y - 18 * GEOGRAPHIC_SCALE],
     // South approach
-    [L.x - 4, L.y + 18], [L.x, L.y + 18], [L.x + 4, L.y + 18],
+    [L.x - 4 * GEOGRAPHIC_SCALE, L.y + 18 * GEOGRAPHIC_SCALE], [L.x, L.y + 18 * GEOGRAPHIC_SCALE], [L.x + 4 * GEOGRAPHIC_SCALE, L.y + 18 * GEOGRAPHIC_SCALE],
     // West approach
-    [L.x - 18, L.y - 3], [L.x - 18, L.y + 3],
+    [L.x - 18 * GEOGRAPHIC_SCALE, L.y - 3 * GEOGRAPHIC_SCALE], [L.x - 18 * GEOGRAPHIC_SCALE, L.y + 3 * GEOGRAPHIC_SCALE],
     // East approach
-    [L.x + 18, L.y - 3], [L.x + 18, L.y + 3],
+    [L.x + 18 * GEOGRAPHIC_SCALE, L.y - 3 * GEOGRAPHIC_SCALE], [L.x + 18 * GEOGRAPHIC_SCALE, L.y + 3 * GEOGRAPHIC_SCALE],
   ];
   for (const [gx, gy] of trenchLine) {
     const u = createUnit('infantry', 'enemy', tx(gx), ty(gy));
@@ -64,7 +65,7 @@ function garrisonLeipalingis(units: Unit[], reserveIds: string[], outposts: Reco
 
   // ---------- MG nests at 4 chokepoints (sandbag rings) ----------
   const chokepoints: Array<[number, number]> = [
-    [L.x, L.y - 12], [L.x, L.y + 12], [L.x - 12, L.y], [L.x + 12, L.y],
+    [L.x, L.y - 12 * GEOGRAPHIC_SCALE], [L.x, L.y + 12 * GEOGRAPHIC_SCALE], [L.x - 12 * GEOGRAPHIC_SCALE, L.y], [L.x + 12 * GEOGRAPHIC_SCALE, L.y],
   ];
   for (const [gx, gy] of chokepoints) {
     const u = createUnit('infantry', 'enemy', tx(gx), ty(gy));
@@ -76,9 +77,9 @@ function garrisonLeipalingis(units: Unit[], reserveIds: string[], outposts: Reco
 
   // ---------- Inner town defenders (garrison bulk) ----------
   const inner: Array<[number, number]> = [
-    [L.x - 8, L.y - 6], [L.x + 8, L.y - 6],
-    [L.x - 8, L.y + 6], [L.x + 8, L.y + 6],
-    [L.x - 2, L.y - 2],
+    [L.x - 8 * GEOGRAPHIC_SCALE, L.y - 6 * GEOGRAPHIC_SCALE], [L.x + 8 * GEOGRAPHIC_SCALE, L.y - 6 * GEOGRAPHIC_SCALE],
+    [L.x - 8 * GEOGRAPHIC_SCALE, L.y + 6 * GEOGRAPHIC_SCALE], [L.x + 8 * GEOGRAPHIC_SCALE, L.y + 6 * GEOGRAPHIC_SCALE],
+    [L.x - 2 * GEOGRAPHIC_SCALE, L.y - 2 * GEOGRAPHIC_SCALE],
   ];
   for (const [gx, gy] of inner) {
     const u = createUnit('infantry', 'enemy', tx(gx), ty(gy));
@@ -114,8 +115,8 @@ function garrisonLeipalingis(units: Unit[], reserveIds: string[], outposts: Reco
     // Position outpost between village and Leipalingis (so player has to fight through it).
     const dx = L.x - vx, dy = L.y - vy;
     const len = Math.hypot(dx, dy) || 1;
-    const ox = Math.round(vx + (dx / len) * 12);
-    const oy = Math.round(vy + (dy / len) * 12);
+    const ox = Math.round(vx + (dx / len) * 12 * GEOGRAPHIC_SCALE);
+    const oy = Math.round(vy + (dy / len) * 12 * GEOGRAPHIC_SCALE);
     const spots: Array<['infantry' | 'apc', number, number]> = [
       ['infantry', ox - 1, oy], ['infantry', ox + 1, oy],
     ];

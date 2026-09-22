@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { TerrainCell } from '../game/types';
+import { MapSection } from './mapSections';
 import { SETTLEMENTS } from '../game/maps/settlements';
 import { groundHeightAt, hash2 } from './terrainHeight';
 
@@ -49,13 +50,14 @@ function Batches({ parts }: { parts: Parts }) {
   return <group>{(Object.keys(parts) as Shape[]).map(shape => <Batch key={shape} shape={shape} parts={parts[shape]} />)}</group>;
 }
 
-export function Woodland({ terrain }: { terrain: TerrainCell[][] }) {
+export function Woodland({ terrain, section }: { terrain: TerrainCell[][]; section: MapSection }) {
   const parts = useMemo(() => {
     const parts = emptyParts();
-    terrain.forEach((row, z) => row.forEach((cell, x) => {
-      if (cell.type !== 'forest') return;
+    for (let z = section.y; z < section.y + section.height; z++) for (let x = section.x; x < section.x + section.width; x++) {
+      const cell = terrain[z][x];
+      if (cell.type !== 'forest') continue;
       const roll = hash2(x, z);
-      if (roll < 0.1) return; // irregular openings beneath a connected canopy
+      if (roll < 0.1) continue; // irregular openings beneath a connected canopy
       const px = x + .16 + hash2(x + 5, z) * .68, pz = z + .16 + hash2(x, z + 7) * .68;
       const y = groundHeightAt(terrain, px, pz);
       const height = 1.4 + hash2(x + 3, z + 9) * 1.7;
@@ -80,29 +82,47 @@ export function Woodland({ terrain }: { terrain: TerrainCell[][] }) {
       if (birch) for (let stripe = 1; stripe <= 3; stripe++) {
         parts.cylinder.push({ p: [px, y + stripe * height * .12, pz], s: [.093, .025, .093], color: '#716f61' });
       }
-    }));
+    }
     return parts;
-  }, [terrain]);
+  }, [terrain, section]);
   return <Batches parts={parts} />;
 }
 
-export function RuralBuildingsAndProps({ terrain }: { terrain: TerrainCell[][] }) {
+export function RuralBuildingsAndProps({ terrain, section }: { terrain: TerrainCell[][]; section: MapSection }) {
   const parts = useMemo(() => {
     const parts = emptyParts();
-    terrain.forEach((row, z) => row.forEach((cell, x) => {
-      if (cell.type !== 'urban' && !cell.prop) return;
+    for (let z = section.y; z < section.y + section.height; z++) for (let x = section.x; x < section.x + section.width; x++) {
+      const cell = terrain[z][x];
+      if (cell.type !== 'urban' && !cell.prop && !cell.yard) continue;
       const angle = cell.propAngle ?? 0;
       const town = SETTLEMENTS.find(s => s.id === cell.settlementId);
       const cx = x + .5, cz = z + .5, y = groundHeightAt(terrain, cx, cz);
       // Geometry sits on the rear/side of a cell; its centre is a usable
       // firing slot. Clicking uses the same cell in the simulation.
       const add = (shape: Shape, ox: number, oy: number, oz: number, sx: number, sy: number, sz: number, color: string, rx = 0, rz = 0) => {
-        const propScale = cell.type === 'urban' ? 1 : .58;
+        const propScale = cell.type === 'urban' || cell.yard ? 1 : .58;
         ox *= propScale; oy *= propScale; oz *= propScale; sx *= propScale; sy *= propScale; sz *= propScale;
         parts[shape].push({ p: [cx + Math.cos(angle) * ox - Math.sin(angle) * oz, y + oy, cz + Math.sin(angle) * ox + Math.cos(angle) * oz],
           s: [sx, sy, sz], r: [rx, -angle, rz], color });
       };
-      if (cell.type === 'urban') {
+      if (cell.yard) {
+        // Open entrance on the south edge; low side fences and garden beds.
+        for (const side of [-1, 1]) {
+          add('box', side * .43, .08, -.08, .025, .12, .68, '#8b896d');
+          add('box', side * .43, .1, -.39, .045, .2, .045, '#77735c');
+        }
+        if (cell.yard === 'garden') {
+          for (const side of [-1, 1]) {
+            add('box', side * .20, .013, -.14, .22, .026, .42, '#6c6047');
+            for (const oz of [-.28, -.15, -.02]) add('box', side * .20, .055, oz, .17, .08, .04, '#647847');
+          }
+        } else if (cell.yard === 'orchard') {
+          for (const ox of [-.22, .22]) {
+            add('cylinder', ox, .23, -.2, .045, .46, .045, '#6f6045');
+            add('crown', ox, .55, -.2, .36, .4, .36, '#7e9554');
+          }
+        } else add('box', .25, .09, -.26, .22, .18, .2, '#8a8067');
+      } else if (cell.type === 'urban') {
         const h = cell.buildingKind === 'civic' ? .72 : .44 + hash2(x + 11, z) * .16;
         const wall = town?.wall ?? ['#c2b79c', '#a8af99', '#c7b58f', '#948b78'][Math.floor(hash2(x, z) * 4)];
         const roof = town?.roof ?? ['#794e3e', '#6d7473', '#8e5c42'][Math.floor(hash2(x + 7, z) * 3)];
@@ -165,8 +185,8 @@ export function RuralBuildingsAndProps({ terrain }: { terrain: TerrainCell[][] }
         for (const ox of [-.3, 0, .3]) add('box', ox, .3, -.245, .11, .165, .018, '#965c46');
         add('box', .29, .1, .29, .3, .2, .25, '#7d805b');
       }
-    }));
+    }
     return parts;
-  }, [terrain]);
+  }, [terrain, section]);
   return <Batches parts={parts} />;
 }
