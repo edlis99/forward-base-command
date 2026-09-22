@@ -280,6 +280,7 @@ export function setTerrain(grid: TerrainCell[][], x: number, y: number, type: Te
   const c = grid[y][x];
   c.type = type;
   delete c.prop; delete c.propAngle; delete c.roadName;
+  delete c.settlementId; delete c.buildingKind;
   c.exposure = 1;
   c.coverBonus = 0;
   c.concealment = 0;
@@ -362,7 +363,7 @@ export function isPassable(cell: TerrainCell | null, isVehicle: boolean, isHelic
   return true;
 }
 
-/** Footprint-aware passability. Vehicles need clearance in a neighborhood, not just one cell. */
+/** Footprint-aware passability. Grid routing uses cell centres; continuous movement checks the scaled body below. */
 export function isFootprintPassable(
   terrain: TerrainCell[][],
   gx: number, gy: number,
@@ -370,13 +371,24 @@ export function isFootprintPassable(
   radius?: number,
 ): boolean {
   if (isHelicopter) return true;
-  const r = radius ?? (isVehicle ? 1 : 0);
+  const r = radius ?? 0;
   for (let dy = -r; dy <= r; dy++) {
     for (let dx = -r; dx <= r; dx++) {
       const nx = gx + dx, ny = gy + dy;
       if (nx < 0 || nx >= MAP_COLS || ny < 0 || ny >= MAP_ROWS) return false;
       if (!isPassable(terrain[ny][nx], isVehicle, isHelicopter)) return false;
     }
+  }
+  return true;
+}
+
+/** Continuous collision uses the vehicle hull radius, not a 3x3-cell square.
+ * Check centre/corners when moving between cell-centred A* waypoints. */
+export function isWorldFootprintPassable(terrain: TerrainCell[][], x: number, y: number, vehicle: boolean, heli = false): boolean {
+  if (heli) return true;
+  const r = vehicle ? CELL_SIZE * .24 : CELL_SIZE * .045;
+  for (const dx of [-r, 0, r]) for (const dy of [-r, 0, r]) {
+    if (!isPassable(getTerrainAt(terrain, x + dx, y + dy), vehicle, false)) return false;
   }
   return true;
 }
@@ -391,7 +403,7 @@ export function findNearestPassableWorld(
   if (isHelicopter) return { x: worldX, y: worldY };
   const gx = Math.max(0, Math.min(MAP_COLS - 1, Math.floor(worldX / CELL_SIZE)));
   const gy = Math.max(0, Math.min(MAP_ROWS - 1, Math.floor(worldY / CELL_SIZE)));
-  if (isFootprintPassable(terrain, gx, gy, isVehicle, false)) return {
+  if (isWorldFootprintPassable(terrain, worldX, worldY, isVehicle, false)) return {
     x: Math.max(0, Math.min(MAP_COLS * CELL_SIZE - 1, worldX)),
     y: Math.max(0, Math.min(MAP_ROWS * CELL_SIZE - 1, worldY)),
   };

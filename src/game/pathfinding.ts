@@ -1,6 +1,6 @@
 import { TerrainCell, Position, UnitType } from './types';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from './constants';
-import { isPassable, isFootprintPassable } from './terrain';
+import { isPassable, isFootprintPassable, isWorldFootprintPassable } from './terrain';
 
 interface Node { gx: number; gy: number; g: number; f: number; parent: Node | null; }
 
@@ -39,7 +39,7 @@ class MinHeap {
 
 function cellPassable(terrain: TerrainCell[][], gx: number, gy: number, vehicle: boolean, heli: boolean): boolean {
   if (gx < 0 || gx >= MAP_COLS || gy < 0 || gy >= MAP_ROWS) return false;
-  if (vehicle) return isFootprintPassable(terrain, gx, gy, true, false, 1);
+  if (vehicle) return isFootprintPassable(terrain, gx, gy, true, false);
   return isPassable(terrain[gy][gx], vehicle, heli);
 }
 
@@ -160,7 +160,8 @@ function segmentCost(terrain: TerrainCell[][], a: Position, b: Position, vehicle
     const t = i / steps;
     const x = a.x + dx * t, y = a.y + dy * t;
     const gx = Math.floor(x / CELL_SIZE), gy = Math.floor(y / CELL_SIZE);
-    if (!cellPassable(terrain, gx, gy, vehicle, heli)) return Infinity;
+    if (!cellPassable(terrain, gx, gy, vehicle, heli) ||
+        (vehicle && !isWorldFootprintPassable(terrain, x, y, true))) return Infinity;
     // Sampling must not allow a diagonal to clip an impassable corner.
     if (gx !== px && gy !== py &&
         (!cellPassable(terrain, gx, py, vehicle, heli) || !cellPassable(terrain, px, gy, vehicle, heli))) return Infinity;

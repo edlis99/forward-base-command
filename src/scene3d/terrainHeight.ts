@@ -75,8 +75,8 @@ export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number,
   let level = 0, relief = 0, elev = 0;
   for (const [c, w] of wts) {
     if (w <= 0 || !c) continue;
-    level += (GROUND_LEVEL[c.type] ?? 0) * w;
-    relief += (RELIEF[c.type] ?? 1) * w;
+    level += (c.roadName ? 0 : GROUND_LEVEL[c.type] ?? 0) * w;
+    relief += (c.roadName ? 1 : RELIEF[c.type] ?? 1) * w;
     elev += ((c.elevation ?? 1) - 1) * w;
   }
   const hills = (fbm(gx * 0.03, gz * 0.03) - 0.5) * 2.4;
@@ -105,3 +105,4 @@ export function surfaceY(gx: number, gz: number): number {
 export function surfaceYWorld(wx: number, wy: number, cellSize: number): number {
   return groundHeightAt(activeTerrain, wx / cellSize, wy / cellSize);
 }
+

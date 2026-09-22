@@ -38,9 +38,19 @@ Speed figures describe terrain alone; fatigue, suppression, turning and formatio
 
 Select infantry and **right-click a cover object** to assign separate reachable positions near it. Infantry hold their positions on arrival. If there are fewer available positions than selected troops, the remaining units receive an ordinary nearby move. Shift+right-click retains waypoint queuing; Ctrl+right-click retains attack-move. A new order cancels the hold-on-arrival intent. Props currently provide cover, not supplies or destructibility.
 
+## Settlements and scale
+
+The shared settlement definitions preserve five built-up centres: Leipalingis, Jovaišiai, Didžiasalis, Veršiai and Stračiūnai. Representative buildings cluster around imported streets, with sparser farms between villages. Roof/wall palettes and church, civic, farm or workshop landmarks distinguish them. These are stylised identities, not surveyed architectural claims. Settlement ellipses describe tactical extents, not administrative borders.
+
+Deployments now start on nearby approach roads outside the centres. Building generation no longer clears out the villages for spawning. The deployment map, in-game clickable regional map and projected world names share settlement coordinates. Click the regional map to focus the camera; Home returns to the force.
+
+Soldiers, vehicle models, selection rings and cover props have been rescaled relative to houses. Houses have lower rural proportions. Vehicle routing admits single-cell streets while continuous hull checks and route smoothing prevent wall clipping. This is a compressed tactical scale; movement/exposure still use terrain cells and are approximate at road edges.
+
+See [game direction](game-direction.md) for the agreed Broken Arrow presentation and future Squad-inspired pace/modes. This change does not implement Invasion or multiplayer.
+
 ## Visual changes
 
-- Continuous asphalt strips, centre dashes, edge markings, shoulders and reflector posts follow imported paths.
+- A single terrain-composited road texture joins asphalt and shoulders without stacked meshes or depth fighting. Centre dashes stop around junctions. Narrower imported roads share their geometry with both tactical maps.
 - Mixed pine, broadleaf and birch trees, variable crowns, pale birch trunks, undergrowth and meadow blades replace uniform cone forests.
 - Batched farmhouses have pitched roofs, chimneys, windows, steps and fences; five kinds of cover have distinct models and open firing slots.
 - Procedural grain adds local ground/asphalt detail without external texture downloads.
@@ -51,7 +61,7 @@ Select infantry and **right-click a cover object** to assign separate reachable 
 
 ```sh
 git fetch origin
-git switch feat/leipalingis-map
+git switch fix/settlements-and-scale
 npm ci
 npm run dev
 ```

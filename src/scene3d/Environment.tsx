@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { TerrainCell } from '../game/types';
-import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
-import { makeGrainTexture } from './materials';
+import { SETTLEMENTS } from '../game/maps/settlements';
 import { groundHeightAt, hash2 } from './terrainHeight';
 
 type V3 = [number, number, number];
@@ -92,29 +91,44 @@ export function RuralBuildingsAndProps({ terrain }: { terrain: TerrainCell[][] }
     const parts = emptyParts();
     terrain.forEach((row, z) => row.forEach((cell, x) => {
       if (cell.type !== 'urban' && !cell.prop) return;
-      const angle = cell.propAngle ?? hash2(x, z) * Math.PI;
+      const angle = cell.propAngle ?? 0;
+      const town = SETTLEMENTS.find(s => s.id === cell.settlementId);
       const cx = x + .5, cz = z + .5, y = groundHeightAt(terrain, cx, cz);
       // Geometry sits on the rear/side of a cell; its centre is a usable
       // firing slot. Clicking uses the same cell in the simulation.
       const add = (shape: Shape, ox: number, oy: number, oz: number, sx: number, sy: number, sz: number, color: string, rx = 0, rz = 0) => {
+        const propScale = cell.type === 'urban' ? 1 : .58;
+        ox *= propScale; oy *= propScale; oz *= propScale; sx *= propScale; sy *= propScale; sz *= propScale;
         parts[shape].push({ p: [cx + Math.cos(angle) * ox - Math.sin(angle) * oz, y + oy, cz + Math.sin(angle) * ox + Math.cos(angle) * oz],
           s: [sx, sy, sz], r: [rx, -angle, rz], color });
       };
       if (cell.type === 'urban') {
-        const h = .92 + hash2(x + 11, z) * .35;
-        const wall = ['#c2b79c', '#a8af99', '#c7b58f', '#948b78'][Math.floor(hash2(x, z) * 4)];
-        const roof = ['#794e3e', '#6d7473', '#8e5c42'][Math.floor(hash2(x + 7, z) * 3)];
+        const h = cell.buildingKind === 'civic' ? .72 : .44 + hash2(x + 11, z) * .16;
+        const wall = town?.wall ?? ['#c2b79c', '#a8af99', '#c7b58f', '#948b78'][Math.floor(hash2(x, z) * 4)];
+        const roof = town?.roof ?? ['#794e3e', '#6d7473', '#8e5c42'][Math.floor(hash2(x + 7, z) * 3)];
         add('box', 0, .06, -.18, .94, .12, .67, '#8c897c');
         add('box', 0, h / 2 + .1, -.18, .8, h, .55, wall);
-        add('roof', 0, h + .1, -.18, .96, .66, .7, roof);
-        add('box', -.21, h + .27, -.24, .12, .36, .13, '#a38e7b');
-        add('box', .04, .28, .103, .15, .38, .025, '#594d3e');
+        add('roof', 0, h + .1, -.18, .96, .44, .7, roof);
+        add('box', -.21, h + .19, -.24, .10, .25, .11, '#a38e7b');
+        add('box', .04, .19, .103, .12, .25, .025, '#594d3e');
         for (const side of [-1, 1]) {
           add('box', side * .26, h * .63, .108, .17, .2, .025, '#e3dcc2');
           add('box', side * .26, h * .63, .125, .12, .15, .02, '#485d5c');
           add('box', side * .29, h * .65, -.461, .16, .18, .025, '#526260');
         }
         add('box', .04, .055, .24, .24, .1, .2, '#aaa58e');
+        if (cell.buildingKind === 'church') {
+          add('box', .22, .6, -.15, .3, 1.2, .32, '#d6cbb1');
+          add('cone', .22, 1.45, -.15, .45, .55, .45, '#657375');
+          add('box', .22, 1.81, -.15, .025, .22, .025, '#535e58');
+          add('box', .22, 1.84, -.15, .12, .025, .025, '#535e58');
+        } else if (cell.buildingKind === 'barn') {
+          add('box', 0, .24, .105, .40, .35, .025, '#594a36');
+          add('box', 0, .24, .125, .025, .35, .02, '#aa9d7e');
+        } else if (cell.buildingKind === 'workshop') {
+          add('box', .12, .25, .11, .32, .33, .025, '#627371');
+          add('box', -.24, .09, .3, .2, .18, .16, '#797859');
+        }
         for (const side of [-1, 1]) {
           add('box', side * .46, .22, .28, .04, .43, .04, '#908471');
           add('box', side * .46, .25, .04, .035, .07, .52, '#a2957c');
@@ -155,82 +169,4 @@ export function RuralBuildingsAndProps({ terrain }: { terrain: TerrainCell[][] }
     return parts;
   }, [terrain]);
   return <Batches parts={parts} />;
-}
-
-export function RoadNetwork({ terrain }: { terrain: TerrainCell[][] }) {
-  const layers = useMemo(() => {
-    const arrays = [[], [], []] as number[][];
-    const posts: Part[] = [];
-    const ribbon = (layer: number, a: number[], b: number[], half: number, offset = 0) => {
-      // Sample across the width as well as along the road. A single wide
-      // quad cuts through the curved ground and fights overlapping shoulders.
-      const bands = Math.max(1, Math.ceil(half * 2 / .4));
-      for (let band = 0; band < bands; band++) {
-        const left = offset - half + half * 2 * band / bands;
-        const right = offset - half + half * 2 * (band + 1) / bands;
-        const points = [[a[0] + a[2] * left, a[1] + a[3] * left], [a[0] + a[2] * right, a[1] + a[3] * right],
-          [b[0] + b[2] * left, b[1] + b[3] * left], [b[0] + b[2] * right, b[1] + b[3] * right]];
-        for (const i of [0, 1, 2, 1, 3, 2]) arrays[layer].push(points[i][0], groundHeightAt(terrain, ...points[i] as [number, number]) + .06 + layer * .03, points[i][1]);
-      }
-    };
-    // Shared cross-sections form continuous mitered strips at bends; drawing
-    // independent rectangles left visible holes at every OSM vertex.
-    for (const road of LEIPALINGIS_ROADS) {
-      const cross = road.points.map((p, i) => {
-        const previous = road.points[Math.max(0, i - 1)], next = road.points[Math.min(road.points.length - 1, i + 1)];
-        const before = Math.hypot(p[0] - previous[0], p[1] - previous[1]) || 1;
-        const after = Math.hypot(next[0] - p[0], next[1] - p[1]) || 1;
-        const n0 = i === 0 ? [-(next[1] - p[1]) / after, (next[0] - p[0]) / after] : [-(p[1] - previous[1]) / before, (p[0] - previous[0]) / before];
-        const n1 = i === road.points.length - 1 ? n0 : [-(next[1] - p[1]) / after, (next[0] - p[0]) / after];
-        const sum = Math.hypot(n0[0] + n1[0], n0[1] + n1[1]) || 1;
-        const nx = (n0[0] + n1[0]) / sum, nz = (n0[1] + n1[1]) / sum;
-        const miter = Math.min(1.6, 1 / Math.max(.1, nx * n0[0] + nz * n0[1]));
-        return [p[0], p[1], nx * miter, nz * miter];
-      });
-      let progress = 0;
-      for (let j = 1; j < road.points.length; j++) {
-        const a = road.points[j - 1], b = road.points[j], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
-        const steps = Math.max(1, Math.ceil(length / .35));
-        for (let i = 0; i < steps; i++) {
-          const t = i / steps, nt = (i + 1) / steps;
-          const interpolate = (u: number) => cross[j - 1].map((v, k) => v + (cross[j][k] - v) * u);
-          const from = interpolate(t), to = interpolate(nt);
-          ribbon(0, from, to, road.width / 2 + .18);
-          if (road.paved) {
-            ribbon(1, from, to, road.width / 2);
-            if (road.width > 2.5) {
-              if ((progress + length * t) % 2.6 < 1.25) ribbon(2, from, to, .035);
-              for (const side of [-1, 1]) ribbon(2, from, to, .026, side * (road.width / 2 - .14));
-            }
-          }
-        }
-        if (road.paved && road.width > 2.5 && length > 2) {
-          for (let d = 2; d < length; d += 7) for (const side of [-1, 1]) {
-            const x = a[0] + (b[0] - a[0]) * d / length - side * (b[1] - a[1]) / length * (road.width / 2 + .45);
-            const z = a[1] + (b[1] - a[1]) * d / length + side * (b[0] - a[0]) / length * (road.width / 2 + .45);
-            const y = groundHeightAt(terrain, x, z);
-            posts.push({ p: [x, y + .17, z], s: [.055, .34, .055], color: '#d4d0b4' },
-              { p: [x, y + .25, z], s: [.06, .07, .06], color: '#454b43' });
-          }
-        }
-        progress += length;
-      }
-    }
-    return { geometries: arrays.map(positions => {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      geo.setAttribute('uv', new THREE.Float32BufferAttribute(positions.flatMap((_, i) => i % 3 === 0 ? [positions[i], positions[i + 2]] : []), 2));
-      geo.computeVertexNormals(); return geo;
-    }), posts };
-  }, [terrain]);
-  const texture = useMemo(() => makeGrainTexture(2), []);
-  useEffect(() => () => { layers.geometries.forEach(g => g.dispose()); }, [layers]);
-  useEffect(() => () => texture.dispose(), [texture]);
-  return <group>
-    {layers.geometries.map((geometry, i) => <mesh key={i} geometry={geometry} receiveShadow raycast={() => null}>
-      <meshStandardMaterial color={['#92907c', '#424c4c', '#d8d4b9'][i]} map={i < 2 ? texture : undefined}
-        roughness={.95} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-4 * (i + 1)} polygonOffsetUnits={-4 * (i + 1)} />
-    </mesh>)}
-    <Batch shape="box" parts={layers.posts} shadows={false} />
-  </group>;
 }

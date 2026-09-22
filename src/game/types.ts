@@ -109,6 +109,8 @@ export interface TerrainCell {
   prop?: 'logs' | 'hay' | 'stone_wall' | 'wreck' | 'barricade';
   propAngle?: number;
   roadName?: string;
+  settlementId?: string;
+  buildingKind?: 'house' | 'barn' | 'church' | 'civic' | 'workshop';
   /** Detection multiplier; paved roads expose moving and stationary units. */
   exposure?: number;
 }
@@ -265,6 +267,7 @@ export interface DebugFlags {
 
 export interface InputState {
   keys: Set<string>;
+  cameraFocus?: Position;
   mousePos: Position; mouseWorldPos: Position;
   isDragging: boolean; isPanning: boolean;
   dragStart: Position | null;

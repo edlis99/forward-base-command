@@ -1,5 +1,7 @@
 # Forward Base Command
 
+[Agreed game direction: Broken Arrow-style strategy with future Squad-inspired pacing and modes](docs/game-direction.md).
+
 Current playable campaign: [Leipalingis map, controls, data attribution and testing](docs/leipalingis-map.md).
 
 Design a real-time strategy (RTS) game set in modern-day warfare, combining city/base-building mechanics inspired by Stronghold: Definitive Edition with tactical military combat systems.

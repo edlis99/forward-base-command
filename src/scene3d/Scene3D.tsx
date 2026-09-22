@@ -9,7 +9,10 @@ import {
 } from '../game/engine';
 import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor } from '../game/tactical';
 import { GroundSurface, WaterSheet, GrassTufts, GroundDetail } from './GroundSurface';
-import { Woodland, RuralBuildingsAndProps, RoadNetwork } from './Environment';
+import { CampaignMap } from '../components/CampaignMap';
+import { SETTLEMENTS } from '../game/maps/settlements';
+import { SettlementLabelPositions } from './SettlementLabels';
+import { Woodland, RuralBuildingsAndProps } from './Environment';
 import { getTerrainAt } from '../game/terrain';
 import { coverLabel, isOccupyableCover } from '../game/cover';
 import { spacingRadius } from '../game/playerSquads';
@@ -86,9 +89,8 @@ function TerrainMesh({ terrain, regional }: { terrain: TerrainCell[][]; regional
         <meshStandardMaterial color="#6f6450" />
       </mesh>
 
-      <GroundSurface terrain={terrain} />
+      <GroundSurface terrain={terrain} regional={regional} />
       <WaterSheet terrain={terrain} />
-      {regional && <RoadNetwork terrain={terrain} />}
       <GrassTufts terrain={terrain} />
       <GroundDetail terrain={terrain} />
       {Object.entries(groups).map(([type, g]) => (
@@ -403,7 +405,7 @@ function InfantryModel({ team }: { team: 'player' | 'enemy' }) {
   const kit = team === 'player' ? '#2f3f30' : '#3f3a27';
   const accent = team === 'player' ? '#4e86b8' : '#b64c3b';
   return (
-    <group scale={0.55}>
+    <group scale={0.18}>
       <mesh position={[0, 0.62, 0]} castShadow><boxGeometry args={[0.32, 0.48, 0.22]} /><meshStandardMaterial color={uniform} flatShading roughness={0.95} /></mesh>
       <mesh position={[-0.02, 0.34, 0]} castShadow><boxGeometry args={[0.28, 0.18, 0.2]} /><meshStandardMaterial color={kit} flatShading roughness={0.95} /></mesh>
       <mesh position={[0, 1.0, 0]} castShadow><sphereGeometry args={[0.18, 10, 7]} /><meshStandardMaterial color="#b79a75" flatShading roughness={0.9} /></mesh>
@@ -422,7 +424,7 @@ function TankModel({ team }: { team: 'player' | 'enemy' }) {
   const dark = '#25271f';
   const accent = team === 'player' ? '#4e86b8' : '#b64c3b';
   return (
-    <group scale={0.76}>
+    <group scale={0.34}>
       <mesh position={[0, 0.26, 0]} castShadow><boxGeometry args={[1.65, 0.36, 0.98]} /><meshStandardMaterial color={hull} flatShading roughness={0.9} /></mesh>
       <mesh position={[0.1, 0.48, 0]} castShadow><boxGeometry args={[1.05, 0.26, 0.78]} /><meshStandardMaterial color={hull} flatShading roughness={0.9} /></mesh>
       <mesh position={[0.04, 0.66, 0]} rotation={[0, 0, -0.04]} castShadow><boxGeometry args={[0.74, 0.28, 0.62]} /><meshStandardMaterial color="#55654c" flatShading roughness={0.9} /></mesh>
@@ -441,7 +443,7 @@ function ApcModel({ team }: { team: 'player' | 'enemy' }) {
   const dark = '#24261f';
   const accent = team === 'player' ? '#4e86b8' : '#b64c3b';
   return (
-    <group scale={0.68}>
+    <group scale={0.33}>
       <mesh position={[0, 0.36, 0]} castShadow><boxGeometry args={[1.52, 0.5, 0.86]} /><meshStandardMaterial color={hull} flatShading roughness={0.92} /></mesh>
       <mesh position={[0.44, 0.56, 0]} rotation={[0, 0, -0.12]} castShadow><boxGeometry args={[0.54, 0.22, 0.78]} /><meshStandardMaterial color="#5f7158" flatShading roughness={0.92} /></mesh>
       <mesh position={[0, 0.72, 0]} castShadow><boxGeometry args={[0.42, 0.18, 0.38]} /><meshStandardMaterial color={hull} flatShading roughness={0.9} /></mesh>
@@ -467,7 +469,7 @@ function HeliModel({ team }: { team: 'player' | 'enemy' }) {
     if (tailRotorRef.current) tailRotorRef.current.rotation.x += dt * 48;
   });
   return (
-    <group scale={0.7} position={[0, 1.5, 0]}>
+    <group scale={0.4} position={[0, 1.5, 0]}>
       <mesh position={[0.15, 0, 0]} castShadow><boxGeometry args={[1.2, 0.36, 0.46]} /><meshStandardMaterial color={c} flatShading roughness={0.85} /></mesh>
       <mesh position={[0.58, 0.02, 0]} castShadow><sphereGeometry args={[0.28, 10, 7]} /><meshStandardMaterial color="#2c3430" flatShading roughness={0.75} /></mesh>
       <mesh ref={rotorRef} position={[0, 0.34, 0]}><boxGeometry args={[2.5, 0.035, 0.12]} /><meshStandardMaterial color="#1b1d18" transparent opacity={0.82} /></mesh>
@@ -607,7 +609,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             ref={(el) => { if (el) hoverRefs.current.set(u.id, el); else hoverRefs.current.delete(u.id); }}
             position={[0, 0.015, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
           >
-            <ringGeometry args={[0.6, 0.7, 32]} />
+            <ringGeometry args={[u.type === 'infantry' ? .16 : .36, u.type === 'infantry' ? .20 : .40, 32]} />
             <meshBasicMaterial color="#cfd8c4" transparent opacity={0.55} />
           </mesh>
 
@@ -616,7 +618,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             ref={(el) => { if (el) previewRefs.current.set(u.id, el); else previewRefs.current.delete(u.id); }}
             position={[0, 0.018, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
           >
-            <ringGeometry args={[0.62, 0.78, 32]} />
+            <ringGeometry args={[u.type === 'infantry' ? .17 : .37, u.type === 'infantry' ? .23 : .44, 32]} />
             <meshBasicMaterial color="#7ec0ff" transparent opacity={0.55} />
           </mesh>
 
@@ -625,7 +627,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             ref={(el) => { if (el) selRefs.current.set(u.id, el); else selRefs.current.delete(u.id); }}
             position={[0, 0.022, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
           >
-            <ringGeometry args={[0.55, 0.82, 36]} />
+            <ringGeometry args={[u.type === 'infantry' ? .16 : .36, u.type === 'infantry' ? .23 : .44, 36]} />
             <meshBasicMaterial color={u.team === 'player' ? '#7ec0ff' : '#ff8a6a'} transparent opacity={0.95} />
           </mesh>
 
@@ -1319,16 +1321,18 @@ function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObjec
   const { camera } = useThree();
   const players = gameStateRef.current.units.filter(u => u.team === 'player' && u.alive);
   const targetRef = useRef({ x: players.reduce((n, u) => n + u.pos.x / S, 0) / (players.length || 1), z: players.reduce((n, u) => n + u.pos.y / S, 0) / (players.length || 1) });
-  const distRef = useRef(48);
+  const distRef = useRef(32);
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
-      distRef.current = Math.max(24, Math.min(360, distRef.current + (e.deltaY > 0 ? 10 : -10)));
+      distRef.current = Math.max(16, Math.min(250, distRef.current + (e.deltaY > 0 ? 10 : -10)));
     };
     window.addEventListener('wheel', onWheel);
     return () => window.removeEventListener('wheel', onWheel);
   }, []);
   useFrame((_, dt) => {
     const keys = inputRef.current.keys;
+    const focus = inputRef.current.cameraFocus;
+    if (focus) { targetRef.current = { x: focus.x / S, z: focus.y / S }; delete inputRef.current.cameraFocus; }
     const sp = (20 + distRef.current * 0.45) * Math.min(dt, .1);
     if (keys.has('home')) {
       const selected = gameStateRef.current.units.filter(u => u.alive && u.team === 'player' && u.selected && !u.insideOf);
@@ -1414,6 +1418,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
   setActiveTerrain(terrain);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const [highQuality, setHighQuality] = useState(true);
+  const settlementLabels = useRef(new Map<string, HTMLDivElement>());
 
   return (
     <div className="relative w-full h-full">
@@ -1436,6 +1441,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         {/* Cool counter-light from the opposite side to lift shadow interiors */}
         <directionalLight position={[-50, 40, -35]} intensity={0.35} color="#9fb6c8" />
 
+        <SettlementLabelPositions elements={settlementLabels} />
         <CameraRig inputRef={inputRef} gameStateRef={gameStateRef} />
         <TerrainMesh terrain={terrain} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} />
         <TerrainDebugLayer gameStateRef={gameStateRef} />
@@ -1449,6 +1455,10 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <Ground gameStateRef={gameStateRef} inputRef={inputRef} onChange={onChange} />
         <SelectionOverlayUpdater gameStateRef={gameStateRef} overlayRef={overlayRef} />
       </Canvas>
+      {SETTLEMENTS.map(town => <div key={town.id} ref={el => { if (el) settlementLabels.current.set(town.id, el); else settlementLabels.current.delete(town.id); }}
+        className="absolute top-0 left-0 pointer-events-none text-center font-mono text-[11px] text-[#f1e6bf] px-2 py-1 border-b border-[#c8ba87] bg-[#1b2c25c9]"
+        style={{ display: 'none' }}>{town.name.toUpperCase()}</div>)}
+      <CampaignMap gameStateRef={gameStateRef} inputRef={inputRef} />
       <TerrainReadout gameStateRef={gameStateRef} inputRef={inputRef} />
       <button onClick={() => setHighQuality(q => !q)} className="absolute left-3 bottom-40 text-[10px] font-mono px-2 py-1 border border-[#576954] bg-[#142018e6] text-[#cfddbc]">
         Graphics: {highQuality ? 'High' : 'Standard'} · Home: focus troops
