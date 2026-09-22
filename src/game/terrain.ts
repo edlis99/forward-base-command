@@ -280,7 +280,7 @@ export function setTerrain(grid: TerrainCell[][], x: number, y: number, type: Te
   const c = grid[y][x];
   c.type = type;
   delete c.prop; delete c.propAngle; delete c.roadName;
-  delete c.settlementId; delete c.buildingKind;
+  delete c.yard; delete c.settlementId; delete c.buildingKind;
   c.exposure = 1;
   c.coverBonus = 0;
   c.concealment = 0;

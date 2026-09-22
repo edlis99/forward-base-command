@@ -52,6 +52,12 @@ const NEIGH = [
   [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2],
 ];
 
+// Reuse indexed search storage across orders. A generation stamp avoids
+// clearing 140,800 entries or allocating a Map for every selected unit.
+const searchCost = new Float64Array(MAP_COLS * MAP_ROWS);
+const searchStamp = new Uint32Array(MAP_COLS * MAP_ROWS);
+let searchGeneration = 0;
+
 /** A* over terrain grid. Returns smoothed list of world-space waypoints (excluding start). */
 export function findPath(
   terrain: TerrainCell[][],
@@ -94,13 +100,15 @@ export function findPath(
   if (sx === gx && sy === gy) return [{ ...destination }];
 
   const open = new MinHeap();
-  const visited = new Map<number, number>(); // key=gy*COLS+gx -> g
+  searchGeneration = (searchGeneration + 1) >>> 0;
+  if (!searchGeneration) { searchStamp.fill(0); searchGeneration = 1; }
+  const generation = searchGeneration;
   const key = (x: number, y: number) => y * MAP_COLS + x;
 
   // Admissible lower bound: roads cost less than one unit per cell.
   const startNode: Node = { gx: sx, gy: sy, g: 0, f: Math.hypot(gx - sx, gy - sy) * 0.4, parent: null };
   open.push(startNode);
-  visited.set(key(sx, sy), 0);
+  searchStamp[key(sx, sy)] = generation; searchCost[key(sx, sy)] = 0;
 
   let goalNode: Node | null = null;
   let iterations = 0;
@@ -110,7 +118,7 @@ export function findPath(
     const cur = open.pop();
     if (!cur) break;
     // Ignore stale heap entries superseded by a cheaper route.
-    if ((visited.get(key(cur.gx, cur.gy)) ?? Infinity) < cur.g) continue;
+    if (searchCost[key(cur.gx, cur.gy)] < cur.g) continue;
     iterations++;
     if (cur.gx === gx && cur.gy === gy) { goalNode = cur; break; }
 
@@ -125,9 +133,8 @@ export function findPath(
       const cell = terrain[ny][nx];
       const ng = cur.g + base * moveCost(cell);
       const k = key(nx, ny);
-      const prev = visited.get(k);
-      if (prev !== undefined && prev <= ng) continue;
-      visited.set(k, ng);
+      if (searchStamp[k] === generation && searchCost[k] <= ng) continue;
+      searchStamp[k] = generation; searchCost[k] = ng;
       const h = Math.hypot(gx - nx, gy - ny) * 0.4;
       open.push({ gx: nx, gy: ny, g: ng, f: ng + h, parent: cur });
     }
@@ -183,7 +190,9 @@ function smoothPath(terrain: TerrainCell[][], start: Position, path: Position[],
   }
   let i = 0;
   while (i < path.length) {
-    let j = path.length - 1;
+    // Bound shortcut work on long regional orders. Every original segment
+    // still contributes to travel cost; this only limits smoothing lookahead.
+    let j = Math.min(path.length - 1, i + 40);
     const entryCost = segmentCost(terrain, anchor, path[i], vehicle, heli);
     while (j > i) {
       const direct = segmentCost(terrain, anchor, path[j], vehicle, heli);

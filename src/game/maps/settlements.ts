@@ -1,4 +1,4 @@
-import snapshot from './leipalingis-osm.json';
+import { geography as snapshot, GEOGRAPHIC_SCALE_X, GEOGRAPHIC_SCALE_Y } from './geography';
 import { DeploymentTownId } from '../types';
 
 export type SettlementId = 'leipalingis' | Exclude<DeploymentTownId, 'seirijai'>;
@@ -13,7 +13,7 @@ function centre(name: string) {
 }
 // Tactical settlement extents, not surveyed administrative boundaries. These
 // definitions drive generation, deployment, world labels and the in-game map.
-export const SETTLEMENTS: Settlement[] = [
+const definitions: Settlement[] = [
   { id: 'leipalingis', name: 'Leipalingis', ...centre('Leipalingis'), rx: 11, ry: 8,
     character: 'Town centre · church square · converging streets', landmark: 'church', wall: '#c9c4af', roof: '#786653' },
   { id: 'jovaisiai', name: 'Jovaišiai', ...centre('Jovaišiai'), rx: 6.5, ry: 5,
@@ -25,6 +25,7 @@ export const SETTLEMENTS: Settlement[] = [
   { id: 'straciunai', name: 'Stračiūnai', ...centre('Stračiūnai'), rx: 8, ry: 5,
     character: 'Street village · long frontage · eastern approach', landmark: 'civic', wall: '#cbc3a0', roof: '#6f7772' },
 ];
+export const SETTLEMENTS = definitions.map(s => ({ ...s, rx: s.rx * GEOGRAPHIC_SCALE_X, ry: s.ry * GEOGRAPHIC_SCALE_Y }));
 export function settlementAt(x: number, y: number): Settlement | undefined {
   return SETTLEMENTS.find(s => ((x - s.x) / s.rx) ** 2 + ((y - s.y) / s.ry) ** 2 <= 1);
 }

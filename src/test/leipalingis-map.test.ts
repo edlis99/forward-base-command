@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { createInitialState, handleRightClickWorld } from '../game/engine';
-import { createUnit, moveUnit, setDestination, updateCombat } from '../game/units';
-import { generateTerrain, getTerrainAt, hasLineOfSight, isFootprintPassable, setTerrain } from '../game/terrain';
+import { createUnit, distance, moveUnit, setDestination, updateCombat } from '../game/units';
+import { generateTerrain, getTerrainAt, hasLineOfSight, isFootprintPassable, isWorldFootprintPassable, setTerrain } from '../game/terrain';
 import { findPath } from '../game/pathfinding';
 import { updateAwareness } from '../game/awareness';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../game/constants';
@@ -115,7 +115,7 @@ describe('Leipalingis geography and campaign access', () => {
     expect(a.didziasalis.y).toBeGreaterThan(a.leipalingis.y);
     expect(a.straciunai.x).toBeGreaterThan(a.leipalingis.x);
     expect(a.straciunai.y).toBeLessThan(a.leipalingis.y);
-    expect(a.seirijai.y).toBeLessThan(16);
+    expect(a.seirijai.y / MAP_ROWS).toBeLessThan(.1);
     for (const ref of ['180', '133', '134', '2505']) expect(LEIPALINGIS_ROADS.some(r => r.ref === ref)).toBe(true);
   });
   it('offers reachable objectives for infantry, tanks and APCs from every staging area', () => {
@@ -131,3 +131,21 @@ describe('Leipalingis geography and campaign access', () => {
     expect(cells.filter(c => c.prop).length).toBeGreaterThan(150);
   });
 });
+
+
+it('completes expanded regional travel with each ground unit without hull clipping', () => {
+  const state = createInitialState(leipalingisMission);
+  const l = LEIPALINGIS_ANCHORS.leipalingis, goal = world(l.x, l.y);
+  for (const town of leipalingisMission.deploymentTowns!) for (const type of ['infantry', 'tank', 'apc'] as const) {
+    const unit = createUnit(type, 'player', town.pos.x, town.pos.y);
+    state.units = [unit]; state.time = 0;
+    setDestination(unit, state, goal); unit.order = 'move';
+    const destination = { ...unit.finalDest! }; let clipped = false;
+    for (let i = 0; i < 10000 && distance(unit.pos, destination) > 16; i++) {
+      state.time += .05; moveUnit(unit, .05, state);
+      if (type !== 'infantry' && !isWorldFootprintPassable(state.terrain, unit.pos.x, unit.pos.y, true)) clipped = true;
+    }
+    expect(clipped, `${town.name} / ${type}`).toBe(false);
+    expect(distance(unit.pos, destination), `${town.name} / ${type}`).toBeLessThanOrEqual(16);
+  }
+}, 15000);

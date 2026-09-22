@@ -1,4 +1,4 @@
-import snapshot from './leipalingis-osm.json';
+import { geography as snapshot, GEOGRAPHIC_SCALE } from './geography';
 import { TerrainCell, TerrainType } from '../types';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../constants';
 import { SETTLEMENTS, settlementAt } from './settlements';
@@ -46,11 +46,11 @@ function place(name: string) {
 // Seirijai itself is outside this local crop. The fifth staging position is
 // explicitly the northern 180 approach, not a fictional placement of the town.
 const northRoad = LEIPALINGIS_ROADS.filter(r => r.ref === '180').flatMap(r => r.points)
-  .filter(p => p[1] >= 4 && p[1] < 16).sort((a, b) => a[1] - b[1])[0];
+  .filter(p => p[1] >= 4 * GEOGRAPHIC_SCALE && p[1] < 16 * GEOGRAPHIC_SCALE).sort((a, b) => a[1] - b[1])[0];
 export const LEIPALINGIS_ANCHORS = {
   leipalingis: place('Leipalingis'), jovaisiai: place('Jovaišiai'),
   didziasalis: place('Didžiasalis'), versiai: place('Veršiai'), straciunai: place('Stračiūnai'),
-  seirijai: { x: Math.round(northRoad?.[0] ?? 97), y: Math.round(northRoad?.[1] ?? 8) },
+  seirijai: { x: Math.round(northRoad?.[0] ?? 97 * GEOGRAPHIC_SCALE), y: Math.round(northRoad?.[1] ?? 8 * GEOGRAPHIC_SCALE) },
 };
 
 /** Stage on an actual road outside the town, never clear the centre to spawn. */
@@ -144,7 +144,7 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
 
   const free = (x: number, y: number) => {
     const c = grid[y]?.[x];
-    return c && !c.roadName && (c.type === 'open' || c.type === 'tall_grass');
+    return c && !c.yard && !c.roadName && (c.type === 'open' || c.type === 'tall_grass');
   };
   const placeProp = (x: number, y: number, prop: NonNullable<TerrainCell['prop']>, angle: number) => {
     if (!free(x, y)) return;
@@ -162,13 +162,12 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
   const building = (x: number, y: number, angle: number) => {
     const town = settlementAt(x + .5, y + .5);
     if (!free(x, y)) return false;
-    if (town && (count[town.id] ?? 0) >= (town.id === 'leipalingis' ? 100 : 42)) return false;
+    if (town && (count[town.id] ?? 0) >= (town.id === 'leipalingis' ? 280 : 120)) return false;
     set(grid, x, y, 'urban');
     const c = grid[y][x]; c.propAngle = angle; c.settlementId = town?.id;
     c.buildingKind = town?.id === 'didziasalis' && deterministic(x, y) > .65 ? 'barn' : 'house';
     if (town) count[town.id] = (count[town.id] ?? 0) + 1;
-    if (deterministic(x + 2, y) > .45) placeProp(x + 1, y + 1, 'stone_wall', angle);
-    if (deterministic(x, y + 3) > .45) placeProp(x - 1, y, town?.id === 'didziasalis' ? 'hay' : 'logs', angle);
+    // Yard details are added after all buildings, so props cannot erase frontage.
     return true;
   };
   for (const [bx, by, angle] of snapshot.buildings) {
@@ -196,7 +195,7 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     for (let y = Math.floor(town.y - town.ry); y <= town.y + town.ry; y++) {
       for (let x = Math.floor(town.x - town.rx); x <= town.x + town.rx; x++) {
         if (settlementAt(x + .5, y + .5)?.id !== town.id || !free(x, y)) continue;
-        if ((count[town.id] ?? 0) >= (town.id === 'leipalingis' ? 65 : 22)) continue;
+        if ((count[town.id] ?? 0) >= (town.id === 'leipalingis' ? 180 : 60)) continue;
         const nearStreet = [-2, -1, 1, 2].some(d => grid[y]?.[x + d]?.type === 'road' || grid[y + d]?.[x]?.type === 'road');
         if (nearStreet && deterministic(x, y) > .3) building(x, y, 0);
       }
@@ -204,6 +203,29 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     const candidates = grid.flat().filter(c => c.type === 'urban' && c.settlementId === town.id)
       .sort((a, b) => Math.hypot(a.x / CELL_SIZE - town.x, a.y / CELL_SIZE - town.y) - Math.hypot(b.x / CELL_SIZE - town.x, b.y / CELL_SIZE - town.y));
     if (candidates[0]) candidates[0].buildingKind = town.landmark;
+  }
+
+  // Adjacent gardens and service yards leave entrances open. Add after houses
+  // so cover props never consume the limited building placement space.
+  for (const row of grid) for (const house of row) {
+    if (house.type !== 'urban' || !house.settlementId) continue;
+    const x = house.x / CELL_SIZE, y = house.y / CELL_SIZE;
+    const offsets = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+    const first = Math.floor(deterministic(x, y) * offsets.length);
+    for (let k = 0; k < offsets.length; k++) {
+      const [dx, dy] = offsets[(first + k) % offsets.length];
+      const xx = x + dx, yy = y + dy;
+      if (!free(xx, yy) || settlementAt(xx + .5, yy + .5)?.id !== house.settlementId) continue;
+      set(grid, xx, yy, 'open');
+      const yard = grid[yy][xx];
+      yard.yard = house.buildingKind === 'workshop' || house.buildingKind === 'barn' ? 'courtyard'
+        : deterministic(xx, yy) > .7 ? 'orchard' : 'garden';
+      yard.settlementId = house.settlementId;
+      yard.propAngle = house.propAngle;
+      yard.concealment = yard.yard === 'orchard' ? .18 : .08;
+      if (deterministic(x + 2, y) > .45) placeProp(xx + dx, yy + dy, house.buildingKind === 'barn' ? 'hay' : 'stone_wall', house.propAngle ?? 0);
+      break;
+    }
   }
 
   // Forest edges, field boundaries and road pull-offs supply intermediate
@@ -229,12 +251,13 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
   }
   const L = LEIPALINGIS_ANCHORS.leipalingis;
   for (const [dx, dy] of [[-4, -18], [4, -18], [-4, 18], [4, 18], [-18, -3], [-18, 3], [18, -3], [18, 3]]) {
+    const ox = Math.round(dx * GEOGRAPHIC_SCALE), oy = Math.round(dy * GEOGRAPHIC_SCALE);
     let dug = false;
     for (let r = 0; r <= 4 && !dug; r++) {
       for (let sy = -r; sy <= r && !dug; sy++) for (let sx = -r; sx <= r && !dug; sx++) {
-        if (!free(L.x + dx + sx, L.y + dy + sy)) continue;
-        for (let d = -1; d <= 1; d++) if (free(L.x + dx + sx + d, L.y + dy + sy)) {
-          set(grid, L.x + dx + sx + d, L.y + dy + sy, 'trench');
+        if (!free(L.x + ox + sx, L.y + oy + sy)) continue;
+        for (let d = -1; d <= 1; d++) if (free(L.x + ox + sx + d, L.y + oy + sy)) {
+          set(grid, L.x + ox + sx + d, L.y + oy + sy, 'trench');
         }
         dug = true;
       }

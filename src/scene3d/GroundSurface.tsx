@@ -2,6 +2,7 @@ import React, { useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { TerrainCell, TerrainType } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
+import { MapSection } from './mapSections';
 import { createRoadTexture, landscapeMaterial } from './roadMaterial';
 import { makeGrainTexture } from './materials';
 import { groundHeightAt, hash2, fbm } from './terrainHeight';
@@ -47,10 +48,10 @@ const GROUND_TINT: Record<TerrainType | string, string> = {
  * cell borders and perturbed with fractal noise, and vertex XZ positions are
  * jittered so no straight cell-aligned edges remain.
  */
-export function GroundSurface({ terrain, regional = false }: { terrain: TerrainCell[][]; regional?: boolean }) {
+export function GroundSurface({ terrain, section, regional = false }: { terrain: TerrainCell[][]; section: MapSection; regional?: boolean }) {
   const geometry = useMemo(() => {
-    const nx = W * SUB + 1;
-    const nz = H * SUB + 1;
+    const nx = section.width * SUB + 1;
+    const nz = section.height * SUB + 1;
     const vertCount = nx * nz;
     const positions = new Float32Array(vertCount * 3);
     const colors = new Float32Array(vertCount * 3);
@@ -66,8 +67,8 @@ export function GroundSurface({ terrain, regional = false }: { terrain: TerrainC
 
     for (let j = 0; j < nz; j++) {
       for (let i = 0; i < nx; i++) {
-        const gx = i / SUB;
-        const gz = j / SUB;
+        const gx = section.x + i / SUB;
+        const gz = section.y + j / SUB;
         // Bilinear weights over the 4 nearest cell centres.
         const u = gx - 0.5, v = gz - 0.5;
         const ix = Math.floor(u), iz = Math.floor(v);
@@ -82,7 +83,7 @@ export function GroundSurface({ terrain, regional = false }: { terrain: TerrainC
         let r = 0, g = 0, b = 0;
         for (const [c, w] of wts) {
           if (w <= 0) continue;
-          tmp.setStyle(GROUND_TINT[regional && c.roadName ? 'open' : c.type] ?? '#5c7042');
+          tmp.setStyle(c.yard ? ({ courtyard: '#aaa28a', garden: '#7d8d54', orchard: '#72854b' }[c.yard]) : GROUND_TINT[regional && c.roadName ? 'open' : c.type] ?? '#5c7042');
           r += tmp.r * w; g += tmp.g * w; b += tmp.b * w;
         }
 
@@ -98,7 +99,7 @@ export function GroundSurface({ terrain, regional = false }: { terrain: TerrainC
         // Colour variation: broad patchiness only, biased bright so no cell
         // darkens into a black blotch.
         const patch = 0.95 + fbm(gx * 0.07, gz * 0.07) * 0.16;
-        const speckle = 0.98 + hash2(i, j) * 0.05;
+        const speckle = 0.98 + hash2(gx * SUB, gz * SUB) * 0.05;
         const dry = fbm(gx * 0.05 + 11, gz * 0.05 + 7);
         col.setRGB(r, g, b).multiplyScalar(patch * speckle);
         // Sun-bleached patches lean ochre, damp hollows lean cool green.
@@ -126,11 +127,11 @@ export function GroundSurface({ terrain, regional = false }: { terrain: TerrainC
     geo.setIndex(indices);
     geo.computeVertexNormals();
     return geo;
-  }, [terrain, regional]);
+  }, [terrain, regional, section]);
 
   const grain = useMemo(() => makeGrainTexture(1.6), []);
-  const roads = useMemo(() => regional ? createRoadTexture() : undefined, [regional]);
-  const material = useMemo(() => landscapeMaterial(grain, roads), [grain, roads]);
+  const roads = useMemo(() => regional ? createRoadTexture(section) : undefined, [regional, section]);
+  const material = useMemo(() => landscapeMaterial(grain, roads, section), [grain, roads, section]);
   useEffect(() => () => { material.dispose(); }, [material]);
   useEffect(() => () => { roads?.dispose(); }, [roads]);
   useEffect(() => () => { geometry.dispose(); }, [geometry]);
@@ -147,7 +148,7 @@ export function GroundSurface({ terrain, regional = false }: { terrain: TerrainC
  * displaced by a corner-keyed hash so shorelines read as irregular banks
  * instead of stair-stepped squares.
  */
-export function WaterSheet({ terrain }: { terrain: TerrainCell[][] }) {
+export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; section: MapSection }) {
   const geometry = useMemo(() => {
     const positions: number[] = [];
     const indices: number[] = [];
@@ -167,7 +168,7 @@ export function WaterSheet({ terrain }: { terrain: TerrainCell[][] }) {
       z: (hash2(cx * 9.7, cy * 3.9) - 0.5) * 0.7,
     });
     let base = 0;
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    for (let y = section.y; y < section.y + section.height; y++) for (let x = section.x; x < section.x + section.width; x++) {
       if (terrain[y][x].type !== 'water') continue;
       // Riverbed follows the displaced landscape, so the sheet must ride on the
       // sampled bed height (flat per cell) rather than a fixed world Y.
@@ -192,8 +193,9 @@ export function WaterSheet({ terrain }: { terrain: TerrainCell[][] }) {
     geo.setIndex(indices);
     geo.computeVertexNormals();
     return geo;
-  }, [terrain]);
+  }, [terrain, section]);
 
+  useEffect(() => () => geometry?.dispose(), [geometry]);
   if (!geometry) return null;
   return (
     <mesh geometry={geometry} raycast={() => null}>
@@ -206,10 +208,10 @@ export function WaterSheet({ terrain }: { terrain: TerrainCell[][] }) {
 }
 
 /** Grass tufts for tall_grass cells — replaces the old raised green boxes. */
-export function GrassTufts({ terrain }: { terrain: TerrainCell[][] }) {
+export function GrassTufts({ terrain, section }: { terrain: TerrainCell[][]; section: MapSection }) {
   const tufts = useMemo(() => {
     const out: Array<{ x: number; z: number; s: number; rot: number; tint: number }> = [];
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    for (let y = section.y; y < section.y + section.height; y++) for (let x = section.x; x < section.x + section.width; x++) {
       if (terrain[y][x].type !== 'tall_grass') continue;
       const n = 4;
       for (let i = 0; i < n; i++) {
@@ -225,7 +227,7 @@ export function GrassTufts({ terrain }: { terrain: TerrainCell[][] }) {
       }
     }
     return out;
-  }, [terrain]);
+  }, [terrain, section]);
 
   const blades = useMemo(() => {
     const geometry = new THREE.BufferGeometry();
@@ -253,6 +255,7 @@ export function GrassTufts({ terrain }: { terrain: TerrainCell[][] }) {
     }
     ref.current.instanceMatrix.needsUpdate = true;
     if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+    ref.current.computeBoundingSphere();
   }, [tufts, terrain]);
 
   if (tufts.length === 0) return null;
@@ -265,10 +268,10 @@ export function GrassTufts({ terrain }: { terrain: TerrainCell[][] }) {
 }
 
 /** Loose rocks, ruts and scrub scattered over open ground for scale detail. */
-export function GroundDetail({ terrain }: { terrain: TerrainCell[][] }) {
+export function GroundDetail({ terrain, section }: { terrain: TerrainCell[][]; section: MapSection }) {
   const props = useMemo(() => {
     const out: Array<{ x: number; z: number; sx: number; sy: number; sz: number; rot: number; tint: number; kind: number }> = [];
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    for (let y = section.y; y < section.y + section.height; y++) for (let x = section.x; x < section.x + section.width; x++) {
       const t = terrain[y][x].type;
       if (t !== 'open' && t !== 'gravel' && t !== 'mud' && t !== 'crater' && t !== 'rubble') continue;
       const roll = hash2(x * 1.3, y * 2.7);
@@ -287,7 +290,7 @@ export function GroundDetail({ terrain }: { terrain: TerrainCell[][] }) {
       });
     }
     return out;
-  }, [terrain]);
+  }, [terrain, section]);
 
   const rockRef = React.useRef<THREE.InstancedMesh>(null);
   const scrubRef = React.useRef<THREE.InstancedMesh>(null);

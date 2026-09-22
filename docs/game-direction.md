@@ -20,3 +20,7 @@ Later direction, not an implementation claim:
 - Decide detailed mode rules, tickets, logistics, multiplayer and balance in later work. The current scope remains the single-player campaign.
 
 Use original assets and UI. These games are design references, not assets to copy. Future work should consult this document before changing map structure, unit scale, pacing or modes.
+
+## First map expansion
+
+The accepted next step is 440 × 320 gameplay cells over the same Leipalingis region (twice each dimension, four times the playable area). Increase actual settlement content and preserve local unit/building scale. Sectional rendering is the foundation for evaluating a later 880 × 640 target; that larger version is not yet implemented or performance-certified.

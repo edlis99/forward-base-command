@@ -5,7 +5,7 @@ The campaign uses a bundled OpenStreetMap snapshot around Leipalingis instead of
 ## Geographic source and scale
 
 - Source: [OpenStreetMap API](https://wiki.openstreetmap.org/wiki/API_v0.6), downloaded 2026-09-21.
-- Bounds: west 23.710°, south 54.025°, east 24.020°, north 54.160°; approximately 20 × 15 geographic kilometres, projected north-up onto the 220 × 160 gameplay grid.
+- Bounds: west 23.710°, south 54.025°, east 24.020°, north 54.160°; approximately 20 × 15 geographic kilometres, projected north-up onto the 440 × 320 gameplay grid.
 - Imported features: primary/secondary/local road and longer track centre lines, complete forest/field/water polygons including multipolygon holes, building centres and settlement coordinates. Roads 180, 133, 134 and 2505 retain their real topology.
 - This is a **compressed tactical adaptation**, not a survey-scale digital twin. Road widths are exaggerated for vehicle clearance. Buildings are representative models, thinned and moved by up to two cells when necessary. Staging clearings, fighting positions, field vegetation and cover props are gameplay additions. Some small features and incomplete multipolygons are omitted. Heights are procedural, not surveyed elevation data.
 - Jovaišiai is north of Leipalingis; Didžiasalis is south; Veršiai is south-east; Stračiūnai is north-east. Seirijai is outside the crop, so the fifth deployment is labelled **Seirijų kryptis**, on the northern route 180 approach.
@@ -40,6 +40,13 @@ Select infantry and **right-click a cover object** to assign separate reachable 
 
 ## Settlements and scale
 
+The first expansion doubles both gameplay dimensions from 220 × 160 to **440 × 320**: 140,800 cells and four times the playable area, with the same geographic bounds. Soldiers, vehicles, houses, road widths and local combat ranges retain their scale. Travel distances grow; movement speeds are not globally doubled. The source JSON remains in its original projection (`grid: [220,160]`); `geography.ts` reprojects roads, polygons/holes, building centres and places together at runtime.
+
+With mission seed 1917, the expanded generator places 217 buildings in Leipalingis, 86 in Jovaišiai, 80 in Didžiasalis, 33 in Veršiai and 83 in Stračiūnai, plus 168 rural buildings. There are 178 adjacent gardens, orchards and service yards. Buildings are representative, not one-for-one real footprints. Added yards remain traversable and do not replace road cells; nearby walls and farm props retain the occupy/hold interactions.
+
+The landscape is divided into 140 sections of up to 32 × 32 cells. Only sections intersecting the camera view plus a margin allocate terrain, vegetation, buildings, water and road textures. All units continue simulating globally. Road textures have matching gutters and global dash coordinates at section borders, with a maximum tile size of 576 × 576 instead of one large map texture. Heights and tint noise use global coordinates. Sections release resources when removed from view. A* reuses indexed search storage and limits shortcut lookahead for longer orders; it remains grid routing, not a new hierarchical navigation system.
+
+
 The shared settlement definitions preserve five built-up centres: Leipalingis, Jovaišiai, Didžiasalis, Veršiai and Stračiūnai. Representative buildings cluster around imported streets, with sparser farms between villages. Roof/wall palettes and church, civic, farm or workshop landmarks distinguish them. These are stylised identities, not surveyed architectural claims. Settlement ellipses describe tactical extents, not administrative borders.
 
 Deployments now start on nearby approach roads outside the centres. Building generation no longer clears out the villages for spawning. The deployment map, in-game clickable regional map and projected world names share settlement coordinates. Click the regional map to focus the camera; Home returns to the force.
@@ -61,7 +68,7 @@ See [game direction](game-direction.md) for the agreed Broken Arrow presentation
 
 ```sh
 git fetch origin
-git switch fix/settlements-and-scale
+git switch feat/expanded-leipalingis
 npm ci
 npm run dev
 ```
@@ -74,4 +81,4 @@ Open the local URL printed by Vite. Proceed to deployment, choose a starting loc
 4. Pan/zoom through a forest edge and a village. Check road bends, roofs, tree variety, cover props and shadows. Toggle High/Standard and use Home to return to the force.
 5. Try a tank/APC route from each deployment to the objective. Forest and water crossings must follow passable lanes.
 
-Automated checks: `npm test`, `npx tsc -p tsconfig.app.json --noEmit`, `npm run build`. The map regression suite covers road travel time, route smoothing, detection exposure, blocked destinations, cover occupancy/hold, ballistic cover, building LOS, geography and access from all five staging areas. Browser smoke checks cover deployment, scene rendering, pause, selection, cover commands, quality switching and camera focus. Full hardware FPS benchmarking and a complete mission playthrough remain manual checks.
+Automated checks: `npm test`, `npx tsc -p tsconfig.app.json --noEmit`, `npm run build`. The map regression suite covers road travel time, route smoothing, detection exposure, blocked destinations, cover occupancy/hold, ballistic cover, building LOS, geography, expanded town density, yard access, section coverage, and actual infantry/tank/APC travel from all five staging areas without vehicle hull clipping. The expansion browser check covers deployment, initial rendering, pause, and camera travel from staging to Leipalingis and back to Jovaišiai. At the default close view it loaded 12–13 of the 140 sections, with no JavaScript or shader errors. This is a visibility/resource check, not a hardware FPS benchmark. Full hardware FPS benchmarking and a complete mission playthrough remain manual checks.
