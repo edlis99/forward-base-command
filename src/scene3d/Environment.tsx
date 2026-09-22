@@ -154,6 +154,13 @@ export function RuralBuildingsAndProps({ terrain, section }: { terrain: TerrainC
           add('box', side * .46, .25, .04, .035, .07, .52, '#a2957c');
           add('box', side * .46, .11, .04, .035, .07, .52, '#a2957c');
         }
+      } else if (cell.prop === 'boulder') {
+        add('crown', -.16, .22, -.25, .62, .46, .48, '#858c7d');
+        add('crown', .27, .13, -.19, .36, .29, .4, '#9b9e8d');
+      } else if (cell.prop === 'scrub') {
+        for (const ox of [-.3, 0, .3]) {
+          add('crown', ox, .2, -.2, .46, .42, .45, ox === 0 ? '#6c7d42' : '#83915a');
+        }
       } else if (cell.prop === 'logs') {
         for (let layer = 0; layer < 2; layer++) for (let i = 0; i < 3 - layer; i++) {
           add('cylinder', (i - 1 + layer * .5) * .19, .11 + layer * .16, -.26, .18, .74, .18, '#66513b', Math.PI / 2);

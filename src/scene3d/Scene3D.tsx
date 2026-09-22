@@ -4,8 +4,7 @@ import * as THREE from 'three';
 import { GameState, InputState, Unit, TerrainCell } from '../game/types';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../game/constants';
 import {
-  handleLeftClickWorld, handleRightClickWorld, handleBoxSelect,
-  updatePreviewSelection, updateCommandPreview, clearCommandPreview,
+  handleRightClickWorld, updateCommandPreview, clearCommandPreview,
 } from '../game/engine';
 import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor } from '../game/tactical';
 import { GroundSurface, WaterSheet, GrassTufts, GroundDetail } from './GroundSurface';
@@ -15,7 +14,9 @@ import { SETTLEMENTS } from '../game/maps/settlements';
 import { SettlementLabelPositions } from './SettlementLabels';
 import { Woodland, RuralBuildingsAndProps } from './Environment';
 import { getTerrainAt } from '../game/terrain';
-import { coverLabel, isOccupyableCover } from '../game/cover';
+import { coverLabel, isOccupyableCover, coverState, unitStatus } from '../game/cover';
+import { controllable, selectUnits } from '../game/selection';
+import { Shield, Footprints, Truck, Crosshair } from 'lucide-react';
 import { spacingRadius } from '../game/playerSquads';
 import { setActiveTerrain, surfaceY, groundHeightAt } from './terrainHeight';
 
@@ -515,6 +516,8 @@ function unitModel(u: Unit) {
 
 // ---------- Units layer (with selection/preview/hover rings) ----------
 function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRefObject<GameState>; inputRef: React.MutableRefObject<InputState> }) {
+  const { camera, size } = useThree();
+  const hoverVector = useMemo(() => new THREE.Vector3(), []);
   const groupRef = useRef<THREE.Group>(null);
   const unitRefs = useRef<Map<string, THREE.Group>>(new Map());
   const selRefs = useRef<Map<string, THREE.Mesh>>(new Map());
@@ -527,7 +530,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
 
   useFrame((_, dt) => {
     const state = gameStateRef.current;
-    const ids = state.units.filter(u => u.alive).map(u => u.id).join(',');
+    const ids = state.units.filter(u => u.alive).map(u => `${u.id}:${u.insideOf ?? ''}`).join(',');
     if (ids !== knownIdsRef.current) {
       knownIdsRef.current = ids;
       forceRender();
@@ -535,19 +538,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
     }
     const t = performance.now() * 0.001;
     const pulse = 1.0 + Math.sin(t * 6) * 0.08;
-    const mw = inputRef.current.mouseWorldPos;
-
-    // find best hover candidate (single closest friendly within radius)
-    let hoverId: string | null = null;
-    if (mw) {
-      let bestD = 24 * 24;
-      for (const u of state.units) {
-        if (!u.alive || u.team !== 'player' || u.insideOf) continue;
-        const dx = u.pos.x - mw.x, dy = u.pos.y - mw.y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < bestD) { bestD = d2; hoverId = u.id; }
-      }
-    }
+    const hoverId = pickScreenUnit(state, camera, size.width, size.height, inputRef.current.mousePos, hoverVector)?.id;
 
     for (const u of state.units) {
       if (!u.alive || u.insideOf) continue;
@@ -567,7 +558,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         ref.position.y += (targetY - ref.position.y) * k;
         // Prone / digging crouch: squash + slight bob while digging — tweened too.
         const isDigging = u.order === 'entrench';
-        const proneTarget = (u.prone || isDigging) ? 0.62 : inTrench ? 0.78 : 1;
+        const proneTarget = (u.prone || isDigging) ? 0.62 : (inTrench || (u.type === 'infantry' && u.inCover && !u.targetPos)) ? 0.7 : 1;
         const bob = isDigging ? 1 + Math.sin(t * 8) * 0.08 : 1;
         const curY = ref.scale.y;
         const newY = curY + (proneTarget * bob - curY) * k;
@@ -885,6 +876,13 @@ function CommandMarkersLayer({ gameStateRef }: { gameStateRef: React.MutableRefO
   useFrame(() => {
     const state = gameStateRef.current;
     if (!groupRef.current) return;
+    // These preview meshes are temporary and owned by this layer.
+    for (const child of groupRef.current.children) {
+      if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+        child.geometry.dispose();
+        for (const material of Array.isArray(child.material) ? child.material : [child.material]) material.dispose();
+      }
+    }
     groupRef.current.clear();
     for (const m of state.commandMarkers) {
       const t = 1 - m.timer / m.max; // 0 → 1
@@ -920,12 +918,12 @@ function CommandMarkersLayer({ gameStateRef }: { gameStateRef: React.MutableRefO
         let mesh: THREE.Mesh;
         if (slot.type === 'infantry') {
           mesh = new THREE.Mesh(
-            new THREE.RingGeometry(0.28, 0.42, 20),
+            new THREE.RingGeometry(0.16, 0.23, 20),
             new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }),
           );
         } else {
-          const w = slot.type === 'tank' ? 1.5 : 1.2;
-          const l = slot.type === 'helicopter' ? 1.6 : w * 1.7;
+          const w = slot.type === 'tank' ? .65 : .55;
+          const l = slot.type === 'helicopter' ? 1.2 : w * 1.7;
           mesh = new THREE.Mesh(
             new THREE.PlaneGeometry(w, l),
             new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false }),
@@ -1127,9 +1125,50 @@ function MovementDebugLayer({ gameStateRef }: { gameStateRef: React.MutableRefOb
   );
 }
 
+/** Same projected anchor for clicking, hover, box selection and the readable unit badge. */
+function screenUnit(unit: Unit, camera: THREE.Camera, width: number, height: number, v: THREE.Vector3) {
+  v.set(unit.pos.x / S, surfaceY(unit.pos.x / S, unit.pos.y / S) + (unit.type === 'helicopter' ? 1.5 : .2), unit.pos.y / S).project(camera);
+  return { x: (v.x * .5 + .5) * width, y: (-v.y * .5 + .5) * height - 12,
+    visible: v.z >= -1 && v.z <= 1 && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 };
+}
+function pickScreenUnit(state: GameState, camera: THREE.Camera, width: number, height: number, at: { x: number; y: number }, v: THREE.Vector3) {
+  let best: Unit | null = null, distance = 19;
+  for (const unit of state.units.filter(controllable)) {
+    const p = screenUnit(unit, camera, width, height, v);
+    if (!p.visible) continue;
+    const d = Math.hypot(at.x - p.x, at.y - p.y);
+    if (d < distance) { distance = d; best = unit; }
+  }
+  return best;
+}
+function UnitBadgePositions({ gameStateRef, elements }: { gameStateRef: React.MutableRefObject<GameState>; elements: React.MutableRefObject<Map<string, HTMLButtonElement>> }) {
+  const { camera, size } = useThree();
+  const v = useMemo(() => new THREE.Vector3(), []);
+  useFrame(() => {
+    const state = gameStateRef.current;
+    for (const unit of state.units) {
+      const el = elements.current.get(unit.id);
+      if (!el) continue;
+      const p = screenUnit(unit, camera, size.width, size.height, v);
+      const show = controllable(unit) && p.visible && p.y > 38 && p.y < size.height - 212;
+      el.style.display = show ? 'flex' : 'none';
+      if (!show) continue;
+      el.style.transform = `translate(${p.x - 12}px, ${p.y - 8}px)`;
+      const preview = state.previewSelected.has(unit.id), covered = coverState(unit);
+      el.style.background = unit.selected ? '#7ec0ff' : preview ? '#466d88' : '#142b22e8';
+      el.style.color = unit.selected ? '#10272a' : covered === 'covered' ? '#b7e8a2' : '#cee1ce';
+      el.style.borderColor = unit.selected || preview ? '#bbecff' : covered === 'moving' ? '#edce8c' : covered === 'covered' ? '#8acb78' : '#71887a';
+      el.setAttribute('aria-pressed', String(unit.selected));
+      el.title = `${unit.type} · ${unitStatus(unit, state)} · Click: select · Shift: toggle`;
+    }
+  });
+  return null;
+}
+
 // ---------- Ground click handler (screen-space drag threshold + preview) ----------
 function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayRef'>) {
-  const { camera, size } = useThree();
+  const { camera, size, gl } = useThree();
+  const lastTap = useRef<{ id: string; time: number } | null>(null);
   const projected = useMemo(() => new THREE.Vector3(), []);
 
   /**
@@ -1155,8 +1194,7 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
 
   /** Pointer position relative to the canvas (matches r3f `size`). */
   const canvasPos = (e: ThreeEvent<PointerEvent>) => {
-    const el = e.nativeEvent.target as HTMLElement | null;
-    const rect = el?.getBoundingClientRect?.();
+    const rect = gl.domElement.getBoundingClientRect();
     return {
       x: e.nativeEvent.clientX - (rect?.left ?? 0),
       y: e.nativeEvent.clientY - (rect?.top ?? 0),
@@ -1173,12 +1211,8 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
     const hits: Unit[] = [];
     for (const unit of state.units) {
       if (!unit.alive || unit.team !== 'player' || unit.insideOf) continue;
-      const uy = surfaceY(unit.pos.x / S, unit.pos.y / S) + (unit.type === 'helicopter' ? 1.5 : 0.5);
-      projected.set(unit.pos.x / S, uy, unit.pos.y / S).project(camera);
-      if (projected.z > 1) continue; // behind the camera
-      const sx = (projected.x * 0.5 + 0.5) * size.width;
-      const sy = (-projected.y * 0.5 + 0.5) * size.height;
-      if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) hits.push(unit);
+      const p = screenUnit(unit, camera, size.width, size.height, projected);
+      if (p.visible && p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY) hits.push(unit);
     }
     return hits;
   };
@@ -1188,6 +1222,7 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
 
   const handleDown = (e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
     const pw = pickWorld(e);
     const wx = pw.x;
     const wy = pw.y;
@@ -1254,7 +1289,8 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
 
   const handleUp = (e: ThreeEvent<PointerEvent>) => {
     const state = gameStateRef.current;
-    if (e.nativeEvent.button === 2) {
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    if (e.nativeEvent.button === 2 && inputRef.current.rightMouseDown) {
       // Commit the previewed plan: locked destination + dragged facing/frontage.
       const pw = pickWorld(e);
       const plc = placeRef.current;
@@ -1270,17 +1306,20 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
       onChange();
       return;
     }
-    if (e.nativeEvent.button !== 0) return;
+    if (e.nativeEvent.button !== 0 || !inputRef.current.isDragging) return;
 
     if (inputRef.current.dragPromoted && state.selectionBox) {
       const sp = canvasPos(e);
       const hits = unitsInScreenRect(sp.x, sp.y);
-      if (!e.nativeEvent.shiftKey) state.units.forEach(u => { u.selected = false; });
-      for (const u of hits) u.selected = true;
+      selectUnits(state, hits.map(u => u.id), e.nativeEvent.ctrlKey ? 'remove' : e.nativeEvent.shiftKey ? 'add' : 'replace');
     } else {
-      // tap = single-unit select
-      const { x: wx, y: wy } = pickWorld(e);
-      handleLeftClickWorld(wx, wy, state, e.nativeEvent.shiftKey);
+      const sp = canvasPos(e);
+      const hit = pickScreenUnit(state, camera, size.width, size.height, sp, projected);
+      const now = performance.now();
+      const double = hit && lastTap.current?.id === hit.id && now - lastTap.current.time < 320;
+      const hits = double ? state.units.filter(u => controllable(u) && u.type === hit.type && screenUnit(u, camera, size.width, size.height, projected).visible) : hit ? [hit] : [];
+      selectUnits(state, hits.map(u => u.id), e.nativeEvent.shiftKey ? (double ? 'add' : 'toggle') : 'replace');
+      lastTap.current = hit ? { id: hit.id, time: now } : null;
     }
     state.selectionBox = null;
     state.previewSelected.clear();
@@ -1299,6 +1338,13 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
       onPointerDown={handleDown}
       onPointerMove={handleMove}
       onPointerUp={handleUp}
+      onPointerCancel={() => {
+        inputRef.current.isDragging = false; inputRef.current.rightMouseDown = false;
+        inputRef.current.dragStartScreen = null; inputRef.current.dragStart = null;
+        inputRef.current.dragPromoted = false; placeRef.current = null;
+        gameStateRef.current.selectionBox = null; gameStateRef.current.previewSelected.clear();
+        clearCommandPreview(gameStateRef.current); onChange();
+      }}
       visible={false}
     >
       <planeGeometry args={[W * 2, H * 2]} />
@@ -1308,31 +1354,17 @@ function Ground({ gameStateRef, inputRef, onChange }: Omit<SceneProps, 'overlayR
 }
 
 // ---------- Screen-space selection rectangle (HTML overlay) ----------
-function SelectionOverlayUpdater({ gameStateRef, overlayRef }: { gameStateRef: React.MutableRefObject<GameState>; overlayRef: React.MutableRefObject<HTMLDivElement | null> }) {
-  const { camera, size } = useThree();
-  const v = useMemo(() => new THREE.Vector3(), []);
+function SelectionOverlayUpdater({ inputRef, overlayRef }: { inputRef: React.MutableRefObject<InputState>; overlayRef: React.MutableRefObject<HTMLDivElement | null> }) {
   useFrame(() => {
-    const el = overlayRef.current;
+    const el = overlayRef.current, input = inputRef.current;
     if (!el) return;
-    const sb = gameStateRef.current.selectionBox;
-    if (!sb) { el.style.display = 'none'; return; }
-    // Project four corners to screen and take the AABB
-    const xs = [sb.start.x, sb.end.x];
-    const ys = [sb.start.y, sb.end.y];
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const wx of xs) for (const wy of ys) {
-      v.set(wx / S, surfaceY(wx / S, wy / S) + 0.4, wy / S);
-      v.project(camera);
-      const sx = (v.x * 0.5 + 0.5) * size.width;
-      const sy = (-v.y * 0.5 + 0.5) * size.height;
-      if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
-      if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
-    }
+    const start = input.dragStartScreen, end = input.mousePos;
+    if (!input.isDragging || !input.dragPromoted || !start) { el.style.display = 'none'; return; }
     el.style.display = 'block';
-    el.style.left = `${minX}px`;
-    el.style.top = `${minY}px`;
-    el.style.width = `${Math.max(1, maxX - minX)}px`;
-    el.style.height = `${Math.max(1, maxY - minY)}px`;
+    el.style.left = `${Math.min(start.x, end.x)}px`;
+    el.style.top = `${Math.min(start.y, end.y)}px`;
+    el.style.width = `${Math.max(1, Math.abs(start.x - end.x))}px`;
+    el.style.height = `${Math.max(1, Math.abs(start.y - end.y))}px`;
   });
   return null;
 }
@@ -1345,6 +1377,7 @@ function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObjec
   const distRef = useRef(32);
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
+      if (!(e.target instanceof HTMLCanvasElement)) return;
       distRef.current = Math.max(16, Math.min(400, distRef.current + (e.deltaY > 0 ? 10 : -10)));
     };
     window.addEventListener('wheel', onWheel);
@@ -1429,7 +1462,7 @@ function TerrainReadout({ gameStateRef, inputRef }: Pick<SceneProps, 'gameStateR
     }, 150);
     return () => window.clearInterval(timer);
   }, [gameStateRef, inputRef]);
-  return info ? <div className="absolute bottom-28 left-1/2 -translate-x-1/2 pointer-events-none font-mono text-[11px] px-3 py-2 rounded border border-[#82936b] bg-[#132019ed] text-[#deebc8]">{info}</div> : null;
+  return info ? <div className="absolute bottom-[216px] left-1/2 -translate-x-1/2 pointer-events-none font-mono text-[11px] px-3 py-2 rounded border border-[#82936b] bg-[#132019ed] text-[#deebc8]">{info}</div> : null;
 }
 
 // ---------- Scene root ----------
@@ -1439,6 +1472,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
   setActiveTerrain(terrain);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const [highQuality, setHighQuality] = useState(true);
+  const unitBadges = useRef(new Map<string, HTMLButtonElement>());
   const settlementLabels = useRef(new Map<string, HTMLDivElement>());
 
   return (
@@ -1461,6 +1495,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         {/* Cool counter-light from the opposite side to lift shadow interiors */}
         <directionalLight position={[-50, 40, -35]} intensity={0.35} color="#9fb6c8" />
 
+        <UnitBadgePositions gameStateRef={gameStateRef} elements={unitBadges} />
         <SettlementLabelPositions elements={settlementLabels} />
         <CameraRig inputRef={inputRef} gameStateRef={gameStateRef} />
         <TerrainMesh terrain={terrain} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} />
@@ -1473,14 +1508,31 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <CommandMarkersLayer gameStateRef={gameStateRef} />
         <EffectsLayer gameStateRef={gameStateRef} />
         <Ground gameStateRef={gameStateRef} inputRef={inputRef} onChange={onChange} />
-        <SelectionOverlayUpdater gameStateRef={gameStateRef} overlayRef={overlayRef} />
+        <SelectionOverlayUpdater inputRef={inputRef} overlayRef={overlayRef} />
       </Canvas>
       {SETTLEMENTS.map(town => <div key={town.id} ref={el => { if (el) settlementLabels.current.set(town.id, el); else settlementLabels.current.delete(town.id); }}
         className="absolute top-0 left-0 pointer-events-none text-center font-mono text-[11px] text-[#f1e6bf] px-2 py-1 border-b border-[#c8ba87] bg-[#1b2c25c9]"
         style={{ display: 'none' }}>{town.name.toUpperCase()}</div>)}
+      {gameStateRef.current.units.filter(controllable).map(unit => {
+        const Icon = unit.type === 'infantry' ? Footprints : unit.type === 'tank' ? Shield : unit.type === 'apc' ? Truck : Crosshair;
+        const covered = coverState(unit);
+        return <button key={unit.id} ref={el => { if (el) unitBadges.current.set(unit.id, el); else unitBadges.current.delete(unit.id); }}
+          aria-label={`Map ${unit.type} ${unit.id}`} aria-pressed={unit.selected}
+          className="absolute top-0 left-0 w-6 h-4 items-center justify-center rounded-sm border shadow-sm"
+          style={{ display: 'none' }}
+          onPointerDown={e => e.stopPropagation()}
+          onContextMenu={e => { e.preventDefault(); handleRightClickWorld(unit.pos.x, unit.pos.y, gameStateRef.current, e.shiftKey, e.ctrlKey || e.metaKey); onChange(); }}
+          onClick={e => { selectUnits(gameStateRef.current, [unit.id], e.shiftKey ? 'toggle' : 'replace'); onChange(); }}
+          onDoubleClick={e => {
+            selectUnits(gameStateRef.current, gameStateRef.current.units.filter(u => controllable(u) && u.type === unit.type && unitBadges.current.get(u.id)?.style.display === 'flex').map(u => u.id), e.shiftKey ? 'add' : 'replace'); onChange();
+          }}>
+          <Icon size={12} />
+          {covered !== 'none' && <Shield size={10} fill={covered === 'covered' ? '#9ecb85' : '#293526'} className={`absolute -right-2 -top-2 ${covered === 'covered' ? 'text-[#d7ffbd]' : 'text-[#edce8c]'}`} />}
+        </button>;
+      })}
       <CampaignMap gameStateRef={gameStateRef} inputRef={inputRef} />
       <TerrainReadout gameStateRef={gameStateRef} inputRef={inputRef} />
-      <button onClick={() => setHighQuality(q => !q)} className="absolute left-3 bottom-40 text-[10px] font-mono px-2 py-1 border border-[#576954] bg-[#142018e6] text-[#cfddbc]">
+      <button onClick={() => setHighQuality(q => !q)} className="absolute left-3 bottom-[216px] text-[10px] font-mono px-2 py-1 border border-[#576954] bg-[#142018e6] text-[#cfddbc]">
         Graphics: {highQuality ? 'High' : 'Standard'} · Home: focus troops
       </button>
       {/* Screen-space selection rectangle */}

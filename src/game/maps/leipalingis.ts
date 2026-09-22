@@ -151,8 +151,8 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     set(grid, x, y, 'sandbag');
     const cell = grid[y][x];
     cell.prop = prop; cell.propAngle = angle;
-    cell.coverBonus = { logs: 0.48, hay: 0.22, stone_wall: 0.62, wreck: 0.58, barricade: 0.52 }[prop];
-    cell.concealment = prop === 'hay' ? 0.38 : 0.12;
+    cell.coverBonus = { logs: 0.48, hay: 0.22, stone_wall: 0.62, wreck: 0.58, barricade: 0.52, boulder: 0.45, scrub: 0.08 }[prop];
+    cell.concealment = prop === 'scrub' ? 0.5 : prop === 'hay' ? 0.38 : 0.12;
   };
 
   // Dense named centres and sparse intervening farms: the earlier uniform
@@ -239,6 +239,8 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
       placeProp(x, y, rand() < 0.4 ? 'wreck' : 'barricade', Math.PI / 2);
     } else if ((x % 18 === 0 || y % 16 === 0) && rand() < 0.28) {
       if (rand() < 0.5) set(grid, x, y, 'hedgerow'); else placeProp(x, y, 'hay', 0);
+    } else if (deterministic(x + 431, y + 919) < .009) {
+      placeProp(x, y, deterministic(x + 88, y) < .5 ? 'boulder' : 'scrub', deterministic(x, y + 55) * Math.PI);
     }
   }
 

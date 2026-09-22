@@ -1,5 +1,7 @@
 import { GameState, Position, Unit, PlayerSquad, FormationType } from './types';
-import { findNearestPassableWorld, isFootprintPassable } from './terrain';
+import { findNearestPassableWorld, isFootprintPassable, isWorldFootprintPassable } from './terrain';
+import { availableSpeed, routeRemaining } from './movement';
+import { settlementAt } from './maps/settlements';
 import { clearUnitOrders, setDestination } from './units';
 
 /**
@@ -19,17 +21,15 @@ import { clearUnitOrders, setDestination } from './units';
 // ---------- tuning ----------
 const CLUSTER_RADIUS = 150;      // proximity clustering for "one squad"
 const SQUAD_GAP = 46;            // lateral gap between neighbouring squad blocks
-const RESLOT_INTERVAL = 1.4;     // seconds between slot reassignment passes
-const TRAVEL_SPEED_BOOST = 1.12; // squad travels slightly faster than its slowest member
 export const ARRIVE_TOLERANCE = 18;
 
 /** Personal spacing radius used by local avoidance. */
 export function spacingRadius(u: Unit): number {
-  return u.type === 'tank' ? 26 : u.type === 'apc' ? 21 : u.type === 'helicopter' ? 26 : 14;
+  return u.type === 'tank' ? 12 : u.type === 'apc' ? 11 : u.type === 'helicopter' ? 20 : 6;
 }
 
 function slotSpacing(u: Unit): number {
-  return u.type === 'tank' ? 50 : u.type === 'apc' ? 42 : u.type === 'helicopter' ? 56 : 28;
+  return u.type === 'tank' ? 34 : u.type === 'apc' ? 32 : u.type === 'helicopter' ? 56 : 20;
 }
 
 function isVehicle(u: Unit) { return u.type === 'tank' || u.type === 'apc'; }
@@ -69,11 +69,12 @@ interface LocalSlot { fwd: number; right: number; row: number; }
 
 /**
  * Role-aware local offsets in squad space (+fwd = toward destination):
- * tanks lead, APCs sit in the middle, infantry echelon behind and to the sides.
+ * tanks lead in the open; infantry screen them in built-up/restricted ground.
+ * APCs stay behind the screen. Aircraft have their own movement command.
  * A single-type selection degrades gracefully into a normal loose block.
  */
 function localSlots(
-  members: Unit[], compression: number, lateralOf: (u: Unit) => number, preferred?: FormationType,
+  members: Unit[], compression: number, lateralOf: (u: Unit) => number, preferred?: FormationType, infantryFirst = false,
 ): Map<string, LocalSlot> {
   const slots = new Map<string, LocalSlot>();
   const tanks = members.filter(u => u.type === 'tank');
@@ -85,7 +86,7 @@ function localSlots(
     const ground = members.filter(u => u.type !== 'helicopter');
     const role = (u: Unit) => u.type === 'tank' ? 0 : u.type === 'apc' ? 1 : 2;
     ground.sort((a, b) => (preferred === 'line' ? 0 : role(a) - role(b)) || lateralOf(a) - lateralOf(b));
-    const spacing = Math.max(32, ...ground.map(slotSpacing)) * compression;
+    const spacing = Math.max(20, ...ground.map(slotSpacing)) * compression;
     ground.forEach((u, i) => {
       const row = Math.ceil(i / 2);
       const side = i % 2 === 1 ? -1 : 1;
@@ -119,11 +120,17 @@ function localSlots(
   };
 
   if (tanks.length + apcs.length > 0) {
-    let fwd = place(tanks, 62, Math.min(4, Math.max(2, tanks.length)), 52);
-    fwd = place(apcs, Math.min(fwd, 6), Math.min(4, Math.max(2, apcs.length)), 46);
-    place(inf, Math.min(fwd, -52), 6, 32);
+    if (infantryFirst && inf.length) {
+      place(inf, 30, 4, 22);
+      place(tanks, -30, 3, 38);
+      place(apcs, -70, 3, 36);
+    } else {
+      place(tanks, 30, 3, 38);
+      place(inf, -10, 4, 22);
+      place(apcs, -66, 3, 36);
+    }
   } else {
-    place(inf, 0, Math.min(6, Math.max(3, Math.ceil(Math.sqrt(inf.length * 2)))), 32);
+    place(inf, 0, Math.min(4, Math.max(2, Math.ceil(Math.sqrt(inf.length)))), 22);
   }
 
   heli.forEach((u, i) => {
@@ -145,24 +152,19 @@ function opennessAt(state: GameState, pos: Position): number {
   return total ? ok / total : 1;
 }
 
-function claimPassable(state: GameState, pos: Position, veh: boolean, claimed: Set<string>): Position {
-  const cs = state.cellSize;
+function claimPassable(state: GameState, pos: Position, veh: boolean, claimed: (Position & { radius: number })[]): Position {
+  const cs = state.cellSize, radius = veh ? 12 : 6;
   let p = findNearestPassableWorld(state.terrain, pos.x, pos.y, veh, false, 10);
-  let bx = Math.floor(p.x / cs), by = Math.floor(p.y / cs);
-  if (claimed.has(`${bx},${by}`)) {
-    outer: for (let r = 1; r <= 9; r++) {
-      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
-        const gx = bx + dx, gy = by + dy;
-        if (claimed.has(`${gx},${gy}`) || !isFootprintPassable(state.terrain, gx, gy, veh, false)) continue;
-        p = { x: gx * cs + cs / 2, y: gy * cs + cs / 2 };
-        bx = gx; by = gy;
-        break outer;
-      }
+  const free = (q: Position) => isWorldFootprintPassable(state.terrain, q.x, q.y, veh)
+    && claimed.every(c => Math.hypot(c.x - q.x, c.y - q.y) >= c.radius + radius);
+  if (!free(p)) {
+    const base = { ...p };
+    search: for (let r = 1; r <= 32; r++) for (let i = 0; i < 16; i++) {
+      const q = { x: base.x + Math.cos(i * Math.PI / 8) * r * cs / 4, y: base.y + Math.sin(i * Math.PI / 8) * r * cs / 4 };
+      if (free(q)) { p = q; break search; }
     }
   }
-  claimed.add(`${bx},${by}`);
-  return p;
+  claimed.push({ ...p, radius }); return p;
 }
 
 // ---------- order issuing ----------
@@ -205,7 +207,7 @@ export function planSquadMove(
   const right = { x: -fwd.y, y: fwd.x };
   const widthScale = Math.max(0.6, Math.min(2.2, opts.widthScale ?? 1));
 
-  const groups = clusterSelected(ground);
+  const groups = [...clusterSelected(ground.filter(u => u.type !== 'helicopter')), ...clusterSelected(ground.filter(u => u.type === 'helicopter'))];
 
   // ARMY LEVEL: separate destination area per squad, ordered left-to-right by
   // where the squads currently stand so squads never swap sides.
@@ -222,7 +224,7 @@ export function planSquadMove(
 
   const totalWidth = blocks.reduce((s, b) => s + b.width, 0) + SQUAD_GAP * (blocks.length - 1);
   let cursor = -totalWidth / 2;
-  const claimed = new Set<string>();
+  const claimed: (Position & { radius: number })[] = [];
   const out: PlannedBlock[] = [];
 
   blocks.forEach((block, order) => {
@@ -243,7 +245,7 @@ export function planSquadMove(
     const lateralOf = (u: Unit) =>
       (u.pos.x - squadCenter.x) * sr.x + (u.pos.y - squadCenter.y) * sr.y;
 
-    const local = localSlots(block.members, compression, lateralOf, state.preferredFormation);
+    const local = localSlots(block.members, compression, lateralOf, state.preferredFormation, !!settlementAt(squadDest.x / state.cellSize, squadDest.y / state.cellSize) || opennessAt(state, squadDest) < .65);
     const slots: Record<string, Position> = {};
     const localOffsets: Record<string, Position> = {};
 
@@ -286,24 +288,34 @@ export function issueSquadMove(
   state: GameState, selected: Unit[], dest: Position, opts: SquadMoveOptions = {},
 ): PlayerSquad[] {
   const plan = planSquadMove(state, selected, dest, opts);
+  if (opts.queue) {
+    const idle: Unit[] = [];
+    for (const block of plan) for (const u of block.members) {
+      if (u.targetPos || u.path.length || u.squadId != null) u.waypoints.push({ ...block.slots[u.id], facing: block.facing, attackMove: opts.attackMove });
+      else idle.push(u);
+    }
+    return idle.length ? issueSquadMove(state, idle, dest, { ...opts, queue: false }) : [];
+  }
   const squads: PlayerSquad[] = [];
+  const commandId = state.nextMoveGroupId++;
 
   for (const block of plan) {
     const id = state.nextMoveGroupId++;
     const groundSpeeds = block.members.filter(u => u.type !== 'helicopter').map(u => u.speed);
-    const travelSpeed = (groundSpeeds.length ? Math.min(...groundSpeeds) : Math.min(...block.members.map(u => u.speed))) * TRAVEL_SPEED_BOOST;
+    const travelSpeed = (groundSpeeds.length ? Math.min(...groundSpeeds) : Math.min(...block.members.map(u => u.speed)));
     const spread = Math.max(...block.members.map(slotSpacing));
     const squadCenter = centroid(block.members);
 
     const squad: PlayerSquad = {
-      id,
+      id, commandId: block.members.every(u => u.type === 'helicopter') ? id : commandId,
+      coordinated: state.coordinatedMovement, progressFloor: 0, commandLength: 1,
       memberIds: block.members.map(u => u.id),
       dest: block.dest,
       anchor: { ...squadCenter },
       facing: Math.atan2(block.dest.y - squadCenter.y, block.dest.x - squadCenter.x),
       targetFacing: block.facing,
       travelSpeed,
-      cohesionRadius: Math.max(90, spread * Math.ceil(Math.sqrt(block.members.length)) * 0.9),
+      cohesionRadius: Math.max(32, Math.min(72, spread * Math.sqrt(block.members.length) * .65)),
       slots: block.slots,
       localOffsets: block.localOffsets,
       compression: block.compression,
@@ -314,25 +326,13 @@ export function issueSquadMove(
     squads.push(squad);
 
     for (const u of block.members) {
-      if (!opts.queue) clearUnitOrders(u);
-      u.boardTarget = null;
-      u.digOnArrive = false;
+      clearUnitOrders(u);
       u.squadId = id;
-      u.groupSpeedCap = travelSpeed;
+      u.groupSpeedCap = state.coordinatedMovement ? travelSpeed : null;
       u.moveGroupId = id;
-      u.settled = false;
-      u.attackTarget = null;
-      if (opts.queue) {
-        u.waypoints.push(block.slots[u.id]);
-        if (!u.targetPos && u.path.length === 0) {
-          const next = u.waypoints.shift();
-          if (next) setDestination(u, state, next);
-        }
-      } else {
-        u.waypoints = [];
-        setDestination(u, state, block.slots[u.id]);
-      }
-      u.order = opts.attackMove ? 'attack_move' : 'move';
+      setDestination(u, state, block.slots[u.id]);
+      u.arrivalFacing = block.facing;
+      u.order = u.targetPos ? opts.attackMove ? 'attack_move' : 'move' : 'idle';
     }
   }
 
@@ -380,81 +380,72 @@ export function getSquad(state: GameState, unit: Unit): PlayerSquad | null {
 
 /**
  * Cheap per-tick upkeep: squad centre, smoothed formation direction, arrival
- * detection and throttled slot reassignment after losses. No pathfinding and no
- * O(n^2) work per frame.
+ * detection and attainable speed. Slots remain stable after losses; completed
+ * queued legs start together. Repathing stays in the per-unit movement layer.
  */
 export function updatePlayerSquads(state: GameState, dt: number) {
-  if (state.playerSquads.length === 0) return;
+  if (!state.playerSquads.length) return;
   const byId = new Map(state.units.map(u => [u.id, u]));
-
+  const commands = new Map<number, { squads: PlayerSquad[]; members: Unit[] }>();
   for (const sq of state.playerSquads) {
-    const members = sq.memberIds
-      .map(id => byId.get(id))
-      .filter((u): u is Unit => !!u && u.alive && !u.insideOf && u.squadId === sq.id);
-    if (members.length === 0) { sq.memberIds = []; continue; }
-
-    const lost = members.length !== sq.memberIds.length;
+    const members = sq.memberIds.map(id => byId.get(id)).filter((u): u is Unit => !!u && u.alive && !u.insideOf && u.squadId === sq.id);
     sq.memberIds = members.map(u => u.id);
+    if (!members.length) continue;
     sq.anchor = centroid(members);
-
-    // Formation direction follows travel, rotated gradually (never snapped).
-    const dx = sq.dest.x - sq.anchor.x, dy = sq.dest.y - sq.anchor.y;
-    if (Math.hypot(dx, dy) > 24) sq.targetFacing = Math.atan2(dy, dx);
     let delta = sq.targetFacing - sq.facing;
     while (delta > Math.PI) delta -= Math.PI * 2;
     while (delta < -Math.PI) delta += Math.PI * 2;
-    const maxTurn = 1.6 * dt;
-    sq.facing += Math.abs(delta) > maxTurn ? Math.sign(delta) * maxTurn : delta;
-
-    // Arrival + squad progress (used for cohesion speed sync).
-    let settledCount = 0;
-    let worst = 0;
+    sq.facing += Math.sign(delta) * Math.min(Math.abs(delta), 1.6 * dt);
     for (const u of members) {
       const slot = sq.slots[u.id];
-      if (!slot) continue;
-      const d = Math.hypot(u.pos.x - slot.x, u.pos.y - slot.y);
-      worst = Math.max(worst, d);
-      if (d < ARRIVE_TOLERANCE) { u.settled = true; settledCount++; }
-      else if (d > ARRIVE_TOLERANCE * 2.4) u.settled = false;
-      else if (u.settled) settledCount++;
+      u.settled = !!slot && Math.hypot(u.pos.x - slot.x, u.pos.y - slot.y) < ARRIVE_TOLERANCE;
     }
-    sq.maxRemaining = worst;
-    sq.state = settledCount >= Math.ceil(members.length * 0.8) ? 'arrived' : 'moving';
-
-    // Reassign slots after casualties / stuck units, throttled.
-    const stuck = members.some(u => u.stuckTimer > 0.6);
-    if ((lost || stuck) && sq.state === 'moving' && state.time - sq.lastReslot > RESLOT_INTERVAL) {
-      sq.lastReslot = state.time;
-      const before = members.map(u => sq.slots[u.id]);
-      resolveCrossings(members, sq.slots);
-      members.forEach((u, i) => {
-        const slot = sq.slots[u.id];
-        if (slot && slot !== before[i]) setDestination(u, state, slot);
-      });
+    sq.maxRemaining = Math.max(...members.map(routeRemaining));
+    sq.state = members.every(u => u.settled && !u.targetPos) ? 'arrived' : 'moving';
+    const command = commands.get(sq.commandId) ?? { squads: [], members: [] };
+    command.squads.push(sq); command.members.push(...members); commands.set(sq.commandId, command);
+  }
+  for (const { squads, members } of commands.values()) {
+    // Queued legs begin only when the coordinated ground group has finished
+    // the current leg. Casualties and separately retasked units are excluded.
+    if (members.every(u => !u.targetPos && !u.path.length) && members.some(u => u.waypoints.length)) {
+      for (const u of members) {
+        const next = u.waypoints.shift();
+        if (!next) continue;
+        const sq = squads.find(s => s.id === u.squadId)!;
+        sq.slots[u.id] = next; sq.state = 'moving'; u.settled = false;
+        setDestination(u, state, next); u.arrivalFacing = next.facing ?? sq.targetFacing;
+        sq.targetFacing = u.arrivalFacing; sq.dest = { x: next.x, y: next.y };
+        u.order = u.targetPos ? next.attackMove ? 'attack_move' : 'move' : 'idle';
+      }
     }
-
-    if (sq.state === 'arrived') {
-      for (const u of members) if (!u.targetPos && u.path.length === 0) u.groupSpeedCap = null;
+    const moving = members.filter(u => u.targetPos);
+    const pace = moving.length ? Math.min(...moving.map(u => availableSpeed(u, state))) : 0;
+    const progress = (u: Unit) => !u.targetPos ? 1 : Math.max(0, Math.min(1, 1 - routeRemaining(u) / Math.max(1, u.routeLength ?? 1)));
+    const floor = Math.min(...members.map(progress));
+    const length = Math.max(1, ...members.map(u => u.routeLength ?? 0));
+    for (const sq of squads) { sq.progressFloor = floor; sq.commandLength = length; sq.travelSpeed = pace; }
+    for (const u of members) {
+      const sq = squads.find(s => s.id === u.squadId);
+      u.groupSpeedCap = sq?.coordinated && u.targetPos ? pace : null;
     }
   }
-
   state.playerSquads = state.playerSquads.filter(sq => sq.memberIds.length > 0);
 }
 
-/**
- * Soft cohesion speed factor: units far ahead of the squad ease off, laggards
- * get a modest boost, so tanks, APCs and infantry travel as one body.
- */
+/** Stop a runaway leader; laggards catch up at their own attainable speed. */
 export function cohesionSpeedFactor(unit: Unit, squad: PlayerSquad): number {
-  const slot = squad.slots[unit.id];
-  if (!slot || squad.state === 'arrived') return 1;
-  const own = Math.hypot(unit.pos.x - slot.x, unit.pos.y - slot.y);
-  const lead = squad.maxRemaining - own;   // >0 means this unit is ahead
-  const r = squad.cohesionRadius;
-  if (lead > r) return 0.82;
-  if (lead > r * 0.55) return 0.9;
-  if (lead < -r * 0.35) return 1.18;
-  if (lead < -r * 0.15) return 1.08;
+  if (!squad.coordinated || squad.state === 'arrived') return 1;
+  const progress = Math.max(0, Math.min(1, 1 - routeRemaining(unit) / Math.max(1, unit.routeLength ?? 1)));
+  const routeLead = (progress - squad.progressFloor) * squad.commandLength;
+  const to = unit.targetPos ?? squad.dest;
+  const dx = to.x - unit.pos.x, dy = to.y - unit.pos.y, length = Math.hypot(dx, dy) || 1;
+  // Different road/woodland routes can have very different lengths. Never
+  // stop a physically trailing unit just because its route is shorter.
+  const physicalLead = ((unit.pos.x - squad.anchor.x) * dx + (unit.pos.y - squad.anchor.y) * dy) / length;
+  const lead = Math.min(routeLead, Math.max(0, physicalLead) * 2);
+  if (lead > squad.cohesionRadius) return 0;
+  if (lead > squad.cohesionRadius * .65) return .35;
+  if (lead > squad.cohesionRadius * .3) return .7;
   return 1;
 }
-

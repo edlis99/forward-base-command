@@ -1,11 +1,12 @@
 import React from 'react';
 import { GameState, UnitType, Stance, FormationType, DebugFlags } from '../game/types';
-import { getTerrainAt } from '../game/terrain';
-import { coverLabel, isOccupyableCover } from '../game/cover';
-import { UNIT_STATS, VETERANCY_NAMES } from '../game/constants';
+import { SelectedForcePanel } from './SelectedForcePanel';
+import { Position } from '../game/types';
 
 interface Props {
   gameState: GameState;
+  onChange: () => void;
+  onFocus: (pos: Position) => void;
   onSpawn: (type: UnitType) => void;
   onStance: (s: Stance) => void;
   onHold: () => void;
@@ -18,16 +19,8 @@ interface Props {
   onSetTimeScale: (s: number) => void;
 }
 
-const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogglePause, onExit, onDig, onUnload, onFormation, onToggleDebug, onSetTimeScale }) => {
-  const selected = gameState.units.filter(u => u.alive && !u.insideOf && u.selected && u.team === 'player');
+const GameHUD: React.FC<Props> = ({ gameState, onChange, onFocus, onSpawn, onStance, onHold, onTogglePause, onExit, onDig, onUnload, onFormation, onToggleDebug, onSetTimeScale }) => {
   const pool = gameState.reinforcementBudget + (gameState.mission.rewardKills ? gameState.rewardCP : 0);
-
-  const unitTypes: { type: UnitType; label: string }[] = [
-    { type: 'infantry', label: 'Infantry' },
-    { type: 'tank', label: 'Tank' },
-    { type: 'apc', label: 'APC' },
-    { type: 'helicopter', label: 'Heli' },
-  ];
 
   return (
     <div className="pointer-events-none absolute inset-0 flex flex-col justify-between text-[#c0d0b0]">
@@ -132,10 +125,10 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
       <div className="pointer-events-none absolute top-12 right-3 text-[10px] font-mono px-2 py-1"
         style={{ background: 'rgba(15,20,15,0.85)', border: '1px solid #2a3a2a', color: '#8a9a7a' }}>
         <div>Space: pause · 1/2/3/4: time ¼×/½×/1×/2× · WASD: pan · Wheel: zoom</div>
-        <div>LClick: select · Drag: box-select · Shift: add</div>
+        <div>Click: select · Drag: box · Shift: toggle/add · Ctrl+A: all</div>
         <div>RClick: move/attack/occupy cover · Shift: queue · Ctrl: attack-move</div>
         <div>H: hold · F: hold-fire · X: tight · G: defend · Y: aggressive</div>
-        <div>T: dig-in · Shift+T: trench line · U: unload APC · Home: focus</div>
+        <div>C: cover · T: dig-in · Shift+T: trench line · U: unload APC · Home: focus</div>
         <div>5/6/7: line/wedge/column · 0: auto</div>
         <div>F1: cover · F2: concealment · F3: tactical</div>
       </div>
@@ -165,113 +158,8 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
         </div>
       </div>
 
-      {/* Bottom bar */}
-      <div className="pointer-events-auto flex items-end gap-4 px-4 py-2 font-mono text-xs"
-        style={{ background: 'rgba(15,20,15,0.88)', borderTop: '1px solid #2a3a2a' }}>
-        {/* Reinforcement spawn */}
-        <div className="flex gap-2">
-          {unitTypes.map(({ type, label }) => {
-            const cost = UNIT_STATS[type].cost;
-            const canAfford = pool >= cost;
-            return (
-              <button key={type} onClick={() => onSpawn(type)}
-                className="px-2 py-1 border flex flex-col items-center min-w-[60px]"
-                style={{
-                  background: canAfford ? 'rgba(40,55,40,0.85)' : 'rgba(28,32,28,0.85)',
-                  borderColor: canAfford ? '#5a7a5a' : '#3a4a3a',
-                  color: canAfford ? '#c0d0b0' : '#5a6a5a',
-                  cursor: canAfford ? 'pointer' : 'not-allowed',
-                }}
-                disabled={!canAfford}>
-                <span>{label}</span>
-                <span style={{ color: '#d4c47a' }}>{cost}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Stance buttons */}
-        <div className="flex flex-col gap-1">
-          <div style={{ color: '#7a8a6a' }}>Stance</div>
-          <div className="flex gap-1">
-            {(['hold_fire', 'tight', 'defend', 'aggressive'] as Stance[]).map(s => (
-              <button key={s} onClick={() => onStance(s)}
-                className="px-2 py-0.5 border"
-                style={{ background: 'rgba(40,50,40,0.8)', borderColor: '#5a6a5a' }}>
-                {s.replace('_', '-')}
-              </button>
-            ))}
-            <button onClick={onHold} className="px-2 py-0.5 border" style={{ background: 'rgba(40,50,40,0.8)', borderColor: '#5a6a5a' }}>
-              hold-pos
-            </button>
-            <button onClick={onDig} className="px-2 py-0.5 border" style={{ background: 'rgba(60,55,30,0.8)', borderColor: '#7a6a3a', color: '#e4d488' }}>
-              dig-in [T]
-            </button>
-            <button onClick={onUnload} disabled={!selected.some(u => u.type === 'apc' && u.passengers.length > 0)}
-              className="px-2 py-0.5 border disabled:opacity-40" style={{ background: 'rgba(40,50,40,0.8)', borderColor: '#5a6a5a' }}>
-              unload [U]
-            </button>
-          </div>
-          <div className="flex gap-1 mt-1">
-            <span style={{ color: '#7a8a6a' }}>Form:</span>
-            {(['line', 'wedge', 'column'] as FormationType[]).map(f => (
-              <button key={f} onClick={() => onFormation(f)} className="px-2 py-0.5 border"
-                style={{
-                  background: gameState.preferredFormation === f ? 'rgba(80,100,60,0.9)' : 'rgba(40,50,40,0.8)',
-                  borderColor: '#5a6a5a',
-                }}>
-                {f}
-              </button>
-            ))}
-            <button onClick={() => onFormation(null)} className="px-2 py-0.5 border"
-              style={{ background: !gameState.preferredFormation ? 'rgba(80,100,60,0.9)' : 'rgba(40,50,40,0.8)', borderColor: '#5a6a5a' }}>
-              auto
-            </button>
-          </div>
-        </div>
-
-        {/* Selected info */}
-        {selected.length > 0 && (
-          <div className="flex-1 ml-2">
-            <div style={{ color: '#a5cf6f' }}>Selected: {selected.length}</div>
-            {selected.length === 1 && (
-              <div className="grid grid-cols-2 gap-x-3">
-                <span>{selected[0].type} · {selected[0].order}</span>
-                {selected[0].type === 'apc' && <span>Passengers {selected[0].passengers.length}/4</span>}
-                <span>HP {Math.ceil(selected[0].health)}/{selected[0].maxHealth}</span>
-                <span>Ammo {selected[0].ammo}/{selected[0].maxAmmo}{selected[0].reloadTimer > 0 ? ' ⟳' : ''}</span>
-                <span>Stance {selected[0].stance}</span>
-                {(() => {
-                  const c = getTerrainAt(gameState.terrain, selected[0].pos.x, selected[0].pos.y);
-                  if (!c) return null;
-                  return <span style={{ color: c.type === 'road' ? '#efb777' : '#b4d891' }}>
-                    {selected[0].type === 'helicopter' ? 'Airborne' : c.type === 'road' ? 'EXPOSED · road ×1.46 speed / ×1.50 detection' :
-                      isOccupyableCover(c) ? `${coverLabel(c)} · cover ${Math.round(c.coverBonus * 100)}%` : c.type.replace('_', ' ')}
-                  </span>;
-                })()}
-                <span>Morale {Math.round(selected[0].morale * 100)}% · Fatigue {Math.round(selected[0].fatigue * 100)}%</span>
-                <span style={{ color: selected[0].veterancy >= 3 ? '#f0a030' : '#b0c090' }}>
-                  {'★'.repeat(selected[0].veterancy)} {VETERANCY_NAMES[selected[0].veterancy]} ({selected[0].kills} kills)
-                </span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Event log */}
-        <div className="w-72 max-h-24 overflow-hidden">
-          {gameState.eventLog.slice(0, 6).map((log, i) => (
-            <div key={i} className="truncate" style={{
-              color: log.type === 'kill' ? '#da5c5c'
-                : log.type === 'contact' ? '#f0a030'
-                : log.type === 'objective' ? '#5cda5c'
-                : log.type === 'reward' ? '#f0a030'
-                : log.type === 'spawn' ? '#d4c47a' : '#7a8a6a',
-              opacity: 1 - i * 0.13,
-            }}>{log.message}</div>
-          ))}
-        </div>
-      </div>
+      <SelectedForcePanel state={gameState} onChange={onChange} onFocus={onFocus} onSpawn={onSpawn}
+        onStance={onStance} onHold={onHold} onDig={onDig} onUnload={onUnload} onFormation={onFormation} />
 
       {/* Game over overlay now handled by MissionSummary in GameUI. */}
     </div>
