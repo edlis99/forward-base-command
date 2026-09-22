@@ -1,4 +1,4 @@
-import { GameState, Unit, Team, GhostContact } from './types';
+import { GameState, Unit, Team } from './types';
 import { getTerrainAt, hasLineOfSight } from './terrain';
 import { distance } from './units';
 
@@ -32,6 +32,7 @@ export function updateAwareness(state: GameState, dt: number): string[] {
       // target concealment from terrain
       const terr = getTerrainAt(state.terrain, target.pos.x, target.pos.y);
       if (terr) {
+        if (target.type !== 'helicopter') rate *= terr.exposure ?? 1;
         rate *= 1 - Math.min(0.8, terr.concealment);
         if (terr.type === 'tall_grass' && target.type !== 'infantry') {
           // grass doesn't really hide vehicles

@@ -1,5 +1,7 @@
 import React from 'react';
 import { GameState, UnitType, Stance, FormationType, DebugFlags } from '../game/types';
+import { getTerrainAt } from '../game/terrain';
+import { coverLabel, isOccupyableCover } from '../game/cover';
 import { UNIT_STATS, VETERANCY_NAMES } from '../game/constants';
 
 interface Props {
@@ -131,15 +133,15 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
         style={{ background: 'rgba(15,20,15,0.85)', border: '1px solid #2a3a2a', color: '#8a9a7a' }}>
         <div>Space: pause · 1/2/3/4: time ¼×/½×/1×/2× · WASD: pan · Wheel: zoom</div>
         <div>LClick: select · Drag: box-select · Shift: add</div>
-        <div>RClick: move/attack · Shift+RClick: queue · Ctrl+RClick: attack-move</div>
+        <div>RClick: move/attack/occupy cover · Shift: queue · Ctrl: attack-move</div>
         <div>H: hold · F: hold-fire · X: tight · G: defend · Y: aggressive</div>
-        <div>T: dig-in · Shift+T: trench line · U: unload APC</div>
+        <div>T: dig-in · Shift+T: trench line · U: unload APC · Home: focus</div>
         <div>5/6/7: line/wedge/column · 0: auto</div>
         <div>F1: cover · F2: concealment · F3: tactical</div>
       </div>
 
       {/* Debug overlay toggle row */}
-      <div className="pointer-events-auto absolute top-32 right-3 text-[10px] font-mono p-2 flex flex-col gap-1"
+      <div className="pointer-events-auto absolute top-44 right-3 text-[10px] font-mono p-2 flex flex-col gap-1"
         style={{ background: 'rgba(15,20,15,0.85)', border: '1px solid #2a3a2a', color: '#a5cf6f' }}>
         <div>DEBUG</div>
         {([
@@ -239,6 +241,14 @@ const GameHUD: React.FC<Props> = ({ gameState, onSpawn, onStance, onHold, onTogg
                 <span>HP {Math.ceil(selected[0].health)}/{selected[0].maxHealth}</span>
                 <span>Ammo {selected[0].ammo}/{selected[0].maxAmmo}{selected[0].reloadTimer > 0 ? ' ⟳' : ''}</span>
                 <span>Stance {selected[0].stance}</span>
+                {(() => {
+                  const c = getTerrainAt(gameState.terrain, selected[0].pos.x, selected[0].pos.y);
+                  if (!c) return null;
+                  return <span style={{ color: c.type === 'road' ? '#efb777' : '#b4d891' }}>
+                    {selected[0].type === 'helicopter' ? 'Airborne' : c.type === 'road' ? 'EXPOSED · road ×1.46 speed / ×1.50 detection' :
+                      isOccupyableCover(c) ? `${coverLabel(c)} · cover ${Math.round(c.coverBonus * 100)}%` : c.type.replace('_', ' ')}
+                  </span>;
+                })()}
                 <span>Morale {Math.round(selected[0].morale * 100)}% · Fatigue {Math.round(selected[0].fatigue * 100)}%</span>
                 <span style={{ color: selected[0].veterancy >= 3 ? '#f0a030' : '#b0c090' }}>
                   {'★'.repeat(selected[0].veterancy)} {VETERANCY_NAMES[selected[0].veterancy]} ({selected[0].kills} kills)

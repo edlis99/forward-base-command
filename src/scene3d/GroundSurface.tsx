@@ -1,7 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { TerrainCell, TerrainType } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
+import { makeGrainTexture } from './materials';
 import { groundHeightAt, GROUND_LEVEL, RELIEF, hash2, fbm } from './terrainHeight';
 
 const W = MAP_COLS;
@@ -16,11 +17,11 @@ const SUB = 2;
  * contributes trampled dirt, and forest contributes leaf litter.
  */
 const GROUND_TINT: Record<TerrainType | string, string> = {
-  open: '#8a9c62',
+  open: '#85905d',
   tall_grass: '#93a566',
-  forest: '#5f6d3e',
+  forest: '#556445',
   hedgerow: '#74874f',
-  road: '#7d7568',
+  road: '#727b72',
   gravel: '#b0a68e',
   urban: '#968b78',
   wall: '#928778',
@@ -52,6 +53,7 @@ export function GroundSurface({ terrain }: { terrain: TerrainCell[][] }) {
     const vertCount = nx * nz;
     const positions = new Float32Array(vertCount * 3);
     const colors = new Float32Array(vertCount * 3);
+    const uvs = new Float32Array(vertCount * 2);
 
     const cellAt = (cx: number, cy: number): TerrainCell => {
       const row = terrain[Math.max(0, Math.min(H - 1, cy))];
@@ -94,15 +96,12 @@ export function GroundSurface({ terrain }: { terrain: TerrainCell[][] }) {
         const fine = (fbm(gx * 0.45, gz * 0.45) - 0.5) * 0.06;
         const height = level + elev * 1.05 + (hills + mid + fine) * relief;
 
-        // Break the grid: small nudge only, so normals stay coherent.
-        const edge = i === 0 || j === 0 || i === nx - 1 || j === nz - 1;
-        const jx = edge ? 0 : (hash2(i * 1.7, j * 2.3) - 0.5) * 0.2;
-        const jz = edge ? 0 : (hash2(i * 3.1, j * 1.3) - 0.5) * 0.2;
-
         const o = (j * nx + i) * 3;
-        positions[o] = gx + jx / SUB;
+        positions[o] = gx;
+        uvs[(j * nx + i) * 2] = gx;
+        uvs[(j * nx + i) * 2 + 1] = gz;
         positions[o + 1] = height;
-        positions[o + 2] = gz + jz / SUB;
+        positions[o + 2] = gz;
 
         // Colour variation: broad patchiness only, biased bright so no cell
         // darkens into a black blotch.
@@ -131,14 +130,18 @@ export function GroundSurface({ terrain }: { terrain: TerrainCell[][] }) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     geo.setIndex(indices);
     geo.computeVertexNormals();
     return geo;
   }, [terrain]);
 
+  const grain = useMemo(() => makeGrainTexture(1.6), []);
+  useEffect(() => () => { geometry.dispose(); }, [geometry]);
+  useEffect(() => () => grain.dispose(), [grain]);
   return (
     <mesh geometry={geometry} receiveShadow raycast={() => null}>
-      <meshStandardMaterial vertexColors roughness={0.97} metalness={0} />
+      <meshStandardMaterial vertexColors map={grain} bumpMap={grain} bumpScale={0.012} roughness={0.97} metalness={0} />
     </mesh>
   );
 }
@@ -228,6 +231,14 @@ export function GrassTufts({ terrain }: { terrain: TerrainCell[][] }) {
     return out;
   }, [terrain]);
 
+  const blades = useMemo(() => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+      -.4,0,0,0,1,0,.1,0,0, .1,0,0,.4,.8,.1,.4,0,0, 0,0,-.3,0,.9,0,0,0,.3,
+    ], 3));
+    geometry.computeVertexNormals(); return geometry;
+  }, []);
+  useEffect(() => () => blades.dispose(), [blades]);
   const ref = React.useRef<THREE.InstancedMesh>(null);
   React.useEffect(() => {
     if (!ref.current) return;
@@ -250,9 +261,9 @@ export function GrassTufts({ terrain }: { terrain: TerrainCell[][] }) {
 
   if (tufts.length === 0) return null;
   return (
-    <instancedMesh key={tufts.length} ref={ref} args={[undefined, undefined, tufts.length]} castShadow raycast={() => null}>
-      <coneGeometry args={[0.5, 1.1, 5]} />
-      <meshStandardMaterial flatShading roughness={0.95} />
+    <instancedMesh key={tufts.length} ref={ref} args={[undefined, undefined, tufts.length]} raycast={() => null}>
+      <primitive object={blades} attach="geometry" />
+      <meshStandardMaterial side={THREE.DoubleSide} roughness={0.95} />
     </instancedMesh>
   );
 }
@@ -265,7 +276,7 @@ export function GroundDetail({ terrain }: { terrain: TerrainCell[][] }) {
       const t = terrain[y][x].type;
       if (t !== 'open' && t !== 'gravel' && t !== 'mud' && t !== 'crater' && t !== 'rubble') continue;
       const roll = hash2(x * 1.3, y * 2.7);
-      if (roll > (t === 'open' ? 0.12 : 0.4)) continue;
+      if (roll > (t === 'open' ? 0.035 : 0.08)) continue;
       const a = hash2(x * 4.1, y * 6.7), b = hash2(x * 8.3, y * 1.9);
       const kind = a < 0.55 ? 0 : 1; // 0 = rock, 1 = scrub
       out.push({
@@ -331,9 +342,10 @@ export function GroundDetail({ terrain }: { terrain: TerrainCell[][] }) {
       {scrub.length > 0 && (
         <instancedMesh key={`s${scrub.length}`} ref={scrubRef} args={[undefined, undefined, scrub.length]} castShadow raycast={() => null}>
           <icosahedronGeometry args={[1, 0]} />
-          <meshStandardMaterial flatShading roughness={0.95} />
+          <meshStandardMaterial side={THREE.DoubleSide} roughness={0.95} />
         </instancedMesh>
       )}
     </group>
   );
 }
+

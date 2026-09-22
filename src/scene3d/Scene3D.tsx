@@ -9,6 +9,9 @@ import {
 } from '../game/engine';
 import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor } from '../game/tactical';
 import { GroundSurface, WaterSheet, GrassTufts, GroundDetail } from './GroundSurface';
+import { Woodland, RuralBuildingsAndProps, RoadNetwork } from './Environment';
+import { getTerrainAt } from '../game/terrain';
+import { coverLabel, isOccupyableCover } from '../game/cover';
 import { spacingRadius } from '../game/playerSquads';
 import { setActiveTerrain, surfaceY, groundHeightAt } from './terrainHeight';
 
@@ -54,16 +57,16 @@ interface SceneProps {
  */
 const FLAT_TYPES = new Set([
   'open', 'road', 'gravel', 'mud', 'crater', 'water', 'forest',
-  'tall_grass', 'trench', 'hedgerow',
+  'tall_grass', 'trench', 'hedgerow', 'urban',
 ]);
 
-function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
+function TerrainMesh({ terrain, regional }: { terrain: TerrainCell[][]; regional: boolean }) {
   const groups = useMemo(() => {
     const byType: Record<string, { positions: [number, number, number][]; sizes: [number, number, number][] }> = {};
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const c = terrain[y][x];
       const t = c.type;
-      if (FLAT_TYPES.has(t)) continue; // drawn by GroundSurface / prop layers
+      if (FLAT_TYPES.has(t) || c.prop) continue; // drawn by GroundSurface / prop layers
       const h = TERRAIN_HEIGHT[t] ?? 0;
       if (!byType[t]) byType[t] = { positions: [], sizes: [] };
       const gY = groundHeightAt(terrain, x + 0.5, y + 0.5);
@@ -85,15 +88,16 @@ function TerrainMesh({ terrain }: { terrain: TerrainCell[][] }) {
 
       <GroundSurface terrain={terrain} />
       <WaterSheet terrain={terrain} />
+      {regional && <RoadNetwork terrain={terrain} />}
       <GrassTufts terrain={terrain} />
       <GroundDetail terrain={terrain} />
       {Object.entries(groups).map(([type, g]) => (
         <InstancedTerrainGroup key={type} type={type} positions={g.positions} sizes={g.sizes} />
       ))}
       <TrenchInstances terrain={terrain} />
-      <TreeInstances terrain={terrain} />
+      <Woodland terrain={terrain} />
       <HedgerowInstances terrain={terrain} />
-      <BuildingDetails terrain={terrain} />
+      <RuralBuildingsAndProps terrain={terrain} />
     </group>
   );
 }
@@ -280,7 +284,7 @@ function TrenchInstances({ terrain }: { terrain: TerrainCell[][] }) {
       capRef.current.instanceMatrix.needsUpdate = true;
       if (capRef.current.instanceColor) capRef.current.instanceColor.needsUpdate = true;
     }
-  }, [cells]);
+  }, [cells, terrain]);
 
   if (cells.length === 0) return null;
   const parapetCount = cells.length * 4;
@@ -343,70 +347,6 @@ function InstancedTerrainGroup({ type, positions, sizes }: { type: string; posit
   );
 }
 
-function TreeInstances({ terrain }: { terrain: TerrainCell[][] }) {
-  const positions = useMemo(() => {
-    const out: Array<{ x: number; z: number; s: number; rot: number; hue: number }> = [];
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      const c = terrain[y][x];
-      if (c.type === 'forest') {
-        const seed = (x * 73 + y * 31) % 100;
-        const variants = 2;
-        for (let i = 0; i < variants + (seed > 60 ? 1 : 0); i++) {
-          const sx = x + 0.2 + ((seed + i * 17) % 6) * 0.11;
-          const sz = y + 0.2 + ((seed * 7 + i * 11) % 6) * 0.11;
-          const s = 0.7 + ((seed + i * 5) % 7) * 0.08;
-          const rot = ((seed + i * 23) % 360) * (Math.PI / 180);
-          const hue = 0.85 + ((seed + i * 3) % 30) / 100;
-          out.push({ x: sx, z: sz, s, rot, hue });
-        }
-      }
-    }
-    return out;
-  }, [terrain]);
-
-  const foliageRef = useRef<THREE.InstancedMesh>(null);
-  const trunkRef = useRef<THREE.InstancedMesh>(null);
-  useEffect(() => {
-    if (!foliageRef.current || !trunkRef.current) return;
-    const tmp = new THREE.Object3D();
-    const col = new THREE.Color();
-    const base = new THREE.Color('#557a3d');
-    for (let i = 0; i < positions.length; i++) {
-      const p = positions[i];
-      const gY = groundHeightAt(terrain, p.x, p.z);
-      tmp.position.set(p.x, gY + 1.0 * p.s + 0.4, p.z);
-      tmp.scale.set(p.s, p.s * 1.3, p.s);
-      tmp.rotation.y = p.rot;
-      tmp.updateMatrix();
-      foliageRef.current.setMatrixAt(i, tmp.matrix);
-      col.copy(base).multiplyScalar(p.hue);
-      foliageRef.current.setColorAt(i, col);
-      // trunk
-      tmp.position.set(p.x, gY + 0.35 * p.s, p.z);
-      tmp.scale.set(p.s * 0.18, p.s * 0.7, p.s * 0.18);
-      tmp.rotation.y = 0;
-      tmp.updateMatrix();
-      trunkRef.current.setMatrixAt(i, tmp.matrix);
-    }
-    foliageRef.current.instanceMatrix.needsUpdate = true;
-    if (foliageRef.current.instanceColor) foliageRef.current.instanceColor.needsUpdate = true;
-    trunkRef.current.instanceMatrix.needsUpdate = true;
-  }, [positions, terrain]);
-
-  return (
-    <group>
-      <instancedMesh ref={trunkRef} args={[undefined, undefined, positions.length]} castShadow raycast={() => null}>
-        <cylinderGeometry args={[1, 1, 1, 6]} />
-        <meshStandardMaterial color="#6b5238" flatShading />
-      </instancedMesh>
-      <instancedMesh ref={foliageRef} args={[undefined, undefined, positions.length]} castShadow raycast={() => null}>
-        <coneGeometry args={[0.55, 1.8, 7]} />
-        <meshStandardMaterial color="#ffffff" flatShading roughness={0.9} />
-      </instancedMesh>
-    </group>
-  );
-}
-
 function HedgerowInstances({ terrain }: { terrain: TerrainCell[][] }) {
   const bushes = useMemo(() => {
     const out: Array<{ x: number; z: number; sx: number; sy: number; sz: number; rot: number; tint: number }> = [];
@@ -458,91 +398,6 @@ function HedgerowInstances({ terrain }: { terrain: TerrainCell[][] }) {
   );
 }
 
-function BuildingDetails({ terrain }: { terrain: TerrainCell[][] }) {
-  const cells = useMemo(() => {
-    const out: Array<{ x: number; y: number; rot: number; roof: string; damaged: boolean }> = [];
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      if (terrain[y][x].type !== 'urban') continue;
-      const seed = (x * 113 + y * 61) % 100;
-      out.push({ x, y, rot: (seed % 4) * Math.PI / 2, roof: seed % 3 === 0 ? '#a4705a' : '#b07f63', damaged: seed > 72 });
-    }
-    return out;
-  }, [terrain]);
-
-  const roofRef = useRef<THREE.InstancedMesh>(null);
-  const windowRef = useRef<THREE.InstancedMesh>(null);
-  const debrisRef = useRef<THREE.InstancedMesh>(null);
-
-  useEffect(() => {
-    const tmp = new THREE.Object3D();
-    const col = new THREE.Color();
-    if (roofRef.current) {
-      for (let i = 0; i < cells.length; i++) {
-        const c = cells[i];
-        const gY = groundHeightAt(terrain, c.x + 0.5, c.y + 0.5);
-        tmp.position.set(c.x + 0.5, gY + 1.83, c.y + 0.5);
-        tmp.scale.set(c.damaged ? 0.72 : 0.82, c.damaged ? 0.28 : 0.36, c.damaged ? 0.72 : 0.82);
-        tmp.rotation.y = c.rot + Math.PI / 4;
-        tmp.updateMatrix();
-        roofRef.current.setMatrixAt(i, tmp.matrix);
-        col.setStyle(c.damaged ? '#8a7361' : c.roof);
-        roofRef.current.setColorAt(i, col);
-      }
-      roofRef.current.instanceMatrix.needsUpdate = true;
-      if (roofRef.current.instanceColor) roofRef.current.instanceColor.needsUpdate = true;
-    }
-    if (windowRef.current) {
-      let idx = 0;
-      for (const c of cells) {
-        for (const side of [-1, 1] as const) {
-          tmp.position.set(c.x + 0.5, groundHeightAt(terrain, c.x + 0.5, c.y + 0.5) + 1.18, c.y + 0.5 + side * 0.505);
-          tmp.scale.set(0.42, 0.16, 0.025);
-          tmp.rotation.y = c.rot;
-          tmp.updateMatrix();
-          windowRef.current.setMatrixAt(idx, tmp.matrix);
-          idx++;
-        }
-      }
-      windowRef.current.instanceMatrix.needsUpdate = true;
-    }
-    if (debrisRef.current) {
-      let idx = 0;
-      for (const c of cells) {
-        if (!c.damaged) {
-          tmp.scale.set(0, 0, 0);
-        } else {
-          tmp.position.set(c.x + 0.22, groundHeightAt(terrain, c.x + 0.5, c.y + 0.5) + 0.16, c.y + 0.78);
-          tmp.scale.set(0.34, 0.22, 0.24);
-          tmp.rotation.y = c.rot * 0.7;
-        }
-        tmp.updateMatrix();
-        debrisRef.current.setMatrixAt(idx, tmp.matrix);
-        idx++;
-      }
-      debrisRef.current.instanceMatrix.needsUpdate = true;
-    }
-  }, [cells, terrain]);
-
-  if (cells.length === 0) return null;
-  return (
-    <group>
-      <instancedMesh ref={roofRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
-        <coneGeometry args={[0.75, 0.55, 4]} />
-        <meshStandardMaterial color="#ffffff" flatShading roughness={0.9} />
-      </instancedMesh>
-      <instancedMesh ref={windowRef} args={[undefined, undefined, cells.length * 2]} raycast={() => null}>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#6d6a5c" roughness={0.85} />
-      </instancedMesh>
-      <instancedMesh ref={debrisRef} args={[undefined, undefined, cells.length]} castShadow receiveShadow raycast={() => null}>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#a2998b" flatShading roughness={1} />
-      </instancedMesh>
-    </group>
-  );
-}
-
-// ---------- Unit models ----------
 function InfantryModel({ team }: { team: 'player' | 'enemy' }) {
   const uniform = team === 'player' ? '#465b43' : '#5b5438';
   const kit = team === 'player' ? '#2f3f30' : '#3f3a27';
@@ -1460,10 +1315,11 @@ function SelectionOverlayUpdater({ gameStateRef, overlayRef }: { gameStateRef: R
 }
 
 // ---------- Camera rig ----------
-function CameraRig({ inputRef }: { inputRef: React.MutableRefObject<InputState> }) {
+function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObject<InputState>; gameStateRef: React.MutableRefObject<GameState> }) {
   const { camera } = useThree();
-  const targetRef = useRef({ x: W / 2, z: H / 2 });
-  const distRef = useRef(120);
+  const players = gameStateRef.current.units.filter(u => u.team === 'player' && u.alive);
+  const targetRef = useRef({ x: players.reduce((n, u) => n + u.pos.x / S, 0) / (players.length || 1), z: players.reduce((n, u) => n + u.pos.y / S, 0) / (players.length || 1) });
+  const distRef = useRef(48);
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
       distRef.current = Math.max(24, Math.min(360, distRef.current + (e.deltaY > 0 ? 10 : -10)));
@@ -1473,7 +1329,15 @@ function CameraRig({ inputRef }: { inputRef: React.MutableRefObject<InputState> 
   }, []);
   useFrame((_, dt) => {
     const keys = inputRef.current.keys;
-    const sp = (40 + distRef.current * 0.6) * dt;
+    const sp = (20 + distRef.current * 0.45) * Math.min(dt, .1);
+    if (keys.has('home')) {
+      const selected = gameStateRef.current.units.filter(u => u.alive && u.team === 'player' && u.selected && !u.insideOf);
+      const focus = selected.length ? selected : gameStateRef.current.units.filter(u => u.alive && u.team === 'player' && !u.insideOf);
+      if (focus.length) {
+        targetRef.current.x = focus.reduce((n, u) => n + u.pos.x / S, 0) / focus.length;
+        targetRef.current.z = focus.reduce((n, u) => n + u.pos.y / S, 0) / focus.length;
+      }
+    }
     if (keys.has('w') || keys.has('arrowup')) targetRef.current.z -= sp;
     if (keys.has('s') || keys.has('arrowdown')) targetRef.current.z += sp;
     if (keys.has('a') || keys.has('arrowleft')) targetRef.current.x -= sp;
@@ -1492,13 +1356,22 @@ function CameraRig({ inputRef }: { inputRef: React.MutableRefObject<InputState> 
  * enclose it, so no region falls outside the shadow frustum (which would render
  * as a large permanently dark patch).
  */
-function SunLight() {
+function SunLight({ high }: { high: boolean }) {
+  const { camera } = useThree();
   const ref = useRef<THREE.DirectionalLight>(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    ref.current.target.position.set(W / 2, 0, H / 2);
-    ref.current.target.updateMatrixWorld();
-  }, []);
+  useFrame(() => {
+    const light = ref.current;
+    if (!light) return;
+    // Concentrate the shadow map on the view: sharper near shadows without
+    // allocating a 4096 texture across the entire campaign region.
+    const x = camera.position.x, z = camera.position.z - camera.position.y * .55 / .85;
+    light.position.set(x + 55, 90, z + 38);
+    light.target.position.set(x, 0, z); light.target.updateMatrixWorld();
+    const extent = Math.max(32, Math.min(190, camera.position.y * .9));
+    const shadow = light.shadow.camera;
+    shadow.left = shadow.bottom = -extent; shadow.right = shadow.top = extent;
+    shadow.updateProjectionMatrix();
+  });
   return (
     <>
       <directionalLight
@@ -1506,7 +1379,7 @@ function SunLight() {
         position={[W / 2 + 120, 190, H / 2 + 90]}
         intensity={1.3} color="#fff3da"
         castShadow
-        shadow-mapSize-width={4096} shadow-mapSize-height={4096}
+        shadow-mapSize-width={high ? 2048 : 1024} shadow-mapSize-height={high ? 2048 : 1024}
         shadow-bias={-0.0006} shadow-normalBias={0.05}
         shadow-camera-near={1} shadow-camera-far={520}
         shadow-camera-left={-190} shadow-camera-right={190}
@@ -1516,20 +1389,40 @@ function SunLight() {
   );
 }
 
+function TerrainReadout({ gameStateRef, inputRef }: Pick<SceneProps, 'gameStateRef' | 'inputRef'>) {
+  const [info, setInfo] = useState('');
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const p = inputRef.current.mouseWorldPos;
+      const c = getTerrainAt(gameStateRef.current.terrain, p.x, p.y);
+      if (!c) { setInfo(''); return; }
+      if (c.type === 'road') setInfo(`${c.roadName || 'Asphalt'} · move ×1.46 · detection ×1.50 · exposed`);
+      else if (isOccupyableCover(c)) setInfo(`${coverLabel(c)} · cover ${Math.round(c.coverBonus * 100)}% · right-click: occupy & hold`);
+      else if (c.type === 'forest') setInfo('Mixed woodland · slower movement · concealment · infantry only');
+      else if (c.roadName) setInfo(`${c.roadName} · gravel / shoulder · slower than asphalt`);
+      else setInfo('');
+    }, 150);
+    return () => window.clearInterval(timer);
+  }, [gameStateRef, inputRef]);
+  return info ? <div className="absolute bottom-28 left-1/2 -translate-x-1/2 pointer-events-none font-mono text-[11px] px-3 py-2 rounded border border-[#82936b] bg-[#132019ed] text-[#deebc8]">{info}</div> : null;
+}
+
 // ---------- Scene root ----------
 const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, inputRef, onChange }) => {
   const terrain = gameStateRef.current.terrain;
   // Shared height sampler used by every layer that only holds a gameStateRef.
   setActiveTerrain(terrain);
   const overlayRef = useRef<HTMLDivElement | null>(null);
+  const [highQuality, setHighQuality] = useState(true);
 
   return (
     <div className="relative w-full h-full">
       <Canvas
         shadows
+        dpr={highQuality ? [1, 2] : [1, 1]}
         camera={{ position: [W / 2, 35, H / 2 + 20], fov: 50 }}
         onContextMenu={(e) => e.preventDefault()}
-        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15 }}
+        gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15 }}
         style={{ background: '#b9c6bd' }}
       >
         <fog attach="fog" args={['#b3c1b6', 320, 760]} />
@@ -1538,13 +1431,13 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <ambientLight intensity={0.45} />
         {/* Sun. Shadow frustum must cover the whole 220x160 map, otherwise
             everything outside it clamps to fully shadowed dark patches. */}
-        <SunLight />
+        <SunLight key={String(highQuality)} high={highQuality} />
 
         {/* Cool counter-light from the opposite side to lift shadow interiors */}
         <directionalLight position={[-50, 40, -35]} intensity={0.35} color="#9fb6c8" />
 
-        <CameraRig inputRef={inputRef} />
-        <TerrainMesh terrain={terrain} />
+        <CameraRig inputRef={inputRef} gameStateRef={gameStateRef} />
+        <TerrainMesh terrain={terrain} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} />
         <TerrainDebugLayer gameStateRef={gameStateRef} />
         <CapturePoints gameStateRef={gameStateRef} />
         <UnitsLayer gameStateRef={gameStateRef} inputRef={inputRef} />
@@ -1556,6 +1449,10 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <Ground gameStateRef={gameStateRef} inputRef={inputRef} onChange={onChange} />
         <SelectionOverlayUpdater gameStateRef={gameStateRef} overlayRef={overlayRef} />
       </Canvas>
+      <TerrainReadout gameStateRef={gameStateRef} inputRef={inputRef} />
+      <button onClick={() => setHighQuality(q => !q)} className="absolute left-3 bottom-40 text-[10px] font-mono px-2 py-1 border border-[#576954] bg-[#142018e6] text-[#cfddbc]">
+        Graphics: {highQuality ? 'High' : 'Standard'} · Home: focus troops
+      </button>
       {/* Screen-space selection rectangle */}
       <div
         ref={overlayRef}
@@ -1573,3 +1470,4 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
 };
 
 export default Scene3D;
+

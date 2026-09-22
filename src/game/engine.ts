@@ -9,6 +9,7 @@ import { CELL_SIZE, MAP_COLS, MAP_ROWS, CP_PER_KILL, UNIT_STATS } from './consta
 import { getMission } from './missions';
 import { issueSquadMove, updatePlayerSquads, planSquadMove, planToSlots } from './playerSquads';
 import { refreshUnitGrid } from './spatialGrid';
+import { occupyCover, coverLabel } from './cover';
 
 export function createInitialState(mission: MissionDef, deployment?: import('./types').DeploymentContext): GameState {
   const terrain = generateTerrain(mission.mapLayout, mission.mapSeed);
@@ -275,6 +276,20 @@ export function handleRightClickWorld(
         }
       });
       pushMarker(state, 'board', unit.pos);
+      return;
+    }
+  }
+
+  // Right-click a tactical object to occupy its firing positions. Shift/ctrl
+  // retain their existing waypoint and attack-move meanings.
+  if (!shiftKey && !ctrlKey) {
+    const assigned = occupyCover(state, selected, { x: worldX, y: worldY });
+    if (assigned.size > 0) {
+      const remaining = selected.filter(u => !assigned.has(u.id));
+      if (remaining.length) issueSquadMove(state, remaining, { x: worldX, y: worldY }, { facing, widthScale });
+      const cell = getTerrainAt(state.terrain, worldX, worldY)!;
+      state.eventLog.unshift({ message: `${assigned.size} infantry taking cover: ${coverLabel(cell)}`, time: state.time, type: 'info' });
+      pushMarker(state, 'hold', { x: worldX, y: worldY });
       return;
     }
   }
