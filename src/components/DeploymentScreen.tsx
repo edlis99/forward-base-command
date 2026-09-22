@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { MissionDef, DeploymentTownId, DeploymentContext, DeploymentTown } from '../game/types';
 import { generateTerrain, LEIPALINGIS_ANCHORS } from '../game/terrain';
-import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
-import { MAP_COLS, MAP_ROWS } from '../game/constants';
+import { drawCampaignMap } from '../game/maps/drawCampaignMap';
+import { SETTLEMENTS } from '../game/maps/settlements';
+import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../game/constants';
 
 interface Props {
   mission: MissionDef;
@@ -12,15 +13,6 @@ interface Props {
 
 const riskColor: Record<'low' | 'med' | 'high', string> = {
   low: '#8adc7a', med: '#e4c46a', high: '#e07a5a',
-};
-
-// Tactical map colours – slightly muted / desaturated vs 3D scene
-const MAP_COLORS: Record<string, string> = {
-  open: '#556b3f', tall_grass: '#6e8548', forest: '#25401c',
-  road: '#606b65', gravel: '#7d7360', urban: '#a49484',
-  wall: '#7a7268', water: '#254b66', mud: '#3a2d1e',
-  hedgerow: '#2e4a22', sandbag: '#9c8a5e', trench: '#2a2018',
-  rubble: '#6f685c', crater: '#241d18',
 };
 
 const TOWN_KEY: Record<DeploymentTownId, keyof typeof LEIPALINGIS_ANCHORS> = {
@@ -41,37 +33,9 @@ function TacticalMap({ towns, selected, onSelect, seed }: {
   useEffect(() => {
     const cvs = canvasRef.current; if (!cvs) return;
     const ctx = cvs.getContext('2d'); if (!ctx) return;
-    // Four samples per grid cell; vector road lines retain the imported curves.
-    cvs.width = MAP_COLS * 4;
-    cvs.height = MAP_ROWS * 4;
-    ctx.imageSmoothingEnabled = true;
-    const img = ctx.createImageData(MAP_COLS, MAP_ROWS);
-    for (let y = 0; y < MAP_ROWS; y++) for (let x = 0; x < MAP_COLS; x++) {
-      const c = terrain[y][x];
-      const hex = MAP_COLORS[c.type] ?? '#3a4a32';
-      const r = parseInt(hex.slice(1, 3), 16);
-      const g = parseInt(hex.slice(3, 5), 16);
-      const b = parseInt(hex.slice(5, 7), 16);
-      // Slight elevation shading
-      const shade = c.elevation === 2 ? 22 : c.elevation === 0 ? -18 : 0;
-      const i = (y * MAP_COLS + x) * 4;
-      img.data[i] = Math.max(0, Math.min(255, r + shade));
-      img.data[i + 1] = Math.max(0, Math.min(255, g + shade));
-      img.data[i + 2] = Math.max(0, Math.min(255, b + shade));
-      img.data[i + 3] = 255;
-    }
-    const base = document.createElement('canvas');
-    base.width = MAP_COLS; base.height = MAP_ROWS;
-    base.getContext('2d')!.putImageData(img, 0, 0);
-    ctx.drawImage(base, 0, 0, cvs.width, cvs.height);
-    ctx.scale(4, 4); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    for (const road of LEIPALINGIS_ROADS) {
-      ctx.beginPath();
-      road.points.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
-      ctx.strokeStyle = road.paved ? '#bdc4af' : '#99876b';
-      ctx.lineWidth = road.paved ? road.width * .45 : .45;
-      ctx.stroke();
-    }
+    cvs.width = MAP_COLS * 4; cvs.height = MAP_ROWS * 4;
+    drawCampaignMap(ctx, terrain, cvs.width, cvs.height);
+
   }, [terrain]);
 
   const cellToPct = (x: number, y: number) => ({
@@ -113,7 +77,6 @@ function TacticalMap({ towns, selected, onSelect, seed }: {
 
       {/* Deployment markers */}
       {towns.map(t => {
-        const a = LEIPALINGIS_ANCHORS[TOWN_KEY[t.id]];
         const active = t.id === selected;
         return (
           <button
@@ -121,7 +84,7 @@ function TacticalMap({ towns, selected, onSelect, seed }: {
             onClick={() => onSelect(t.id)}
             className="absolute font-mono"
             style={{
-              ...cellToPct(a.x, a.y), transform: 'translate(-50%, -50%)',
+              ...cellToPct(t.pos.x / CELL_SIZE, t.pos.y / CELL_SIZE), transform: 'translate(-50%, -50%)',
               width: active ? 28 : 20, height: active ? 28 : 20,
               border: `2px solid ${active ? '#e0eac8' : '#8adc7a'}`,
               background: active ? 'rgba(120,180,80,0.85)' : 'rgba(20,40,20,0.7)',
@@ -180,7 +143,7 @@ const DeploymentScreen: React.FC<Props> = ({ mission, onStart, onBack }) => {
           </button>
         </div>
         <div className="text-xs mb-4" style={{ color: '#7a8a6a' }}>
-          Select a staging village on the tactical map. Each axis of advance offers a different route, terrain and risk profile.
+          Select an outskirts staging position on the tactical map. Dashed areas are built-up settlements. Each axis of advance offers a different route, terrain and risk profile.
         </div>
 
         <div className="grid grid-cols-[1fr_360px] gap-5">
@@ -188,9 +151,10 @@ const DeploymentScreen: React.FC<Props> = ({ mission, onStart, onBack }) => {
           <div className="space-y-4">
             <TacticalMap towns={towns} selected={town} onSelect={setTown} seed={mission.mapSeed} />
             <div className="text-[10px] flex flex-wrap justify-between gap-2 text-[#96a888]">
-              <span>Light grey: paved · ochre: tracks · dark green: woodland · blue: water</span>
+              <span>Dark grey: paved · ochre: tracks · dark green: woodland · blue: water</span>
               <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline">© OpenStreetMap contributors · ODbL</a>
             </div>
+            <div className="text-[10px] text-[#bdcca5]">Centres contain streets and yards. Coloured deployment markers sit outside them.</div>
             <div className="grid grid-cols-2 gap-2">
               {towns.map(t => {
                 const active = t.id === town;
@@ -221,6 +185,7 @@ const DeploymentScreen: React.FC<Props> = ({ mission, onStart, onBack }) => {
               <div className="text-xs mb-1" style={{ color: '#a5cf6f' }}>SELECTED AXIS</div>
               <div className="text-lg" style={{ color: '#e0eac8' }}>{chosen?.name ?? '—'}</div>
               <div className="text-[11px] mt-1" style={{ color: '#8a9a7a' }}>{chosen?.approach}</div>
+              <div className="text-[11px] mt-1" style={{ color: '#c4bc92' }}>{SETTLEMENTS.find(s => s.id === town)?.character ?? 'Northern road entry · outside the settlement crop'}</div>
               <div className="text-[11px] mt-1" style={{ color: '#6a7a6a' }}>Terrain: {chosen?.terrainNote}</div>
               <div className="text-[11px] mt-1" style={{ color: '#a5cf6f' }}>Advantage: {chosen?.advantage}</div>
               <div className="text-[11px] mt-1 flex gap-3">

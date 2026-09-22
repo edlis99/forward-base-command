@@ -1,6 +1,6 @@
 import { Unit, UnitType, Team, Position, GameState, Stance } from './types';
 import { UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS } from './constants';
-import { getTerrainAt, hasLineOfSight, losInfo, isPassable, isFootprintPassable, findNearestPassableWorld } from './terrain';
+import { getTerrainAt, hasLineOfSight, losInfo, isPassable, isWorldFootprintPassable, findNearestPassableWorld } from './terrain';
 import { findPath } from './pathfinding';
 import { isVisibleTo } from './awareness';
 import { getUnitGrid, queryNeighbors } from './spatialGrid';
@@ -270,9 +270,8 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const nextX = unit.pos.x + unit.vel.x * dt;
   const nextY = unit.pos.y + unit.vel.y * dt;
   const nextT = getTerrainAt(state.terrain, nextX, nextY);
-  const ngx = Math.floor(nextX / CELL_SIZE), ngy = Math.floor(nextY / CELL_SIZE);
   const stepOk = heli || (veh
-    ? isFootprintPassable(state.terrain, ngx, ngy, true, false, 1)
+    ? isWorldFootprintPassable(state.terrain, nextX, nextY, true)
     : isPassable(nextT, false, false));
   if (stepOk) {
     unit.pos.x = nextX; unit.pos.y = nextY;
@@ -289,9 +288,8 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     for (const sign of [1, -1]) {
       const sx = unit.pos.x + (perpX / plen) * speed * dt * sign;
       const sy = unit.pos.y + (perpY / plen) * speed * dt * sign;
-      const sgx = Math.floor(sx / CELL_SIZE), sgy = Math.floor(sy / CELL_SIZE);
       const ok = veh
-        ? isFootprintPassable(state.terrain, sgx, sgy, true, false, 1)
+        ? isWorldFootprintPassable(state.terrain, sx, sy, true)
         : isPassable(getTerrainAt(state.terrain, sx, sy), false, false);
       if (ok) {
         unit.pos.x = sx; unit.pos.y = sy;

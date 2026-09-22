@@ -2,8 +2,9 @@ import React, { useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { TerrainCell, TerrainType } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
+import { createRoadTexture, landscapeMaterial } from './roadMaterial';
 import { makeGrainTexture } from './materials';
-import { groundHeightAt, GROUND_LEVEL, RELIEF, hash2, fbm } from './terrainHeight';
+import { groundHeightAt, hash2, fbm } from './terrainHeight';
 
 const W = MAP_COLS;
 const H = MAP_ROWS;
@@ -46,7 +47,7 @@ const GROUND_TINT: Record<TerrainType | string, string> = {
  * cell borders and perturbed with fractal noise, and vertex XZ positions are
  * jittered so no straight cell-aligned edges remain.
  */
-export function GroundSurface({ terrain }: { terrain: TerrainCell[][] }) {
+export function GroundSurface({ terrain, regional = false }: { terrain: TerrainCell[][]; regional?: boolean }) {
   const geometry = useMemo(() => {
     const nx = W * SUB + 1;
     const nz = H * SUB + 1;
@@ -78,23 +79,14 @@ export function GroundSurface({ terrain }: { terrain: TerrainCell[][] }) {
           [cellAt(ix + 1, iz + 1), fx * fz],
         ];
 
-        let r = 0, g = 0, b = 0, level = 0, relief = 0, elev = 0;
+        let r = 0, g = 0, b = 0;
         for (const [c, w] of wts) {
           if (w <= 0) continue;
-          tmp.setStyle(GROUND_TINT[c.type] ?? '#5c7042');
+          tmp.setStyle(GROUND_TINT[regional && c.roadName ? 'open' : c.type] ?? '#5c7042');
           r += tmp.r * w; g += tmp.g * w; b += tmp.b * w;
-          level += (GROUND_LEVEL[c.type] ?? 0) * w;
-          relief += (RELIEF[c.type] ?? 1) * w;
-          elev += ((c.elevation ?? 1) - 1) * w;
         }
 
-        // Terrain relief: broad rolling hills + gentle undulation. Fine grain is
-        // kept very low — high-frequency displacement was tilting triangles hard
-        // enough to read as dark speckled patches under the sun light.
-        const hills = (fbm(gx * 0.03, gz * 0.03) - 0.5) * 2.4;
-        const mid = (fbm(gx * 0.11, gz * 0.11) - 0.5) * 0.36;
-        const fine = (fbm(gx * 0.45, gz * 0.45) - 0.5) * 0.06;
-        const height = level + elev * 1.05 + (hills + mid + fine) * relief;
+        const height = groundHeightAt(terrain, gx, gz);
 
         const o = (j * nx + i) * 3;
         positions[o] = gx;
@@ -134,14 +126,18 @@ export function GroundSurface({ terrain }: { terrain: TerrainCell[][] }) {
     geo.setIndex(indices);
     geo.computeVertexNormals();
     return geo;
-  }, [terrain]);
+  }, [terrain, regional]);
 
   const grain = useMemo(() => makeGrainTexture(1.6), []);
+  const roads = useMemo(() => regional ? createRoadTexture() : undefined, [regional]);
+  const material = useMemo(() => landscapeMaterial(grain, roads), [grain, roads]);
+  useEffect(() => () => { material.dispose(); }, [material]);
+  useEffect(() => () => { roads?.dispose(); }, [roads]);
   useEffect(() => () => { geometry.dispose(); }, [geometry]);
   useEffect(() => () => grain.dispose(), [grain]);
   return (
     <mesh geometry={geometry} receiveShadow raycast={() => null}>
-      <meshStandardMaterial vertexColors map={grain} bumpMap={grain} bumpScale={0.012} roughness={0.97} metalness={0} />
+      <primitive object={material} attach="material" />
     </mesh>
   );
 }

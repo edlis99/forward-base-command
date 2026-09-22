@@ -2,33 +2,34 @@ import { MissionDef, GameState, Unit, DeploymentContext, DeploymentTown, Positio
 import { createUnit, distance, setDestination } from '../units';
 import { CELL_SIZE } from '../constants';
 import { LEIPALINGIS_ANCHORS } from '../terrain';
+import { STAGING_AREAS } from '../maps/leipalingis';
 
 const tx = (gx: number) => gx * CELL_SIZE + CELL_SIZE / 2;
 const ty = (gy: number) => gy * CELL_SIZE + CELL_SIZE / 2;
 
 const DEPLOYMENT_TOWNS: DeploymentTown[] = [
   { id: 'jovaisiai', name: 'Jovaišiai',
-    pos: { x: tx(LEIPALINGIS_ANCHORS.jovaisiai.x), y: ty(LEIPALINGIS_ANCHORS.jovaisiai.y) },
+    pos: { x: tx(STAGING_AREAS.jovaisiai.x), y: ty(STAGING_AREAS.jovaisiai.y) },
     approach: 'Northern axis · local roads to the 180 corridor', distanceKm: 3.7, risk: 'med',
     terrainNote: 'Farmyards and woodland edges break up the approach. Paved stretches are exposed.',
     advantage: 'Short northern approach with cover positions beside the road.' },
   { id: 'didziasalis', name: 'Didžiasalis',
-    pos: { x: tx(LEIPALINGIS_ANCHORS.didziasalis.x), y: ty(LEIPALINGIS_ANCHORS.didziasalis.y) },
+    pos: { x: tx(STAGING_AREAS.didziasalis.x), y: ty(STAGING_AREAS.didziasalis.y) },
     approach: 'Southern axis · Druskininkai road corridor', distanceKm: 5.5, risk: 'med',
     terrainNote: 'Southern woodland, lakes and the 180 approach constrain armour to the road network.',
     advantage: 'Fast armour transit; dismount infantry into roadside cover before contact.' },
   { id: 'versiai', name: 'Veršiai',
-    pos: { x: tx(LEIPALINGIS_ANCHORS.versiai.x), y: ty(LEIPALINGIS_ANCHORS.versiai.y) },
+    pos: { x: tx(STAGING_AREAS.versiai.x), y: ty(STAGING_AREAS.versiai.y) },
     approach: 'South-eastern axis · local lanes and farmyards', distanceKm: 3.4, risk: 'med',
     terrainNote: 'Local roads pass between woodland and dispersed farms.',
     advantage: 'Use courtyards and timber stacks as successive infantry positions.' },
   { id: 'straciunai', name: 'Stračiūnai',
-    pos: { x: tx(LEIPALINGIS_ANCHORS.straciunai.x), y: ty(LEIPALINGIS_ANCHORS.straciunai.y) },
+    pos: { x: tx(STAGING_AREAS.straciunai.x), y: ty(STAGING_AREAS.straciunai.y) },
     approach: 'North-eastern axis · Merkinė road approach', distanceKm: 7.6, risk: 'high',
     terrainNote: 'Longer approach through a mixture of wooded lanes and open road sections.',
     advantage: 'Several approach junctions; recon the next bend before moving armour.' },
   { id: 'seirijai', name: 'Seirijų kryptis',
-    pos: { x: tx(LEIPALINGIS_ANCHORS.seirijai.x), y: ty(LEIPALINGIS_ANCHORS.seirijai.y) },
+    pos: { x: tx(STAGING_AREAS.seirijai.x), y: ty(STAGING_AREAS.seirijai.y) },
     approach: 'Northern map edge · route 180 from Seirijai', distanceKm: 7.1, risk: 'low',
     terrainNote: 'Seirijai is outside this map. Your force stages on its southern approach road.',
     advantage: 'Direct paved corridor; use the forest margins to avoid exposure.' },
@@ -142,11 +143,11 @@ function spawnPlayerForce(units: Unit[], town: DeploymentTown, comp: { infantry:
   const rightX = -fwdY, rightY = fwdX;
   let slot = 0;
   const place = (type: 'infantry' | 'tank' | 'apc') => {
-    // spread out in a shallow arc behind town centre
+    // Keep the deployed force compact in the roadside staging area outside the village.
     const row = Math.floor(slot / 5);
     const col = (slot % 5) - 2;
-    const px = cx + rightX * col * 24 - fwdX * (60 + row * 32);
-    const py = cy + rightY * col * 24 - fwdY * (60 + row * 32);
+    const px = cx + rightX * col * 32 - fwdX * row * 32;
+    const py = cy + rightY * col * 32 - fwdY * row * 32;
     const u = createUnit(type, 'player', px, py);
     u.facing = ang;
     u.stance = 'defend';
@@ -230,7 +231,7 @@ export const leipalingisMission: MissionDef = {
     // Secondary "clear the approach outposts" objectives (skip the deploy town)
     const villageNames: Record<string, string> = {
       jovaisiai: 'Jovaišiai', didziasalis: 'Didžiasalis', versiai: 'Veršiai',
-      straciunai: 'Stračiūnai', seirijai: 'Seirijai',
+      straciunai: 'Stračiūnai', seirijai: 'Seirijų kryptis',
     };
     for (const vid of Object.keys(outpostIds)) {
       if (vid === town.id) continue;

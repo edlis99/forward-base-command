@@ -1,6 +1,7 @@
 import snapshot from './leipalingis-osm.json';
 import { TerrainCell, TerrainType } from '../types';
-import { MAP_COLS, MAP_ROWS } from '../constants';
+import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../constants';
+import { SETTLEMENTS, settlementAt } from './settlements';
 
 type Point = number[];
 export interface MapRoad { class: string; id: number; name: string; ref: string; paved: boolean; width: number; points: Point[]; }
@@ -34,7 +35,7 @@ export const LEIPALINGIS_ROADS: MapRoad[] = snapshot.roads.flatMap(road => {
     current.push(segment[1]);
   }
   if (current.length > 1) sections.push(current);
-  const width = /primary|secondary/.test(road.class) ? 2.8 : road.class === 'track' ? 1.15 : 1.8;
+  const width = /primary|secondary/.test(road.class) ? 1.35 : road.class === 'track' ? .38 : .88;
   return sections.map(points => ({ ...road, width, points }));
 });
 
@@ -51,6 +52,32 @@ export const LEIPALINGIS_ANCHORS = {
   didziasalis: place('Didžiasalis'), versiai: place('Veršiai'), straciunai: place('Stračiūnai'),
   seirijai: { x: Math.round(northRoad?.[0] ?? 97), y: Math.round(northRoad?.[1] ?? 8) },
 };
+
+/** Stage on an actual road outside the town, never clear the centre to spawn. */
+export const STAGING_AREAS = Object.fromEntries(
+  Object.entries(LEIPALINGIS_ANCHORS).filter(([id]) => id !== 'leipalingis').map(([id, anchor]) => {
+    if (id === 'seirijai') return [id, anchor];
+    const town = SETTLEMENTS.find(s => s.id === id)!;
+    const dx = town.x - LEIPALINGIS_ANCHORS.leipalingis.x, dy = town.y - LEIPALINGIS_ANCHORS.leipalingis.y;
+    const length = Math.hypot(dx, dy);
+    const desired = [town.x + dx / length * (town.rx + 4), town.y + dy / length * (town.ry + 4)];
+    let best = { ...anchor, score: Infinity };
+    for (const road of LEIPALINGIS_ROADS.filter(r => r.class !== 'track')) {
+      for (let i = 1; i < road.points.length; i++) {
+        const a = road.points[i - 1], b = road.points[i];
+        const steps = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1])));
+        for (let j = 0; j <= steps; j++) {
+          const x = a[0] + (b[0] - a[0]) * j / steps, y = a[1] + (b[1] - a[1]) * j / steps;
+          if (x < 4 || x > MAP_COLS - 5 || y < 4 || y > MAP_ROWS - 5) continue;
+          if (SETTLEMENTS.some(s => ((x - s.x) / (s.rx + 3)) ** 2 + ((y - s.y) / (s.ry + 3)) ** 2 < 1)) continue;
+          const score = Math.hypot(x - desired[0], y - desired[1]);
+          if (score < best.score) best = { x: Math.floor(x), y: Math.floor(y), score };
+        }
+      }
+    }
+    return [id, { x: best.x, y: best.y }];
+  })
+) as Record<Exclude<keyof typeof LEIPALINGIS_ANCHORS, 'leipalingis'>, { x: number; y: number }>;
 
 function inside(x: number, y: number, ring: Point[]) {
   let hit = false;
@@ -79,8 +106,7 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     }
   }
 
-  // All road shoulders remain traversable, with enough clearance for a 3x3
-  // vehicle footprint. Tracks are slower and do not acquire asphalt bonuses.
+  // Road shoulders remain traversable for the calibrated vehicle footprint. Tracks are slower and do not acquire asphalt bonuses.
   const paintSegment = (a: Point, b: Point, radius: number, type: TerrainType, name?: string) => {
     const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
     const steps = Math.max(1, Math.ceil(length * 3));
@@ -88,7 +114,7 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
       const x = a[0] + (b[0] - a[0]) * i / steps, y = a[1] + (b[1] - a[1]) * i / steps;
       for (let cy = Math.floor(y - radius); cy <= Math.ceil(y + radius); cy++) {
         for (let cx = Math.floor(x - radius); cx <= Math.ceil(x + radius); cx++) {
-          if (!grid[cy]?.[cx] || Math.hypot(cx + 0.5 - x, cy + 0.5 - y) > radius + 0.25) continue;
+          if (!grid[cy]?.[cx] || Math.hypot(cx + 0.5 - x, cy + 0.5 - y) > radius + 0.36) continue;
           if (type !== 'road' && grid[cy][cx].type === 'road') continue;
           set(grid, cx, cy, type);
           grid[cy][cx].roadName = name;
@@ -99,10 +125,10 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
   for (const road of LEIPALINGIS_ROADS) for (let i = 1; i < road.points.length; i++) {
     // Widen only vehicular routes. Clearing every forest track as a road
     // shoulder would erase most woodland at this campaign scale.
-    if (road.class !== 'track') paintSegment(road.points[i - 1], road.points[i], road.width / 2 + 1.25, 'open', road.name);
+    if (road.class !== 'track') paintSegment(road.points[i - 1], road.points[i], road.width / 2 + .45, 'open', road.name);
   }
   for (const road of LEIPALINGIS_ROADS) for (let i = 1; i < road.points.length; i++) {
-    paintSegment(road.points[i - 1], road.points[i], road.width / 2 + .2, 'gravel', road.name);
+    paintSegment(road.points[i - 1], road.points[i], road.width / 2 + .12, 'gravel', road.name);
   }
   for (const road of LEIPALINGIS_ROADS) for (let i = 1; i < road.points.length; i++) {
     paintSegment(road.points[i - 1], road.points[i], road.width / 2, road.paved ? 'road' : 'gravel', road.name);
@@ -129,26 +155,55 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     cell.concealment = prop === 'hay' ? 0.38 : 0.12;
   };
 
-  // Use surveyed building centres, thinned to avoid a solid block of buildings
-  // at the compressed campaign scale. Farmyards add usable cover pockets.
+  // Dense named centres and sparse intervening farms: the earlier uniform
+  // scatter erased the distinction between a village and the countryside.
+  const count: Record<string, number> = {};
+  const deterministic = (x: number, y: number) => Math.abs(Math.sin(x * 71.17 + y * 31.63) * 43758.5) % 1;
+  const building = (x: number, y: number, angle: number) => {
+    const town = settlementAt(x + .5, y + .5);
+    if (!free(x, y)) return false;
+    if (town && (count[town.id] ?? 0) >= (town.id === 'leipalingis' ? 100 : 42)) return false;
+    set(grid, x, y, 'urban');
+    const c = grid[y][x]; c.propAngle = angle; c.settlementId = town?.id;
+    c.buildingKind = town?.id === 'didziasalis' && deterministic(x, y) > .65 ? 'barn' : 'house';
+    if (town) count[town.id] = (count[town.id] ?? 0) + 1;
+    if (deterministic(x + 2, y) > .45) placeProp(x + 1, y + 1, 'stone_wall', angle);
+    if (deterministic(x, y + 3) > .45) placeProp(x - 1, y, town?.id === 'didziasalis' ? 'hay' : 'logs', angle);
+    return true;
+  };
   for (const [bx, by, angle] of snapshot.buildings) {
     let x = Math.floor(bx), y = Math.floor(by);
     if (!grid[y]?.[x]) continue;
+    const town = settlementAt(bx, by);
+    if (!town && deterministic(bx, by) > .055) continue;
     if (!free(x, y)) {
+      if (!town) continue;
       let best: { x: number; y: number; d: number } | null = null;
       for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
-        if (!free(x + dx, y + dy)) continue;
+        if (!free(x + dx, y + dy) || settlementAt(x + dx, y + dy)?.id !== town.id) continue;
         const d = dx * dx + dy * dy;
         if (!best || d < best.d) best = { x: x + dx, y: y + dy, d };
       }
       if (!best) continue;
       x = best.x; y = best.y;
     }
-    if ([-1, 0, 1].some(dy => [-1, 0, 1].some(dx => grid[y + dy]?.[x + dx]?.type === 'urban'))) continue;
-    set(grid, x, y, 'urban'); grid[y][x].propAngle = angle;
-    for (const [dx, dy, prop] of [[2, 0, 'logs'], [-2, 1, 'stone_wall'], [0, 2, 'hay']] as const) {
-      placeProp(x + dx, y + dy, prop, angle);
+    if (!town && [-2, 0, 2].some(dy => [-2, 0, 2].some(dx => grid[y + dy]?.[x + dx]?.type === 'urban'))) continue;
+    building(x, y, angle);
+  }
+  // Representative frontage fills coarse-grid omissions beside real roads.
+  // These are stylised buildings, not a claim about exact real-world footprints.
+  for (const town of SETTLEMENTS) {
+    for (let y = Math.floor(town.y - town.ry); y <= town.y + town.ry; y++) {
+      for (let x = Math.floor(town.x - town.rx); x <= town.x + town.rx; x++) {
+        if (settlementAt(x + .5, y + .5)?.id !== town.id || !free(x, y)) continue;
+        if ((count[town.id] ?? 0) >= (town.id === 'leipalingis' ? 65 : 22)) continue;
+        const nearStreet = [-2, -1, 1, 2].some(d => grid[y]?.[x + d]?.type === 'road' || grid[y + d]?.[x]?.type === 'road');
+        if (nearStreet && deterministic(x, y) > .3) building(x, y, 0);
+      }
     }
+    const candidates = grid.flat().filter(c => c.type === 'urban' && c.settlementId === town.id)
+      .sort((a, b) => Math.hypot(a.x / CELL_SIZE - town.x, a.y / CELL_SIZE - town.y) - Math.hypot(b.x / CELL_SIZE - town.x, b.y / CELL_SIZE - town.y));
+    if (candidates[0]) candidates[0].buildingKind = town.landmark;
   }
 
   // Forest edges, field boundaries and road pull-offs supply intermediate
@@ -165,16 +220,12 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     }
   }
 
-  // Small staging clearings are a gameplay addition, not claimed OSM roads.
-  // Keep the approach connected to the real network and never clear water.
-  for (const [name, a] of Object.entries(LEIPALINGIS_ANCHORS)) {
-    const radius = name === 'leipalingis' ? 3 : 4;
-    for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
+  // Staging clearings belong on outskirts. Protect all settlement centres.
+  for (const a of Object.values(STAGING_AREAS)) {
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
       const c = grid[a.y + dy]?.[a.x + dx];
-      if (c && !c.roadName && c.type !== 'water') set(grid, a.x + dx, a.y + dy, 'open');
+      if (c && !c.roadName && c.type !== 'water' && !settlementAt(a.x + dx, a.y + dy)) set(grid, a.x + dx, a.y + dy, 'open');
     }
-    // Put cover on the edge of each staging area so it is immediately usable.
-    for (const d of [-2, 0, 2]) placeProp(a.x + d, a.y + radius + 2, d === 0 ? 'logs' : 'stone_wall', 0);
   }
   const L = LEIPALINGIS_ANCHORS.leipalingis;
   for (const [dx, dy] of [[-4, -18], [4, -18], [-4, 18], [4, 18], [-18, -3], [-18, 3], [18, -3], [18, 3]]) {
