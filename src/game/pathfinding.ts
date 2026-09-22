@@ -44,12 +44,12 @@ function cellPassable(terrain: TerrainCell[][], gx: number, gy: number, vehicle:
 }
 
 function moveCost(cell: TerrainCell): number {
-  return Math.max(0.4, cell.movementCost);
+  return Math.max(0.4, cell.movementCost / cell.traction);
 }
 
 const NEIGH = [
   [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
-  [1, 1, 1.41], [1, -1, 1.41], [-1, 1, 1.41], [-1, -1, 1.41],
+  [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2],
 ];
 
 /** A* over terrain grid. Returns smoothed list of world-space waypoints (excluding start). */
@@ -67,6 +67,7 @@ export function findPath(
   const sy = Math.floor(start.y / CELL_SIZE);
   let gx = Math.floor(goal.x / CELL_SIZE);
   let gy = Math.floor(goal.y / CELL_SIZE);
+  let snapped = false;
 
   // Snap goal to nearest passable cell if blocked
   if (!cellPassable(terrain, gx, gy, vehicle, heli)) {
@@ -86,15 +87,18 @@ export function findPath(
     }
     if (!best) return [];
     gx = best.x; gy = best.y;
+    snapped = true;
   }
 
-  if (sx === gx && sy === gy) return [{ x: goal.x, y: goal.y }];
+  const destination = snapped ? { x: (gx + 0.5) * CELL_SIZE, y: (gy + 0.5) * CELL_SIZE } : goal;
+  if (sx === gx && sy === gy) return [{ ...destination }];
 
   const open = new MinHeap();
   const visited = new Map<number, number>(); // key=gy*COLS+gx -> g
   const key = (x: number, y: number) => y * MAP_COLS + x;
 
-  const startNode: Node = { gx: sx, gy: sy, g: 0, f: Math.hypot(gx - sx, gy - sy), parent: null };
+  // Admissible lower bound: roads cost less than one unit per cell.
+  const startNode: Node = { gx: sx, gy: sy, g: 0, f: Math.hypot(gx - sx, gy - sy) * 0.4, parent: null };
   open.push(startNode);
   visited.set(key(sx, sy), 0);
 
@@ -102,11 +106,12 @@ export function findPath(
   let iterations = 0;
   const MAX_ITER = MAP_COLS * MAP_ROWS;
 
-  while (open.length > 0 && iterations++ < MAX_ITER) {
+  while (open.length > 0 && iterations < MAX_ITER) {
     const cur = open.pop();
     if (!cur) break;
     // Ignore stale heap entries superseded by a cheaper route.
     if ((visited.get(key(cur.gx, cur.gy)) ?? Infinity) < cur.g) continue;
+    iterations++;
     if (cur.gx === gx && cur.gy === gy) { goalNode = cur; break; }
 
     for (const [dx, dy, base] of NEIGH) {
@@ -123,7 +128,7 @@ export function findPath(
       const prev = visited.get(k);
       if (prev !== undefined && prev <= ng) continue;
       visited.set(k, ng);
-      const h = Math.hypot(gx - nx, gy - ny);
+      const h = Math.hypot(gx - nx, gy - ny) * 0.4;
       open.push({ gx: nx, gy: ny, g: ng, f: ng + h, parent: cur });
     }
   }
@@ -139,33 +144,52 @@ export function findPath(
   // To world coords
   const worldPath = cells.map(c => ({ x: c.gx * CELL_SIZE + CELL_SIZE / 2, y: c.gy * CELL_SIZE + CELL_SIZE / 2 }));
   // Use exact goal at end
-  if (worldPath.length > 0) worldPath[worldPath.length - 1] = { x: goal.x, y: goal.y };
+  if (worldPath.length > 0) worldPath[worldPath.length - 1] = { ...destination };
 
   // String-pull / smooth: drop intermediate points where straight LOS is clear
   return smoothPath(terrain, start, worldPath, vehicle, heli);
 }
 
-function lineClear(terrain: TerrainCell[][], a: Position, b: Position, vehicle: boolean, heli: boolean): boolean {
+function segmentCost(terrain: TerrainCell[][], a: Position, b: Position, vehicle: boolean, heli: boolean): number {
   const dx = b.x - a.x, dy = b.y - a.y;
   const dist = Math.hypot(dx, dy);
-  const steps = Math.ceil(dist / (CELL_SIZE * 0.4));
+  const steps = Math.max(1, Math.ceil(dist / (CELL_SIZE * 0.2)));
+  let cost = 0;
+  let px = Math.floor(a.x / CELL_SIZE), py = Math.floor(a.y / CELL_SIZE);
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     const x = a.x + dx * t, y = a.y + dy * t;
     const gx = Math.floor(x / CELL_SIZE), gy = Math.floor(y / CELL_SIZE);
-    if (!cellPassable(terrain, gx, gy, vehicle, heli)) return false;
+    if (!cellPassable(terrain, gx, gy, vehicle, heli)) return Infinity;
+    // Sampling must not allow a diagonal to clip an impassable corner.
+    if (gx !== px && gy !== py &&
+        (!cellPassable(terrain, gx, py, vehicle, heli) || !cellPassable(terrain, px, gy, vehicle, heli))) return Infinity;
+    cost += moveCost(terrain[gy][gx]) * dist / steps;
+    px = gx; py = gy;
   }
-  return true;
+  return cost;
 }
 
 function smoothPath(terrain: TerrainCell[][], start: Position, path: Position[], vehicle: boolean, heli: boolean): Position[] {
   if (path.length <= 1) return path;
   const out: Position[] = [];
   let anchor: Position = start;
+  // Compare travel time, not only obstacle clearance. Otherwise string-pulling
+  // erases the road detour A* deliberately chose for its speed advantage.
+  const prefix = [0];
+  for (let k = 1; k < path.length; k++) {
+    prefix[k] = prefix[k - 1] + segmentCost(terrain, path[k - 1], path[k], vehicle, heli);
+  }
   let i = 0;
   while (i < path.length) {
     let j = path.length - 1;
-    while (j > i && !lineClear(terrain, anchor, path[j], vehicle, heli)) j--;
+    const entryCost = segmentCost(terrain, anchor, path[i], vehicle, heli);
+    while (j > i) {
+      const direct = segmentCost(terrain, anchor, path[j], vehicle, heli);
+      const original = entryCost + prefix[j] - prefix[i];
+      if (Number.isFinite(direct) && direct <= original * 1.015 + 0.01) break;
+      j--;
+    }
     out.push(path[j]);
     anchor = path[j];
     i = j + 1;

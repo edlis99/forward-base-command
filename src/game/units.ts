@@ -93,6 +93,7 @@ export function clearUnitOrders(unit: Unit) {
   unit.attackTarget = null;
   unit.boardTarget = null;
   unit.digOnArrive = false;
+  unit.holdOnArrive = false;
   unit.groupSpeedCap = null;
   unit.moveGroupId = null;
   unit.squadId = null;
@@ -192,7 +193,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const heli = unit.type === 'helicopter';
   const popRadius = unit.path.length > 0
     ? (veh ? CELL_SIZE * 0.9 : CELL_SIZE * 0.6)
-    : (veh ? 14 : 8);
+    : (unit.holdOnArrive ? 2 : veh ? 14 : 8);
 
   const distToTarget = distance(unit.pos, unit.targetPos);
   // Pop intermediate path waypoint
@@ -206,7 +207,8 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       unit.targetPos = null;
       unit.finalDest = null;
       if (unit.waypoints.length === 0 && unit.order !== 'hold_position' && unit.order !== 'patrol') {
-        unit.order = 'idle';
+        unit.order = unit.holdOnArrive ? 'hold_position' : 'idle';
+        unit.holdOnArrive = false;
         unit.groupSpeedCap = null;
         unit.moveGroupId = null;
       }
@@ -238,7 +240,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const alignFactor = veh ? Math.max(0.15, alignment) : (alignment > 0 ? 1 : 0.6);
 
   const moveCost = terrain ? terrain.movementCost : 1;
-  const traction = terrain ? terrain.traction : 1;
+  const traction = !heli && terrain ? terrain.traction : 1;
   const effectiveCost = heli ? 1 : moveCost;
   const suppressionPenalty = 1 - unit.suppression * 0.5;
   const moralePenalty = 0.7 + unit.morale * 0.3;
@@ -430,6 +432,7 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
   let coverPenalty = 1.0;
   if (targetTerrain) {
     if (targetEntrenched) coverPenalty = 0.42;
+    else if (targetTerrain.prop && target.type === 'infantry') coverPenalty = 1 - targetTerrain.coverBonus * 0.65;
     else if (targetTerrain.type === 'sandbag') coverPenalty = 0.7;
     else if (targetTerrain.type === 'urban') coverPenalty = 0.7;
     else if (targetTerrain.type === 'rubble' || targetTerrain.type === 'crater') coverPenalty = 0.78;

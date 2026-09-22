@@ -70,6 +70,7 @@ export interface Unit {
   boardTarget: string | null;
   /** Start digging after the current trench-line move finishes. */
   digOnArrive?: boolean;
+  holdOnArrive?: boolean;
   /** Group-move speed cap so a formation advances at its slowest member's pace. */
   groupSpeedCap: number | null;
   /** Shared command id used to pace units in the same moving formation. */
@@ -104,6 +105,12 @@ export interface TerrainCell {
   elevation: number; blocksLOS: boolean; blocksMovement: boolean;
   vehicleImpassable: boolean; trampled: boolean;
   traction: number; fatigueRate: number;
+  /** Tactical objects have an open firing/occupancy slot in their cell. */
+  prop?: 'logs' | 'hay' | 'stone_wall' | 'wreck' | 'barricade';
+  propAngle?: number;
+  roadName?: string;
+  /** Detection multiplier; paved roads expose moving and stationary units. */
+  exposure?: number;
 }
 
 export interface Projectile {

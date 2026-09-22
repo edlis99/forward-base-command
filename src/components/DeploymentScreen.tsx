@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { MissionDef, DeploymentTownId, DeploymentContext, DeploymentTown } from '../game/types';
 import { generateTerrain, LEIPALINGIS_ANCHORS } from '../game/terrain';
+import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
 
 interface Props {
@@ -16,7 +17,7 @@ const riskColor: Record<'low' | 'med' | 'high', string> = {
 // Tactical map colours – slightly muted / desaturated vs 3D scene
 const MAP_COLORS: Record<string, string> = {
   open: '#556b3f', tall_grass: '#6e8548', forest: '#25401c',
-  road: '#3b342a', gravel: '#7d7360', urban: '#a49484',
+  road: '#606b65', gravel: '#7d7360', urban: '#a49484',
   wall: '#7a7268', water: '#254b66', mud: '#3a2d1e',
   hedgerow: '#2e4a22', sandbag: '#9c8a5e', trench: '#2a2018',
   rubble: '#6f685c', crater: '#241d18',
@@ -27,34 +28,23 @@ const TOWN_KEY: Record<DeploymentTownId, keyof typeof LEIPALINGIS_ANCHORS> = {
   versiai: 'versiai', straciunai: 'straciunai', seirijai: 'seirijai',
 };
 
-function TacticalMap({ towns, selected, onSelect }: {
+function TacticalMap({ towns, selected, onSelect, seed }: {
+  seed?: number;
   towns: DeploymentTown[]; selected: DeploymentTownId;
   onSelect: (id: DeploymentTownId) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [size, setSize] = useState({ w: 640, h: 480 });
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  const terrain = useMemo(() => generateTerrain('leipalingis_region', 1337), []);
-
-  useEffect(() => {
-    if (!wrapRef.current) return;
-    const ro = new ResizeObserver(([e]) => {
-      const w = Math.floor(e.contentRect.width);
-      const h = Math.floor(w * (MAP_ROWS / MAP_COLS));
-      setSize({ w, h });
-    });
-    ro.observe(wrapRef.current);
-    return () => ro.disconnect();
-  }, []);
+  const terrain = useMemo(() => generateTerrain('leipalingis_region', seed), [seed]);
 
   useEffect(() => {
     const cvs = canvasRef.current; if (!cvs) return;
     const ctx = cvs.getContext('2d'); if (!ctx) return;
-    // Draw at native map resolution then let CSS scale — sharpest & cheap
-    cvs.width = MAP_COLS;
-    cvs.height = MAP_ROWS;
-    ctx.imageSmoothingEnabled = false;
+    // Four samples per grid cell; vector road lines retain the imported curves.
+    cvs.width = MAP_COLS * 4;
+    cvs.height = MAP_ROWS * 4;
+    ctx.imageSmoothingEnabled = true;
     const img = ctx.createImageData(MAP_COLS, MAP_ROWS);
     for (let y = 0; y < MAP_ROWS; y++) for (let x = 0; x < MAP_COLS; x++) {
       const c = terrain[y][x];
@@ -70,7 +60,18 @@ function TacticalMap({ towns, selected, onSelect }: {
       img.data[i + 2] = Math.max(0, Math.min(255, b + shade));
       img.data[i + 3] = 255;
     }
-    ctx.putImageData(img, 0, 0);
+    const base = document.createElement('canvas');
+    base.width = MAP_COLS; base.height = MAP_ROWS;
+    base.getContext('2d')!.putImageData(img, 0, 0);
+    ctx.drawImage(base, 0, 0, cvs.width, cvs.height);
+    ctx.scale(4, 4); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const road of LEIPALINGIS_ROADS) {
+      ctx.beginPath();
+      road.points.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+      ctx.strokeStyle = road.paved ? '#bdc4af' : '#99876b';
+      ctx.lineWidth = road.paved ? road.width * .45 : .45;
+      ctx.stroke();
+    }
   }, [terrain]);
 
   const cellToPct = (x: number, y: number) => ({
@@ -86,7 +87,6 @@ function TacticalMap({ towns, selected, onSelect }: {
         ref={canvasRef}
         style={{
           width: '100%', height: 'auto', display: 'block',
-          imageRendering: 'pixelated',
           filter: 'contrast(1.05) saturate(0.9)',
         }}
       />
@@ -152,7 +152,7 @@ function TacticalMap({ towns, selected, onSelect }: {
         <div>N</div><div style={{ opacity: 0.6 }}>↑</div>
       </div>
       <div className="absolute bottom-2 left-2 font-mono text-[10px]" style={{ color: '#8a9a7a' }}>
-        Scale: {(MAP_COLS * 32 / 1000).toFixed(1)} × {(MAP_ROWS * 32 / 1000).toFixed(1)} km
+        Real geography · distances compressed for play
       </div>
     </div>
   );
@@ -186,7 +186,11 @@ const DeploymentScreen: React.FC<Props> = ({ mission, onStart, onBack }) => {
         <div className="grid grid-cols-[1fr_360px] gap-5">
           {/* Left: tactical map + town list */}
           <div className="space-y-4">
-            <TacticalMap towns={towns} selected={town} onSelect={setTown} />
+            <TacticalMap towns={towns} selected={town} onSelect={setTown} seed={mission.mapSeed} />
+            <div className="text-[10px] flex flex-wrap justify-between gap-2 text-[#96a888]">
+              <span>Light grey: paved · ochre: tracks · dark green: woodland · blue: water</span>
+              <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline">© OpenStreetMap contributors · ODbL</a>
+            </div>
             <div className="grid grid-cols-2 gap-2">
               {towns.map(t => {
                 const active = t.id === town;
@@ -200,7 +204,7 @@ const DeploymentScreen: React.FC<Props> = ({ mission, onStart, onBack }) => {
                     <div className="flex items-baseline justify-between">
                       <div className="text-sm" style={{ color: '#e0eac8' }}>{t.name}</div>
                       <div className="text-[10px] flex gap-2">
-                        <span style={{ color: '#a5cf6f' }}>{t.distanceKm} km</span>
+                        <span style={{ color: '#a5cf6f' }}>~{t.distanceKm} km</span>
                         <span style={{ color: riskColor[t.risk] }}>{t.risk}</span>
                       </div>
                     </div>
@@ -220,7 +224,7 @@ const DeploymentScreen: React.FC<Props> = ({ mission, onStart, onBack }) => {
               <div className="text-[11px] mt-1" style={{ color: '#6a7a6a' }}>Terrain: {chosen?.terrainNote}</div>
               <div className="text-[11px] mt-1" style={{ color: '#a5cf6f' }}>Advantage: {chosen?.advantage}</div>
               <div className="text-[11px] mt-1 flex gap-3">
-                <span style={{ color: '#a5cf6f' }}>{chosen?.distanceKm} km to objective</span>
+                <span style={{ color: '#a5cf6f' }}>~{chosen?.distanceKm} km geographic separation</span>
                 <span style={{ color: chosen ? riskColor[chosen.risk] : '#888' }}>risk: {chosen?.risk}</span>
               </div>
             </div>
@@ -238,7 +242,7 @@ const DeploymentScreen: React.FC<Props> = ({ mission, onStart, onBack }) => {
                 </div>
               ))}
               <div className="text-[10px] mt-2" style={{ color: '#7a8a6a' }}>
-                Combined-arms bonus applies when infantry, tanks and APC operate within 90 m of each other.
+                Asphalt: move ×1.46, detection ×1.50. Right-click cover to occupy and hold. Infantry can use forest routes; armour needs clear lanes.
               </div>
             </div>
 
@@ -256,3 +260,4 @@ const DeploymentScreen: React.FC<Props> = ({ mission, onStart, onBack }) => {
 };
 
 export default DeploymentScreen;
+

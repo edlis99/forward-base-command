@@ -1,0 +1,192 @@
+import snapshot from './leipalingis-osm.json';
+import { TerrainCell, TerrainType } from '../types';
+import { MAP_COLS, MAP_ROWS } from '../constants';
+
+type Point = number[];
+export interface MapRoad { class: string; id: number; name: string; ref: string; paved: boolean; width: number; points: Point[]; }
+export const MAP_ATTRIBUTION = snapshot.source;
+export const MAP_SOURCE_DATE = snapshot.downloaded;
+
+// Clip imported ways at the campaign boundary. Their OSM endpoints can lie
+// many kilometres outside the downloaded box. Coordinates are grid units.
+function clipSegment(a: Point, b: Point): [Point, Point] | null {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  let lo = 0, hi = 1;
+  for (const [p, q] of [[-dx, a[0]], [dx, MAP_COLS - a[0]], [-dy, a[1]], [dy, MAP_ROWS - a[1]]]) {
+    if (p === 0) { if (q < 0) return null; continue; }
+    const r = q / p;
+    if (p < 0) lo = Math.max(lo, r); else hi = Math.min(hi, r);
+    if (lo > hi) return null;
+  }
+  return [[a[0] + lo * dx, a[1] + lo * dy], [a[0] + hi * dx, a[1] + hi * dy]];
+}
+
+export const LEIPALINGIS_ROADS: MapRoad[] = snapshot.roads.flatMap(road => {
+  const sections: Point[][] = [];
+  let current: Point[] = [];
+  for (let i = 1; i < road.points.length; i++) {
+    const segment = clipSegment(road.points[i - 1], road.points[i]);
+    if (!segment) { if (current.length > 1) sections.push(current); current = []; continue; }
+    if (current.length && Math.hypot(current[current.length - 1][0] - segment[0][0], current[current.length - 1][1] - segment[0][1]) > 0.01) {
+      sections.push(current); current = [];
+    }
+    if (!current.length) current.push(segment[0]);
+    current.push(segment[1]);
+  }
+  if (current.length > 1) sections.push(current);
+  const width = /primary|secondary/.test(road.class) ? 2.8 : road.class === 'track' ? 1.15 : 1.8;
+  return sections.map(points => ({ ...road, width, points }));
+});
+
+function place(name: string) {
+  const p = snapshot.places.find(p => p.name === name)!;
+  return { x: Math.round(p.point[0]), y: Math.round(p.point[1]) };
+}
+// Seirijai itself is outside this local crop. The fifth staging position is
+// explicitly the northern 180 approach, not a fictional placement of the town.
+const northRoad = LEIPALINGIS_ROADS.filter(r => r.ref === '180').flatMap(r => r.points)
+  .filter(p => p[1] >= 4 && p[1] < 16).sort((a, b) => a[1] - b[1])[0];
+export const LEIPALINGIS_ANCHORS = {
+  leipalingis: place('Leipalingis'), jovaisiai: place('Jovaišiai'),
+  didziasalis: place('Didžiasalis'), versiai: place('Veršiai'), straciunai: place('Stračiūnai'),
+  seirijai: { x: Math.round(northRoad?.[0] ?? 97), y: Math.round(northRoad?.[1] ?? 8) },
+};
+
+function inside(x: number, y: number, ring: Point[]) {
+  let hit = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i], b = ring[j];
+    if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) hit = !hit;
+  }
+  return hit;
+}
+
+type Setter = (grid: TerrainCell[][], x: number, y: number, type: TerrainType) => void;
+
+/** Real geographic topology; widened roads and representative buildings for play. */
+export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set: Setter) {
+  // Fields, forests and water are OSM polygons, not random circular blobs.
+  for (const area of [...snapshot.areas].sort((a, b) =>
+    ['field', 'forest', 'water'].indexOf(a.kind) - ['field', 'forest', 'water'].indexOf(b.kind))) {
+    const minX = Math.max(0, Math.floor(Math.min(...area.points.map(p => p[0]))));
+    const maxX = Math.min(MAP_COLS - 1, Math.ceil(Math.max(...area.points.map(p => p[0]))));
+    const minY = Math.max(0, Math.floor(Math.min(...area.points.map(p => p[1]))));
+    const maxY = Math.min(MAP_ROWS - 1, Math.ceil(Math.max(...area.points.map(p => p[1]))));
+    const holes: Point[][] = 'holes' in area ? area.holes : [];
+    for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+      if (!inside(x + 0.5, y + 0.5, area.points) || holes.some(h => inside(x + 0.5, y + 0.5, h))) continue;
+      set(grid, x, y, area.kind === 'field' ? (rand() < 0.24 ? 'tall_grass' : 'open') : area.kind as TerrainType);
+    }
+  }
+
+  // All road shoulders remain traversable, with enough clearance for a 3x3
+  // vehicle footprint. Tracks are slower and do not acquire asphalt bonuses.
+  const paintSegment = (a: Point, b: Point, radius: number, type: TerrainType, name?: string) => {
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const steps = Math.max(1, Math.ceil(length * 3));
+    for (let i = 0; i <= steps; i++) {
+      const x = a[0] + (b[0] - a[0]) * i / steps, y = a[1] + (b[1] - a[1]) * i / steps;
+      for (let cy = Math.floor(y - radius); cy <= Math.ceil(y + radius); cy++) {
+        for (let cx = Math.floor(x - radius); cx <= Math.ceil(x + radius); cx++) {
+          if (!grid[cy]?.[cx] || Math.hypot(cx + 0.5 - x, cy + 0.5 - y) > radius + 0.25) continue;
+          if (type !== 'road' && grid[cy][cx].type === 'road') continue;
+          set(grid, cx, cy, type);
+          grid[cy][cx].roadName = name;
+        }
+      }
+    }
+  };
+  for (const road of LEIPALINGIS_ROADS) for (let i = 1; i < road.points.length; i++) {
+    // Widen only vehicular routes. Clearing every forest track as a road
+    // shoulder would erase most woodland at this campaign scale.
+    if (road.class !== 'track') paintSegment(road.points[i - 1], road.points[i], road.width / 2 + 1.25, 'open', road.name);
+  }
+  for (const road of LEIPALINGIS_ROADS) for (let i = 1; i < road.points.length; i++) {
+    paintSegment(road.points[i - 1], road.points[i], road.width / 2 + .2, 'gravel', road.name);
+  }
+  for (const road of LEIPALINGIS_ROADS) for (let i = 1; i < road.points.length; i++) {
+    paintSegment(road.points[i - 1], road.points[i], road.width / 2, road.paved ? 'road' : 'gravel', road.name);
+  }
+  // Irregular meadow patches fill unsurveyed agricultural ground. These are
+  // gameplay vegetation, not additional claimed geographic features.
+  for (let y = 0; y < MAP_ROWS; y++) for (let x = 0; x < MAP_COLS; x++) {
+    const c = grid[y][x];
+    if (c.type === 'open' && !c.roadName && Math.sin(x * .31) + Math.cos(y * .27) + Math.sin((x + y) * .19) > .9) {
+      set(grid, x, y, 'tall_grass');
+    }
+  }
+
+  const free = (x: number, y: number) => {
+    const c = grid[y]?.[x];
+    return c && !c.roadName && (c.type === 'open' || c.type === 'tall_grass');
+  };
+  const placeProp = (x: number, y: number, prop: NonNullable<TerrainCell['prop']>, angle: number) => {
+    if (!free(x, y)) return;
+    set(grid, x, y, 'sandbag');
+    const cell = grid[y][x];
+    cell.prop = prop; cell.propAngle = angle;
+    cell.coverBonus = { logs: 0.48, hay: 0.22, stone_wall: 0.62, wreck: 0.58, barricade: 0.52 }[prop];
+    cell.concealment = prop === 'hay' ? 0.38 : 0.12;
+  };
+
+  // Use surveyed building centres, thinned to avoid a solid block of buildings
+  // at the compressed campaign scale. Farmyards add usable cover pockets.
+  for (const [bx, by, angle] of snapshot.buildings) {
+    let x = Math.floor(bx), y = Math.floor(by);
+    if (!grid[y]?.[x]) continue;
+    if (!free(x, y)) {
+      let best: { x: number; y: number; d: number } | null = null;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        if (!free(x + dx, y + dy)) continue;
+        const d = dx * dx + dy * dy;
+        if (!best || d < best.d) best = { x: x + dx, y: y + dy, d };
+      }
+      if (!best) continue;
+      x = best.x; y = best.y;
+    }
+    if ([-1, 0, 1].some(dy => [-1, 0, 1].some(dx => grid[y + dy]?.[x + dx]?.type === 'urban'))) continue;
+    set(grid, x, y, 'urban'); grid[y][x].propAngle = angle;
+    for (const [dx, dy, prop] of [[2, 0, 'logs'], [-2, 1, 'stone_wall'], [0, 2, 'hay']] as const) {
+      placeProp(x + dx, y + dy, prop, angle);
+    }
+  }
+
+  // Forest edges, field boundaries and road pull-offs supply intermediate
+  // fighting positions, with gaps for flanking and machinery.
+  for (let y = 3; y < MAP_ROWS - 3; y++) for (let x = 3; x < MAP_COLS - 3; x++) {
+    if (!free(x, y)) continue;
+    const forestEdge = grid[y - 1][x].type === 'forest' || grid[y + 1][x].type === 'forest';
+    const roadEdge = grid[y][x - 2].roadName || grid[y][x + 2].roadName;
+    if (forestEdge && rand() < 0.15) placeProp(x, y, 'logs', rand() * Math.PI);
+    else if (roadEdge && rand() < 0.07) {
+      placeProp(x, y, rand() < 0.4 ? 'wreck' : 'barricade', Math.PI / 2);
+    } else if ((x % 18 === 0 || y % 16 === 0) && rand() < 0.28) {
+      if (rand() < 0.5) set(grid, x, y, 'hedgerow'); else placeProp(x, y, 'hay', 0);
+    }
+  }
+
+  // Small staging clearings are a gameplay addition, not claimed OSM roads.
+  // Keep the approach connected to the real network and never clear water.
+  for (const [name, a] of Object.entries(LEIPALINGIS_ANCHORS)) {
+    const radius = name === 'leipalingis' ? 3 : 4;
+    for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
+      const c = grid[a.y + dy]?.[a.x + dx];
+      if (c && !c.roadName && c.type !== 'water') set(grid, a.x + dx, a.y + dy, 'open');
+    }
+    // Put cover on the edge of each staging area so it is immediately usable.
+    for (const d of [-2, 0, 2]) placeProp(a.x + d, a.y + radius + 2, d === 0 ? 'logs' : 'stone_wall', 0);
+  }
+  const L = LEIPALINGIS_ANCHORS.leipalingis;
+  for (const [dx, dy] of [[-4, -18], [4, -18], [-4, 18], [4, 18], [-18, -3], [-18, 3], [18, -3], [18, 3]]) {
+    let dug = false;
+    for (let r = 0; r <= 4 && !dug; r++) {
+      for (let sy = -r; sy <= r && !dug; sy++) for (let sx = -r; sx <= r && !dug; sx++) {
+        if (!free(L.x + dx + sx, L.y + dy + sy)) continue;
+        for (let d = -1; d <= 1; d++) if (free(L.x + dx + sx + d, L.y + dy + sy)) {
+          set(grid, L.x + dx + sx + d, L.y + dy + sy, 'trench');
+        }
+        dug = true;
+      }
+    }
+  }
+}

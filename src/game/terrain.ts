@@ -1,5 +1,7 @@
 import { TerrainCell, TerrainType, MapLayoutId } from './types';
 import { MAP_COLS, MAP_ROWS, CELL_SIZE } from './constants';
+import { buildLeipalingis } from './maps/leipalingis';
+export { LEIPALINGIS_ANCHORS } from './maps/leipalingis';
 
 function seededRandom(seed: number) {
   let s = seed || 1;
@@ -40,7 +42,7 @@ export function generateTerrain(layout: MapLayoutId = 'farmhouse_complex', seed:
     case 'village_crossroads': buildVillageCrossroads(grid, rand); break;
     case 'forest_outpost': buildForestOutpost(grid, rand); break;
     case 'desert_road': buildDesertRoad(grid, rand); break;
-    case 'leipalingis_region': buildLeipalingisRegion(grid, rand); break;
+    case 'leipalingis_region': buildLeipalingis(grid, rand, setTerrain); break;
   }
 
   applyWaterElevation(grid);
@@ -226,323 +228,6 @@ function buildDesertRoad(grid: TerrainCell[][], rand: () => number) {
   raiseArea(grid, 70, 8, 3);
 }
 
-// ============================== LEIPALINGIS REGION ==============================
-/**
- * Large-scale Lithuanian rural region for the Recapture Leipalingis operation.
- * 160x120 cells. Central town Leipalingis is the objective; five deployment
- * villages spread around it, connected by roads and separated by forests,
- * lakes, hedgerow-lined fields and hills. All terrain has tactical meaning.
- */
-export const LEIPALINGIS_ANCHORS = {
-  leipalingis:  { x: 125, y: 80 },   // main objective, centre-east
-  jovaisiai:    { x: 62,  y: 30 },   // NW
-  didziasalis:  { x: 180, y: 30 },   // NE
-  versiai:      { x: 180, y: 130 },  // SE
-  straciunai:   { x: 62,  y: 130 },  // SW
-  seirijai:     { x: 15,  y: 80 },   // far west (long approach)
-};
-
-function buildLeipalingisRegion(grid: TerrainCell[][], rand: () => number) {
-  // Base ground: patchy fields with scattered tall grass
-  scatterGrass(grid, rand, 0.11);
-
-  // ---------- Large forest belts (concealment / no-vehicle zones) ----------
-  const forestBlobs: Array<[number, number, number]> = [
-    // NW belt
-    [28, 55, 9], [40, 70, 8], [52, 85, 7], [30, 40, 6], [45, 50, 5],
-    // NE belt
-    [150, 15, 6], [165, 45, 8], [195, 55, 6], [175, 70, 7], [200, 90, 6],
-    // SE belt
-    [155, 105, 8], [170, 118, 7], [140, 115, 6], [190, 115, 5],
-    // SW belt
-    [55, 110, 7], [40, 100, 6], [80, 118, 6], [25, 115, 5],
-    // Central pockets
-    [95, 45, 5], [105, 105, 5], [80, 65, 4], [115, 55, 4], [140, 65, 4],
-    [90, 90, 4], [125, 40, 5], [70, 45, 4], [155, 85, 4],
-    // Edge blobs
-    [10, 20, 6], [10, 140, 6], [210, 20, 5], [210, 140, 5],
-  ];
-  for (const [x, y, r] of forestBlobs) placeForest(grid, rand, x, y, r);
-
-  // ---------- Rivers and lakes (movement blockers, need bridges) ----------
-  // Winding north-south river west of Leipalingis
-  for (let y = 0; y < MAP_ROWS; y++) {
-    const rx = 34 + Math.round(Math.sin(y * 0.09) * 5 + Math.sin(y * 0.24) * 2);
-    setTerrain(grid, rx, y, 'water');
-    setTerrain(grid, rx + 1, y, 'water');
-  }
-  // Meandering east-west stream south of Leipalingis
-  for (let x = 60; x < 210; x++) {
-    const ry = 108 + Math.round(Math.sin(x * 0.11) * 3 + Math.cos(x * 0.19) * 2);
-    if (grid[ry]?.[x]?.type !== 'water') setTerrain(grid, x, ry, 'water');
-    if (grid[ry + 1]?.[x]?.type !== 'water') setTerrain(grid, x + 1, ry + 1, 'water');
-  }
-  // Lakes (irregular)
-  const lakes: Array<[number, number, number]> = [
-    [92, 55, 5], [160, 40, 4], [70, 118, 4], [175, 95, 3], [50, 65, 3],
-  ];
-  for (const [cx, cy, r] of lakes) {
-    for (let dy = -r - 1; dy <= r + 1; dy++) for (let dx = -r - 1; dx <= r + 1; dx++) {
-      const d = Math.sqrt(dx * dx + dy * dy) + (rand() - 0.5) * 0.9;
-      if (d <= r) setTerrain(grid, cx + dx, cy + dy, 'water');
-    }
-  }
-  // Marshland fringes
-  for (let i = 0; i < 220; i++) {
-    const x = Math.floor(rand() * MAP_COLS);
-    const y = Math.floor(rand() * MAP_ROWS);
-    const c = grid[y]?.[x];
-    if (!c) continue;
-    // near water?
-    let nearWater = false;
-    for (let dy = -1; dy <= 1 && !nearWater; dy++) for (let dx = -1; dx <= 1; dx++) {
-      if (grid[y + dy]?.[x + dx]?.type === 'water') { nearWater = true; break; }
-    }
-    if (nearWater && c.type === 'open') setTerrain(grid, x, y, 'mud');
-  }
-
-  // ---------- Curved road network (no straight-line roads) ----------
-  const paintRoad = (x: number, y: number) => {
-    const cell = grid[y]?.[x];
-    if (!cell) return;
-    if (cell.type === 'water') {
-      setTerrain(grid, x, y, 'gravel'); // bridge / causeway
-    } else if (cell.type !== 'urban' && cell.type !== 'wall') {
-      setTerrain(grid, x, y, 'road');
-    }
-  };
-  // Curve a path between two anchors using two seeded perpendicular offsets
-  // to produce an S-curve; then rasterize with a 2-cell-wide brush that shifts
-  // to follow the tangent (so it never looks like a ruled line).
-  // Sample a cubic Bezier between two points with two control offsets
-  const rasterCubic = (ax: number, ay: number, bx: number, by: number,
-                       c1x: number, c1y: number, c2x: number, c2y: number) => {
-    const len = Math.hypot(bx - ax, by - ay);
-    const steps = Math.max(80, Math.round(len * 2.5));
-    let prevGx = -1, prevGy = -1;
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps, it = 1 - t;
-      const px = it * it * it * ax + 3 * it * it * t * c1x + 3 * it * t * t * c2x + t * t * t * bx;
-      const py = it * it * it * ay + 3 * it * it * t * c1y + 3 * it * t * t * c2y + t * t * t * by;
-      const tx = 3 * it * it * (c1x - ax) + 6 * it * t * (c2x - c1x) + 3 * t * t * (bx - c2x);
-      const ty = 3 * it * it * (c1y - ay) + 6 * it * t * (c2y - c1y) + 3 * t * t * (by - c2y);
-      const tl = Math.max(0.001, Math.hypot(tx, ty));
-      const px2 = -ty / tl, py2 = tx / tl;
-      const gx = Math.round(px), gy = Math.round(py);
-      if (gx === prevGx && gy === prevGy) continue;
-      prevGx = gx; prevGy = gy;
-      paintRoad(gx, gy);
-      paintRoad(Math.round(px + px2), Math.round(py + py2));
-      if (Math.abs(t - 0.5) < 0.08 || rand() < 0.06) paintRoad(Math.round(px - px2), Math.round(py - py2));
-      if (rand() < 0.08) {
-        const jx = Math.round(px + px2 * 1.6);
-        const jy = Math.round(py + py2 * 1.6);
-        if (grid[jy]?.[jx]?.type === 'open' || grid[jy]?.[jx]?.type === 'tall_grass') {
-          setTerrain(grid, jx, jy, 'gravel');
-        }
-      }
-    }
-  };
-
-  // Multi-waypoint curved road. Inserts intermediate waypoints offset
-  // perpendicular to the straight line so the route weaves organically,
-  // and forces an angled final approach so roads never enter a village head-on.
-  const curveRoad = (ax: number, ay: number, bx: number, by: number, curviness = 1) => {
-    const dx = bx - ax, dy = by - ay;
-    const len = Math.max(1, Math.hypot(dx, dy));
-    const nx = -dy / len, ny = dx / len;
-    const segs = len > 60 ? 3 : 2;
-    const pts: Array<[number, number]> = [[ax, ay]];
-    for (let s = 1; s < segs; s++) {
-      const t = s / segs;
-      const side = (s % 2 === 0 ? 1 : -1) * (rand() < 0.5 ? 1 : -1);
-      const mag = len * (0.12 + rand() * 0.14) * curviness * side;
-      const along = t + (rand() - 0.5) * 0.08;
-      pts.push([ax + dx * along + nx * mag, ay + dy * along + ny * mag]);
-    }
-    const approachSide = (rand() < 0.5 ? 1 : -1);
-    const approachMag = len * 0.09 * curviness * approachSide;
-    pts.push([ax + dx * 0.88 + nx * approachMag, ay + dy * 0.88 + ny * approachMag]);
-    pts.push([bx, by]);
-    for (let i = 0; i < pts.length - 1; i++) {
-      const [px1, py1] = pts[i];
-      const [px2, py2] = pts[i + 1];
-      const sdx = px2 - px1, sdy = py2 - py1;
-      const slen = Math.max(1, Math.hypot(sdx, sdy));
-      const snx = -sdy / slen, sny = sdx / slen;
-      const off1 = (rand() * 2 - 1) * slen * 0.22 * curviness;
-      const off2 = -(rand() * 2 - 1) * slen * 0.22 * curviness;
-      const c1x = px1 + sdx * 0.33 + snx * off1;
-      const c1y = py1 + sdy * 0.33 + sny * off1;
-      const c2x = px1 + sdx * 0.66 + snx * off2;
-      const c2y = py1 + sdy * 0.66 + sny * off2;
-      rasterCubic(px1, py1, px2, py2, c1x, c1y, c2x, c2y);
-    }
-  };
-
-  const A = LEIPALINGIS_ANCHORS;
-  // Radial main roads into Leipalingis — all curved, none straight
-  curveRoad(A.jovaisiai.x, A.jovaisiai.y, A.leipalingis.x, A.leipalingis.y, 1.3);
-  curveRoad(A.didziasalis.x, A.didziasalis.y, A.leipalingis.x, A.leipalingis.y, 1.2);
-  curveRoad(A.versiai.x, A.versiai.y, A.leipalingis.x, A.leipalingis.y, 1.4);
-  curveRoad(A.straciunai.x, A.straciunai.y, A.leipalingis.x, A.leipalingis.y, 1.3);
-  curveRoad(A.seirijai.x, A.seirijai.y, A.jovaisiai.x, A.jovaisiai.y, 1.4);
-  curveRoad(A.seirijai.x, A.seirijai.y, A.straciunai.x, A.straciunai.y, 1.3);
-  curveRoad(A.jovaisiai.x, A.jovaisiai.y, A.didziasalis.x, A.didziasalis.y, 1.1);
-  curveRoad(A.straciunai.x, A.straciunai.y, A.versiai.x, A.versiai.y, 1.2);
-  curveRoad(A.didziasalis.x, A.didziasalis.y, A.versiai.x, A.versiai.y, 1.3);
-
-  // Dirt tracks (flanking cover-y routes)
-  const dirtTrack = (ax: number, ay: number, bx: number, by: number) => {
-    const dx = bx - ax, dy = by - ay;
-    const len = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-    const nx = -dy / len, ny = dx / len;
-    const off = (rand() * 2 - 1) * len * 0.22;
-    const cx = (ax + bx) / 2 + nx * off;
-    const cy = (ay + by) / 2 + ny * off;
-    const steps = Math.round(len * 2);
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps, it = 1 - t;
-      const px = it * it * ax + 2 * it * t * cx + t * t * bx;
-      const py = it * it * ay + 2 * it * t * cy + t * t * by;
-      const gx = Math.round(px), gy = Math.round(py);
-      const cell = grid[gy]?.[gx];
-      if (!cell || cell.type === 'water' || cell.type === 'road' || cell.type === 'urban') continue;
-      setTerrain(grid, gx, gy, 'gravel');
-    }
-  };
-  dirtTrack(A.jovaisiai.x + 8, A.jovaisiai.y + 10, A.leipalingis.x - 20, A.leipalingis.y - 25);
-  dirtTrack(A.versiai.x - 8, A.versiai.y - 10, A.leipalingis.x + 10, A.leipalingis.y + 15);
-  dirtTrack(A.straciunai.x + 15, A.straciunai.y - 8, A.leipalingis.x - 15, A.leipalingis.y + 8);
-  dirtTrack(A.didziasalis.x - 10, A.didziasalis.y + 12, A.leipalingis.x + 5, A.leipalingis.y - 15);
-
-  // ---------- Hedgerow-lined fields between villages ----------
-  const hedgeCurve = (ax: number, ay: number, bx: number, by: number) => {
-    const dx = bx - ax, dy = by - ay;
-    const len = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-    const nx = -dy / len, ny = dx / len;
-    const off = (rand() * 2 - 1) * len * 0.12;
-    const cx = (ax + bx) / 2 + nx * off;
-    const cy = (ay + by) / 2 + ny * off;
-    const steps = Math.round(len * 2);
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps, it = 1 - t;
-      const px = it * it * ax + 2 * it * t * cx + t * t * bx;
-      const py = it * it * ay + 2 * it * t * cy + t * t * by;
-      const gx = Math.round(px), gy = Math.round(py);
-      const c = grid[gy]?.[gx];
-      if (c && (c.type === 'open' || c.type === 'tall_grass')) setTerrain(grid, gx, gy, 'hedgerow');
-    }
-  };
-  hedgeCurve(70, 48, 110, 50);
-  hedgeCurve(85, 70, 118, 72);
-  hedgeCurve(85, 92, 118, 95);
-  hedgeCurve(138, 55, 168, 58);
-  hedgeCurve(138, 92, 168, 90);
-  hedgeCurve(70, 100, 100, 108);
-  hedgeCurve(50, 45, 60, 60);
-
-  // ---------- Elevation hills (LOS advantage) ----------
-  raiseArea(grid, 100, 45, 6);
-  raiseArea(grid, 148, 75, 7);
-  raiseArea(grid, 80, 100, 5);
-  raiseArea(grid, 185, 108, 6);
-  raiseArea(grid, 50, 95, 5);
-  raiseArea(grid, 200, 45, 5);
-
-  // ---------- Isolated farmhouses / barns as cover ----------
-  const farms: Array<[number, number]> = [
-    [78, 42], [98, 68], [110, 48], [125, 105], [148, 55],
-    [162, 75], [170, 118], [70, 75], [55, 55], [190, 60],
-    [115, 25], [135, 118], [80, 25], [95, 118], [45, 78],
-    [175, 45], [140, 95], [100, 90], [58, 108], [155, 118],
-  ];
-  for (const [x, y] of farms) {
-    if (grid[y]?.[x]?.type === 'open' || grid[y]?.[x]?.type === 'tall_grass') {
-      placeUrbanCluster(grid, rand, x, y, 1, 0.7);
-      if (rand() < 0.7) setTerrain(grid, x + 2, y, 'wall');
-      if (rand() < 0.7) setTerrain(grid, x - 2, y, 'wall');
-      if (rand() < 0.5) setTerrain(grid, x, y + 2, 'hedgerow');
-    }
-  }
-
-  // ---------- Deployment villages (irregular clusters) ----------
-  const village = (cx: number, cy: number, size: number) => {
-    for (let dy = -size; dy <= size; dy++) for (let dx = -size; dx <= size; dx++) {
-      if (Math.abs(dx) + Math.abs(dy) > size + 1) continue;
-      const x = cx + dx, y = cy + dy;
-      const cell = grid[y]?.[x];
-      if (!cell) continue;
-      if (cell.type === 'road' || cell.type === 'water') continue;
-      if (rand() < 0.55) setTerrain(grid, x, y, 'urban');
-      else if (rand() < 0.4) setTerrain(grid, x, y, 'wall');
-    }
-    // yard walls & orchards (hedgerow) around edges
-    for (let d = -size - 1; d <= size + 1; d++) {
-      if (rand() < 0.4) setTerrain(grid, cx + d, cy - size - 1, 'wall');
-      if (rand() < 0.4) setTerrain(grid, cx + d, cy + size + 1, 'wall');
-      if (rand() < 0.35) setTerrain(grid, cx - size - 2, cy + d, 'hedgerow');
-      if (rand() < 0.35) setTerrain(grid, cx + size + 2, cy + d, 'hedgerow');
-    }
-  };
-  village(A.jovaisiai.x, A.jovaisiai.y, 3);
-  village(A.didziasalis.x, A.didziasalis.y, 3);
-  village(A.versiai.x, A.versiai.y, 3);
-  village(A.straciunai.x, A.straciunai.y, 3);
-  village(A.seirijai.x, A.seirijai.y, 4); // larger, farthest
-
-  // ---------- LEIPALINGIS — main objective town (dense) ----------
-  const L = A.leipalingis;
-  // outer perimeter wall / hedgerow (irregular gaps for entry)
-  for (let d = -14; d <= 14; d++) {
-    if (Math.abs(d) < 3 || rand() < 0.15) continue;
-    setTerrain(grid, L.x + d, L.y - 14, rand() < 0.5 ? 'wall' : 'hedgerow');
-    setTerrain(grid, L.x + d, L.y + 14, rand() < 0.5 ? 'wall' : 'hedgerow');
-    setTerrain(grid, L.x - 14, L.y + d, rand() < 0.5 ? 'wall' : 'hedgerow');
-    setTerrain(grid, L.x + 14, L.y + d, rand() < 0.5 ? 'wall' : 'hedgerow');
-  }
-  // central admin block
-  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) setTerrain(grid, L.x + dx, L.y + dy, 'urban');
-  // residential blocks
-  for (const [ox, oy] of [[-9, -7], [-9, 7], [9, -7], [9, 7], [0, -9], [0, 9], [-7, 0], [7, 0], [-5, -5], [5, 5], [-5, 5], [5, -5]] as [number, number][]) {
-    placeUrbanCluster(grid, rand, L.x + ox, L.y + oy, 2, 0.75);
-  }
-  // defensive rings
-  for (let dy = -10; dy <= 10; dy++) {
-    if (rand() < 0.35) setTerrain(grid, L.x - 12, L.y + dy, 'sandbag');
-    if (rand() < 0.35) setTerrain(grid, L.x + 12, L.y + dy, 'sandbag');
-  }
-  for (let dx = -10; dx <= 10; dx++) {
-    if (rand() < 0.35) setTerrain(grid, L.x + dx, L.y - 12, 'sandbag');
-    if (rand() < 0.35) setTerrain(grid, L.x + dx, L.y + 12, 'sandbag');
-  }
-  // enemy trench segments on all 4 approaches
-  for (let d = -7; d <= 7; d++) {
-    if (Math.abs(d) < 2) continue;
-    if (rand() < 0.7) setTerrain(grid, L.x + d, L.y - 16, 'trench');
-    if (rand() < 0.7) setTerrain(grid, L.x + d, L.y + 16, 'trench');
-    if (rand() < 0.7) setTerrain(grid, L.x - 16, L.y + d, 'trench');
-    if (rand() < 0.7) setTerrain(grid, L.x + 16, L.y + d, 'trench');
-  }
-  // craters and rubble from prior shelling
-  for (let i = 0; i < 55; i++) {
-    const x = L.x - 22 + Math.floor(rand() * 44);
-    const y = L.y - 22 + Math.floor(rand() * 44);
-    if (grid[y]?.[x]?.type === 'open' || grid[y]?.[x]?.type === 'tall_grass') {
-      setTerrain(grid, x, y, rand() < 0.5 ? 'crater' : 'rubble');
-    }
-  }
-
-  // Scatter tall_grass for concealment
-  for (let i = 0; i < 700; i++) {
-    const x = Math.floor(rand() * MAP_COLS);
-    const y = Math.floor(rand() * MAP_ROWS);
-    const c = grid[y]?.[x];
-    if (c?.type === 'open' && rand() < 0.5) setTerrain(grid, x, y, 'tall_grass');
-  }
-}
-
-
 // ============================== HELPERS ==============================
 
 
@@ -594,6 +279,8 @@ export function setTerrain(grid: TerrainCell[][], x: number, y: number, type: Te
   if (x < 0 || x >= MAP_COLS || y < 0 || y >= MAP_ROWS) return;
   const c = grid[y][x];
   c.type = type;
+  delete c.prop; delete c.propAngle; delete c.roadName;
+  c.exposure = 1;
   c.coverBonus = 0;
   c.concealment = 0;
   c.movementCost = 1;
@@ -611,7 +298,7 @@ export function setTerrain(grid: TerrainCell[][], x: number, y: number, type: Te
       c.coverBonus = 0.2; c.concealment = 0.35; c.movementCost = 1.8;
       c.vehicleImpassable = true; c.fatigueRate = 1.4; break;
     case 'road':
-      c.movementCost = 0.6; c.fatigueRate = 0.7; c.traction = 1.1; break;
+      c.movementCost = 0.72; c.fatigueRate = 0.7; c.traction = 1.05; c.exposure = 1.5; break;
     case 'water':
       c.movementCost = 99; c.blocksMovement = true; break;
     case 'wall':
@@ -704,7 +391,10 @@ export function findNearestPassableWorld(
   if (isHelicopter) return { x: worldX, y: worldY };
   const gx = Math.max(0, Math.min(MAP_COLS - 1, Math.floor(worldX / CELL_SIZE)));
   const gy = Math.max(0, Math.min(MAP_ROWS - 1, Math.floor(worldY / CELL_SIZE)));
-  if (isFootprintPassable(terrain, gx, gy, isVehicle, false)) return { x: worldX, y: worldY };
+  if (isFootprintPassable(terrain, gx, gy, isVehicle, false)) return {
+    x: Math.max(0, Math.min(MAP_COLS * CELL_SIZE - 1, worldX)),
+    y: Math.max(0, Math.min(MAP_ROWS * CELL_SIZE - 1, worldY)),
+  };
   let best: { x: number; y: number; d: number } | null = null;
   for (let r = 1; r <= maxRadius; r++) {
     for (let dy = -r; dy <= r; dy++) {
@@ -739,7 +429,11 @@ export function losInfo(
     const gx = Math.floor(cx / CELL_SIZE), gy = Math.floor(cy / CELL_SIZE);
     if (gx < 0 || gx >= MAP_COLS || gy < 0 || gy >= MAP_ROWS) continue;
     const cell = terrain[gy][gx];
-    if (cell.blocksLOS) return { clear: false, concealmentSum: 0 };
+    // Occupants fire from a building's windows or the edge of a hedge.
+    // Intermediate buildings still block fire in both directions.
+    const endpoint = (gx === Math.floor(fromX / CELL_SIZE) && gy === Math.floor(fromY / CELL_SIZE)) ||
+      (gx === Math.floor(toX / CELL_SIZE) && gy === Math.floor(toY / CELL_SIZE));
+    if (cell.blocksLOS && !endpoint) return { clear: false, concealmentSum: 0 };
     concealmentSum += cell.concealment;
   }
   return { clear: true, concealmentSum };
@@ -752,3 +446,4 @@ export function hasLineOfSight(
 ): boolean {
   return losInfo(terrain, fromX, fromY, toX, toY, isHelicopter).clear;
 }
+
