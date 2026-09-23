@@ -7,6 +7,7 @@ import { updateAwareness } from '../game/awareness';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../game/constants';
 import { leipalingisMission } from '../game/missions';
 import { LEIPALINGIS_ANCHORS, LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
+import { refreshUnitGrid } from '../game/spatialGrid';
 import { Position } from '../game/types';
 
 const world = (x: number, y: number): Position => ({ x: (x + .5) * CELL_SIZE, y: (y + .5) * CELL_SIZE });
@@ -79,7 +80,7 @@ describe('usable tactical objects', () => {
     const at = world(23, 20); handleRightClickWorld(at.x, at.y, state);
     expect(new Set(state.units.map(u => JSON.stringify(u.finalDest))).size).toBe(2);
     expect(state.units.every(u => u.holdOnArrive)).toBe(true);
-    for (let i = 0; i < 900; i++) { state.time += 1 / 60; state.units.forEach(u => moveUnit(u, 1 / 60, state)); }
+    for (let i = 0; i < 900; i++) { state.time += 1 / 60; refreshUnitGrid(state); state.units.forEach(u => moveUnit(u, 1 / 60, state)); }
     expect(state.units.every(u => u.order === 'hold_position' && u.inCover)).toBe(true);
     const next = world(30, 20); handleRightClickWorld(next.x, next.y, state);
     expect(state.units.every(u => u.order === 'move' && !u.holdOnArrive)).toBe(true);
@@ -127,7 +128,7 @@ describe('Leipalingis geography and campaign access', () => {
       const end = path[path.length - 1]; expect(Math.hypot(end.x - goal.x, end.y - goal.y)).toBeLessThan(140);
     }
     const cells = terrain.flat();
-    expect(new Set(cells.flatMap(c => c.prop ? [c.prop] : [])).size).toBe(5);
+    expect(new Set(cells.flatMap(c => c.prop ? [c.prop] : []))).toEqual(new Set(['logs', 'hay', 'stone_wall', 'wreck', 'barricade', 'boulder', 'scrub']));
     expect(cells.filter(c => c.prop).length).toBeGreaterThan(150);
   });
 });
@@ -142,7 +143,7 @@ it('completes expanded regional travel with each ground unit without hull clippi
     setDestination(unit, state, goal); unit.order = 'move';
     const destination = { ...unit.finalDest! }; let clipped = false;
     for (let i = 0; i < 10000 && distance(unit.pos, destination) > 16; i++) {
-      state.time += .05; moveUnit(unit, .05, state);
+      state.time += .05; refreshUnitGrid(state); moveUnit(unit, .05, state);
       if (type !== 'infantry' && !isWorldFootprintPassable(state.terrain, unit.pos.x, unit.pos.y, true)) clipped = true;
     }
     expect(clipped, `${town.name} / ${type}`).toBe(false);

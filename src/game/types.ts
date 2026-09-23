@@ -43,7 +43,7 @@ export interface Unit {
   vel: Position;
   targetPos: Position | null;
   path: Position[];          // A* path (smoothed waypoints toward targetPos)
-  waypoints: Position[];     // queued user waypoints
+  waypoints: (Position & { facing?: number; attackMove?: boolean })[]; // queued user orders
   attackTarget: string | null;
   health: number; maxHealth: number;
   speed: number; range: number; damage: number; armor: number;
@@ -71,6 +71,10 @@ export interface Unit {
   /** Start digging after the current trench-line move finishes. */
   digOnArrive?: boolean;
   holdOnArrive?: boolean;
+  coverTarget?: Position;
+  arrivalFacing?: number;
+  routeLength?: number;
+  waiting?: 'formation' | 'traffic';
   /** Group-move speed cap so a formation advances at its slowest member's pace. */
   groupSpeedCap: number | null;
   /** Shared command id used to pace units in the same moving formation. */
@@ -106,7 +110,7 @@ export interface TerrainCell {
   vehicleImpassable: boolean; trampled: boolean;
   traction: number; fatigueRate: number;
   /** Tactical objects have an open firing/occupancy slot in their cell. */
-  prop?: 'logs' | 'hay' | 'stone_wall' | 'wreck' | 'barricade';
+  prop?: 'logs' | 'hay' | 'stone_wall' | 'wreck' | 'barricade' | 'boulder' | 'scrub';
   propAngle?: number;
   roadName?: string;
   yard?: 'courtyard' | 'garden' | 'orchard';
@@ -161,6 +165,10 @@ export interface GhostContact { team: Team; pos: Position; type: UnitType; time:
 /** Coordinated player formation created by a move order (see playerSquads.ts). */
 export interface PlayerSquad {
   id: number;
+  commandId: number;
+  coordinated: boolean;
+  progressFloor: number;
+  commandLength: number;
   memberIds: string[];
   dest: Position;
   anchor: Position;
@@ -222,6 +230,8 @@ export interface GameState {
   selectionBox: { start: Position; end: Position } | null;
   /** Player-team unit IDs currently inside the live drag rectangle (preview highlight). */
   previewSelected: Set<string>;
+  selectionRoster: string[];
+  coordinatedMovement: boolean;
   /** Transient ping markers for issued commands. */
   commandMarkers: CommandMarker[];
   /** Ghost formation plan shown while right-button is held (press-drag placement). */

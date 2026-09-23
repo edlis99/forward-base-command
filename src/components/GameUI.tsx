@@ -6,6 +6,8 @@ import {
   digInForSelected, setFormation, toggleDebugLayer, digTrenchLineForSelected,
   setTimeScale, disembarkSelected,
 } from '../game/engine';
+import { selectUnits, controllable } from '../game/selection';
+import { takeCoverForSelected } from '../game/cover';
 import Scene3D from '../scene3d/Scene3D';
 import GameHUD from './GameHUD';
 import MissionSelect from './MissionSelect';
@@ -70,10 +72,14 @@ const GameUI: React.FC = () => {
     if (phase !== 'combat') return;
     const onDown = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest('input, textarea, select, [contenteditable="true"]')) return;
-      inputRef.current.keys.add(e.key.toLowerCase());
       const state = gameStateRef.current; if (!state) return;
       if (state.gameOver || e.repeat) return;
       const k = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && k === 'a') {
+        e.preventDefault(); selectUnits(state, state.units.filter(controllable).map(u => u.id)); triggerHudUpdate(); return;
+      }
+      inputRef.current.keys.add(k);
+      if (k === 'c') { takeCoverForSelected(state); triggerHudUpdate(); }
       if (k === ' ') { e.preventDefault(); togglePause(state); triggerHudUpdate(); }
       if (k === 'h') { holdPositionForSelected(state); triggerHudUpdate(); }
       if (k === 'u') { disembarkSelected(state); triggerHudUpdate(); }
@@ -100,10 +106,10 @@ const GameUI: React.FC = () => {
       if (k === 'f2') { e.preventDefault(); toggleDebugLayer(state, 'showConcealment'); triggerHudUpdate(); }
       if (k === 'f3') { e.preventDefault(); toggleDebugLayer(state, 'showTactical'); triggerHudUpdate(); }
       if (k === 'f4') { e.preventDefault(); toggleDebugLayer(state, 'showMovement'); triggerHudUpdate(); }
-      if (k === 'escape') { state.units.forEach(u => u.selected = false); triggerHudUpdate(); }
+      if (k === 'escape') { selectUnits(state, []); triggerHudUpdate(); }
     };
     const onUp = (e: KeyboardEvent) => inputRef.current.keys.delete(e.key.toLowerCase());
-    const onBlur = () => { inputRef.current = createInputState(); };
+    const onBlur = () => { inputRef.current = createInputState(); const state = gameStateRef.current; if (state) { state.selectionBox = null; state.previewSelected.clear(); state.commandPreview = null; } };
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
     window.addEventListener('blur', onBlur);
@@ -146,6 +152,8 @@ const GameUI: React.FC = () => {
       />
       <GameHUD
         gameState={gameStateRef.current}
+        onChange={triggerHudUpdate}
+        onFocus={pos => { inputRef.current.cameraFocus = pos; }}
         onSpawn={handleSpawn}
         onStance={handleStance}
         onHold={() => { holdPositionForSelected(gameStateRef.current!); triggerHudUpdate(); }}

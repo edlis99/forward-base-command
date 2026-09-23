@@ -20,7 +20,7 @@ export function CampaignMap({ gameStateRef, inputRef }: { gameStateRef: React.Mu
     };
     paint(); const timer = window.setInterval(paint, 200); return () => window.clearInterval(timer);
   }, [gameStateRef]);
-  return <div className="absolute bottom-32 right-3 w-[260px] border border-[#71856b] bg-[#15251eee] p-1 font-mono text-[10px] text-[#d2dfc4]">
+  return <div className="absolute bottom-[216px] right-3 w-[260px] border border-[#71856b] bg-[#15251eee] p-1 font-mono text-[10px] text-[#d2dfc4]">
     <div className="flex justify-between px-1 mb-1"><span>REGION · click to focus</span><span>N ↑</span></div>
     <canvas ref={ref} width={520} height={378} aria-label="Leipalingis tactical region map" className="block w-full cursor-crosshair"
       onClick={e => { const box = e.currentTarget.getBoundingClientRect(); inputRef.current.cameraFocus = {

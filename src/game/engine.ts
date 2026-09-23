@@ -1,3 +1,4 @@
+import { selectUnits } from './selection';
 import { GameState, InputState, MissionDef, Position, FormationType, Unit, CommandMarker, CommandMarkerType, DebugFlags } from './types';
 import { generateTerrain, getTerrainAt, canDigHere, digTrench, findNearestPassableWorld, isFootprintPassable } from './terrain';
 import { createUnit, clearUnitOrders, setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
@@ -29,6 +30,7 @@ export function createInitialState(mission: MissionDef, deployment?: import('./t
     eventLog: [],
     ghostContacts: [],
     selectionBox: null,
+    selectionRoster: [], coordinatedMovement: true,
     previewSelected: new Set(),
     commandMarkers: [],
     commandPreview: null,
@@ -109,13 +111,13 @@ export function update(state: GameState, input: InputState, dt: number) {
   }
 
   refreshUnitGrid(state);
+  updatePlayerSquads(state, dt);
   for (const unit of state.units) if (unit.alive) moveUnit(unit, dt, state);
   for (const unit of state.units) {
     if (!unit.alive || !unit.insideOf) continue;
     const carrier = state.units.find(u => u.id === unit.insideOf && u.alive);
     if (carrier) unit.pos = { ...carrier.pos };
   }
-  updatePlayerSquads(state, dt);
 
   // Dig-on-arrive: units flagged by digTrenchLineForSelected start entrenching at destination
   for (const unit of state.units) {
@@ -193,16 +195,16 @@ export function update(state: GameState, input: InputState, dt: number) {
 
 /** True if the click landed on a friendly unit (and selected it). */
 export function handleLeftClickWorld(worldX: number, worldY: number, state: GameState, shiftKey: boolean) {
-  if (!shiftKey) state.units.forEach(u => u.selected = false);
   const nearest = state.units
     .filter(u => u.alive && u.team === 'player' && !u.insideOf)
     .map(unit => ({ unit, d: Math.hypot(unit.pos.x - worldX, unit.pos.y - worldY) }))
     .filter(hit => hit.d < 22)
     .sort((a, b) => a.d - b.d || a.unit.id.localeCompare(b.unit.id))[0];
   if (nearest) {
-    nearest.unit.selected = shiftKey ? !nearest.unit.selected : true;
+    selectUnits(state, [nearest.unit.id], shiftKey ? 'toggle' : 'replace');
     return true;
   }
+  if (!shiftKey) selectUnits(state, []);
   return false;
 }
 
@@ -263,7 +265,7 @@ export function handleRightClickWorld(
 
   // Friendly APC = board
   for (const unit of state.units) {
-    if (!unit.alive || unit.team !== 'player' || unit.type !== 'apc') continue;
+    if (shiftKey || ctrlKey || !unit.alive || unit.selected || unit.team !== 'player' || unit.type !== 'apc' || !selected.some(u => u.type === 'infantry')) continue;
     const dx = unit.pos.x - worldX, dy = unit.pos.y - worldY;
     if (Math.sqrt(dx * dx + dy * dy) < 24) {
       selected.forEach(u => {
@@ -412,9 +414,8 @@ export function digTrenchLineForSelected(state: GameState) {
 }
 
 export function handleBoxSelect(x1: number, y1: number, x2: number, y2: number, state: GameState, shiftKey: boolean) {
-  if (!shiftKey) state.units.forEach(u => u.selected = false);
   const units = getUnitsInRect(state.units, x1, y1, x2, y2, 'player').filter(u => !u.insideOf);
-  units.forEach(u => u.selected = true);
+  selectUnits(state, units.map(u => u.id), shiftKey ? 'add' : 'replace');
   state.previewSelected.clear();
 }
 

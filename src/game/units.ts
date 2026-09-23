@@ -1,3 +1,4 @@
+import { availableSpeed, routeRemaining } from './movement';
 import { Unit, UnitType, Team, Position, GameState, Stance } from './types';
 import { UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS } from './constants';
 import { getTerrainAt, hasLineOfSight, losInfo, isPassable, isWorldFootprintPassable, findNearestPassableWorld } from './terrain';
@@ -94,6 +95,7 @@ export function clearUnitOrders(unit: Unit) {
   unit.boardTarget = null;
   unit.digOnArrive = false;
   unit.holdOnArrive = false;
+  unit.coverTarget = undefined; unit.arrivalFacing = undefined; unit.waiting = undefined;
   unit.groupSpeedCap = null;
   unit.moveGroupId = null;
   unit.squadId = null;
@@ -103,7 +105,10 @@ export function clearUnitOrders(unit: Unit) {
 }
 
 /** Set destination using A* pathfinding. Stores `finalDest` for re-paths. */
-export function setDestination(unit: Unit, state: GameState, dest: Position) {
+export function setDestination(unit: Unit, state: GameState, dest: Position, repath = false) {
+  // A recovery path must not reset formation progress and strand the leaders.
+  const fractionLeft = repath ? Math.min(1, routeRemaining(unit) / Math.max(1, unit.routeLength ?? 1)) : 1;
+  if (!repath) { unit.coverTarget = undefined; unit.holdOnArrive = false; }
   const vehicle = isVehicle(unit);
   const helicopter = unit.type === 'helicopter';
   const reachableDest = findNearestPassableWorld(state.terrain, dest.x, dest.y, vehicle, helicopter, 12);
@@ -114,11 +119,13 @@ export function setDestination(unit: Unit, state: GameState, dest: Position) {
     unit.path = [];
     unit.finalDest = null;
     unit.groupSpeedCap = null;
-    unit.moveGroupId = null;
+    unit.moveGroupId = null; unit.squadId = null;
     return;
   }
+  unit.inCover = false;
   unit.path = path;
-  unit.targetPos = path[0];
+  unit.targetPos = unit.path.shift() ?? null;
+  unit.routeLength = routeRemaining(unit) / Math.max(.01, fractionLeft);
   unit.lastProgressDist = distance(unit.pos, unit.targetPos);
   unit.lastProgressTime = state.time;
 }
@@ -126,15 +133,28 @@ export function setDestination(unit: Unit, state: GameState, dest: Position) {
 /** Local avoidance via spatial grid: keeps per-type personal spacing. */
 function separation(unit: Unit, state: GameState): { x: number; y: number } {
   let sx = 0, sy = 0;
-  const radius = spacingRadius(unit) * 2;
+  const radius = Math.max(32, spacingRadius(unit) * 2);
   const grid = getUnitGrid(state);
+  const to = unit.targetPos ?? unit.pos;
+  const routeLength = Math.hypot(to.x - unit.pos.x, to.y - unit.pos.y) || 1;
+  const forwardX = (to.x - unit.pos.x) / routeLength, forwardY = (to.y - unit.pos.y) / routeLength;
   for (const o of queryNeighbors(grid, unit.pos.x, unit.pos.y, radius, unit)) {
-    if (!o.alive || o.team !== unit.team || o.insideOf) continue;
+    if (!o.alive || o.team !== unit.team || o.insideOf || unit.boardTarget === o.id) continue;
     if ((o.type === 'helicopter') !== (unit.type === 'helicopter')) continue;
     const min = spacingRadius(unit) + spacingRadius(o);
     const dx = unit.pos.x - o.pos.x;
     const dy = unit.pos.y - o.pos.y;
     const d = Math.hypot(dx, dy);
+    // Anticipate traffic before touching. Pass on the right when directly
+    // opposed; otherwise choose the open side of the nearby friendly.
+    const along = -dx * forwardX - dy * forwardY;
+    const lateral = dx * forwardY - dy * forwardX;
+    if (along > 0 && along < min + 18 && Math.abs(lateral) < min && d < min + 18) {
+      const side = lateral > 2 ? -1 : 1;
+      const strength = 1.6 * (1 - Math.abs(lateral) / min);
+      sx += -forwardY * side * strength; sy += forwardX * side * strength;
+    }
+    if (d === 0) { const side = unit.id < o.id ? 1 : -1; sx += side; sy += side * .5; }
     if (d > 0 && d < min) {
       const w = (min - d) / min;
       sx += (dx / d) * w;
@@ -153,8 +173,9 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   // Refresh cover even while idle/holding. Previously this only happened at
   // the end of active movement, so a unit that finished digging never gained
   // the trench's armor benefit.
+  unit.waiting = undefined;
   const occupiedTerrain = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
-  unit.inCover = unit.type === 'infantry' && (occupiedTerrain?.coverBonus ?? 0) > 0;
+  unit.inCover = unit.type === 'infantry' && !unit.targetPos && (occupiedTerrain?.coverBonus ?? 0) > 0;
 
   // Entrenching: stay still, accrue dig progress
   if (unit.order === 'entrench') {
@@ -177,12 +198,23 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       unit.lastProgressDist = distance(unit.pos, unit.targetPos);
       unit.lastProgressTime = state.time;
     } else if (unit.waypoints.length > 0) {
+      if (getSquad(state, unit)?.coordinated) { unit.vel = { x: 0, y: 0 }; unit.waiting = 'formation'; return; }
       const next = unit.waypoints.shift();
-      if (next) setDestination(unit, state, next);
+      if (next) {
+        setDestination(unit, state, next);
+        unit.arrivalFacing = next.facing;
+        unit.order = next.attackMove ? 'attack_move' : 'move';
+        const sq = getSquad(state, unit);
+        if (sq) { sq.slots[unit.id] = next; sq.state = 'moving'; }
+      }
       if (!unit.targetPos) return;
     } else {
       unit.vel.x *= 0.85; unit.vel.y *= 0.85;
       unit.fatigue = Math.max(0, unit.fatigue - dt * 0.15);
+      if (unit.arrivalFacing != null) {
+        const turn = normalizeAngle(unit.arrivalFacing - unit.facing);
+        unit.facing += Math.sign(turn) * Math.min(Math.abs(turn), unit.turnRate * dt);
+      }
       return;
     }
   }
@@ -192,7 +224,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const veh = isVehicle(unit);
   const heli = unit.type === 'helicopter';
   const popRadius = unit.path.length > 0
-    ? (veh ? CELL_SIZE * 0.9 : CELL_SIZE * 0.6)
+    ? (veh ? 6 : 4)
     : (unit.holdOnArrive ? 2 : veh ? 14 : 8);
 
   const distToTarget = distance(unit.pos, unit.targetPos);
@@ -206,6 +238,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     } else {
       unit.targetPos = null;
       unit.finalDest = null;
+      unit.homePos = { ...unit.pos };
       if (unit.waypoints.length === 0 && unit.order !== 'hold_position' && unit.order !== 'patrol') {
         unit.order = unit.holdOnArrive ? 'hold_position' : 'idle';
         unit.holdOnArrive = false;
@@ -227,7 +260,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   // separation as small positional nudge, weaker close to final dest
   const sep = separation(unit, state);
   const finalDist = unit.finalDest ? distance(unit.pos, unit.finalDest) : 999;
-  const sepWeight = finalDist < CELL_SIZE * 1.2 ? 0.05 : 0.25;
+  const sepWeight = finalDist < CELL_SIZE * 1.2 ? 0.12 : 0.8;
 
   const desiredAngle = Math.atan2(dirY + sep.y * sepWeight, dirX + sep.x * sepWeight);
 
@@ -237,30 +270,31 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   else unit.facing = desiredAngle;
 
   const alignment = Math.cos(facingDelta);
-  const alignFactor = veh ? Math.max(0.15, alignment) : (alignment > 0 ? 1 : 0.6);
+  const alignFactor = veh ? Math.max(0, alignment) ** 2 : (alignment > 0 ? 1 : 0.6);
 
-  const moveCost = terrain ? terrain.movementCost : 1;
-  const traction = !heli && terrain ? terrain.traction : 1;
-  const effectiveCost = heli ? 1 : moveCost;
-  const suppressionPenalty = 1 - unit.suppression * 0.5;
-  const moralePenalty = 0.7 + unit.morale * 0.3;
-  const fatiguePenalty = 1 - unit.fatigue * 0.4;
-  const baseSpeed = unit.groupSpeedCap != null ? Math.min(unit.speed, unit.groupSpeedCap) : unit.speed;
   const squad = getSquad(state, unit);
   const cohesionFactor = squad ? cohesionSpeedFactor(unit, squad) : 1;
+  const attainable = availableSpeed(unit, state);
+  const pacedSpeed = unit.groupSpeedCap == null ? attainable : Math.min(attainable, unit.groupSpeedCap);
+  if (cohesionFactor === 0 || (squad?.coordinated && pacedSpeed < .01)) {
+    unit.waiting = 'formation'; unit.vel = { x: 0, y: 0 };
+    unit.lastProgressTime = state.time; return;
+  }
   // Arrival easing: ramp down over the last stretch so units settle in slot
   // instead of overshooting and circling.
   const remaining = unit.finalDest ? distance(unit.pos, unit.finalDest) : 999;
   const arrivalFactor = unit.path.length === 0 && remaining < ARRIVE_TOLERANCE * 3
     ? Math.max(0.35, remaining / (ARRIVE_TOLERANCE * 3))
     : 1;
-  const speed = (baseSpeed / effectiveCost) * suppressionPenalty * moralePenalty * fatiguePenalty * traction * alignFactor * cohesionFactor * arrivalFactor;
+  const speed = pacedSpeed * alignFactor * cohesionFactor * arrivalFactor;
 
 
   // Infantry can sidestep and should track the route directly. Driving them by
   // facing caused wide arcs that clipped obstacles and repeatedly rebuilt A*.
-  const travelX = veh ? Math.cos(unit.facing) : dirX;
-  const travelY = veh ? Math.sin(unit.facing) : dirY;
+  const steerX = dirX + sep.x * sepWeight, steerY = dirY + sep.y * sepWeight;
+  const steerLength = Math.hypot(steerX, steerY) || 1;
+  const travelX = veh ? Math.cos(unit.facing) : steerX / steerLength;
+  const travelY = veh ? Math.sin(unit.facing) : steerY / steerLength;
   const targetVx = travelX * speed;
   const targetVy = travelY * speed;
   const accel = veh ? 5 : 11;
@@ -273,6 +307,29 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const stepOk = heli || (veh
     ? isWorldFootprintPassable(state.terrain, nextX, nextY, true)
     : isPassable(nextT, false, false));
+  const neighbors = heli ? [] : queryNeighbors(getUnitGrid(state), nextX, nextY, 32, unit)
+    .filter(other => other.alive && !other.insideOf && other.team === unit.team && other.type !== 'helicopter' && unit.boardTarget !== other.id);
+  const trafficAt = (x: number, y: number) => neighbors.some(other => {
+    const limit = (spacingRadius(unit) + spacingRadius(other)) * .6;
+    const before = distance(unit.pos, other.pos), after = Math.hypot(x - other.pos.x, y - other.pos.y);
+    return after < limit && after < before - .001;
+  });
+  if (trafficAt(nextX, nextY)) {
+    // Sidestep / reverse out of a bottleneck while keeping the same route.
+    // Vehicles use a slow reverse; infantry may sidestep freely. This is a
+    // continuous step, never a teleport or permission to cross another hull.
+    const step = speed * dt * (veh ? .35 : .7);
+    const offsets = veh ? [Math.PI, .35, -.35] : [Math.PI / 2, -Math.PI / 2, 2.1, -2.1, Math.PI];
+    for (const offset of offsets) {
+      const angle = unit.facing + offset;
+      const x = unit.pos.x + Math.cos(angle) * step, y = unit.pos.y + Math.sin(angle) * step;
+      if (!trafficAt(x, y) && isWorldFootprintPassable(state.terrain, x, y, veh)) {
+        unit.pos = { x, y }; break;
+      }
+    }
+    unit.vel = { x: 0, y: 0 }; unit.waiting = 'traffic';
+    unit.lastProgressTime = state.time; return;
+  }
   if (stepOk) {
     unit.pos.x = nextX; unit.pos.y = nextY;
     unit.stuckTimer = 0;
@@ -306,7 +363,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       const recovered = findNearestPassableWorld(state.terrain, unit.pos.x, unit.pos.y, veh, heli, 4);
       unit.pos.x = recovered.x; unit.pos.y = recovered.y;
       const dest = unit.finalDest ?? unit.targetPos;
-      if (dest) setDestination(unit, state, dest);
+      if (dest) setDestination(unit, state, dest, true);
       unit.stuckTimer = 0;
     }
   }
@@ -317,7 +374,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     const newDist = distance(unit.pos, unit.targetPos);
     if (newDist + 2 >= unit.lastProgressDist) {
       const dest = unit.finalDest ?? unit.targetPos;
-      if (dest) setDestination(unit, state, dest);
+      if (dest) setDestination(unit, state, dest, true);
     } else {
       unit.lastProgressDist = newDist;
       unit.lastProgressTime = state.time;
@@ -328,7 +385,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   unit.fatigue = Math.min(1, unit.fatigue + fatigueGain);
 
   const cur = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
-  unit.inCover = cur ? cur.coverBonus > 0 : false;
+  unit.inCover = unit.type === 'infantry' && !unit.targetPos && (cur?.coverBonus ?? 0) > 0;
 }
 
 function speedMagnitude(unit: Unit) { return Math.hypot(unit.vel.x, unit.vel.y); }
@@ -477,7 +534,8 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
   if (unit.type === 'helicopter') dmg *= 1.1;
   if (target.type === 'helicopter' && unit.type === 'infantry') dmg *= 0.5;
   if (targetEntrenched) dmg *= 0.42;
-  if (targetTerrain?.type === 'sandbag') dmg *= 0.75;
+  if (targetTerrain?.type === 'sandbag' && !targetTerrain.prop) dmg *= 0.75;
+  if (targetTerrain?.prop && target.inCover) dmg *= 1 - targetTerrain.coverBonus * .5;
   if (targetTerrain?.type === 'crater') dmg *= 0.7;
 
   target.health -= dmg;
