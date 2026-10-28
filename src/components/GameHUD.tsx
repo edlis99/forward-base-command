@@ -130,6 +130,7 @@ const GameHUD: React.FC<Props> = ({ gameState, onChange, onFocus, onSpawn, onSta
         <div>H: hold · F: hold-fire · X: tight · G: defend · Y: aggressive</div>
         <div>C: cover · T: dig-in · Shift+T: trench line · U: unload APC · Home: focus</div>
         <div>5/6/7: line/wedge/column · 0: auto</div>
+        <div>RAAS: R: radio (stopped APC) · B: spawn point (2 infantry build it)</div>
         <div>F1: cover · F2: concealment · F3: tactical</div>
       </div>
 

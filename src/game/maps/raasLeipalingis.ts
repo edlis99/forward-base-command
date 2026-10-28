@@ -22,18 +22,27 @@ function sector(which: 'west' | 'centre' | 'east'): RaasObjectiveDef {
   const name = which === 'centre' ? 'Leipalingis centre' : `Leipalingis ${which}`;
   return { id: `leipalingis_${which}`, name, pos: world(s.x + dx, s.y), radius: RADIUS.centre * CELL_SIZE };
 }
-const chain = (id: string, name: string, ids: [SettlementId, SettlementId, 'west' | 'centre' | 'east', SettlementId, SettlementId]): RaasChain => ({
-  id, name, objectives: [place(ids[0]), place(ids[1]), sector(ids[2]), place(ids[3]), place(ids[4])],
-});
+/** South-side twin of each north-side place (mirror across the centre line). */
+const MIRROR: Partial<Record<SettlementId, SettlementId>> = {
+  smarliunai: 'barciai', straciunai: 'snaigupe', jovaisiai: 'didziasalis', sadziunai: 'varnenai', guobiniai: 'versiai', mazonys: 'vilkanastrai',
+};
+const FIRST: SettlementId[] = ['smarliunai', 'jovaisiai', 'straciunai'];
+const SECOND: SettlementId[] = ['sadziunai', 'jovaisiai', 'mazonys', 'guobiniai'];
+const SECTORS = ['west', 'centre', 'east'] as const;
+const LEG = { min: 30, max: 170 }; // cells between consecutive objectives
 
-export const RAAS_CHAINS: RaasChain[] = [
-  chain('west', 'West road', ['smarliunai', 'sadziunai', 'west', 'varnenai', 'barciai']),
-  chain('east', 'East road', ['straciunai', 'guobiniai', 'east', 'versiai', 'snaigupe']),
-  chain('centre', 'Route 180', ['jovaisiai', 'mazonys', 'centre', 'vilkanastrai', 'didziasalis']),
-  chain('west_cross', 'Western woods', ['jovaisiai', 'sadziunai', 'west', 'varnenai', 'didziasalis']),
-  chain('east_cross', 'Eastern lakes', ['jovaisiai', 'guobiniai', 'east', 'versiai', 'didziasalis']),
-  chain('wide_east', 'Wide east', ['straciunai', 'mazonys', 'centre', 'vilkanastrai', 'snaigupe']),
-];
+const cellsBetween = (a: RaasObjectiveDef, b: RaasObjectiveDef) => Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) / CELL_SIZE;
+
+/**
+ * Every lane that zig-zags sensibly: north end -> second point -> a
+ * Leipalingis sector -> the mirror of the second -> the mirror of the end.
+ * Crossing between the west, centre and east of the map is allowed, so the
+ * route is hard to guess; each lane is still its own mirror image.
+ */
+export const RAAS_CHAINS: RaasChain[] = FIRST.flatMap(a => SECOND.filter(b => b !== a).flatMap(b => SECTORS.map(c => {
+  const objectives = [place(a), place(b), sector(c), place(MIRROR[b]!), place(MIRROR[a]!)];
+  return { id: `${a}-${b}-${c}`, name: `${objectives[0].name} · ${objectives[1].name} · ${objectives[2].name}`, objectives };
+}))).filter(c => c.objectives.every((o, i) => i === 0 || (cellsBetween(c.objectives[i - 1], o) >= LEG.min && cellsBetween(c.objectives[i - 1], o) <= LEG.max)));
 
 export const RAAS_MAINS = {
   player: world(MAIN_CELLS.north[0], MAIN_CELLS.north[1]),

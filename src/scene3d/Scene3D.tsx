@@ -12,6 +12,7 @@ import { MAP_SECTIONS, MapSection } from './mapSections';
 import { CampaignMap } from '../components/CampaignMap';
 import { SETTLEMENTS } from '../game/maps/settlements';
 import { PLAYABLE_CELLS } from '../game/maps/geography';
+import { FOB_RULES, visibleFobs } from '../game/fob';
 import { SettlementLabelPositions } from './SettlementLabels';
 import { Woodland, RuralBuildingsAndProps } from './Environment';
 import { getTerrainAt } from '../game/terrain';
@@ -1032,6 +1033,54 @@ function CapturePoints({ gameStateRef }: { gameStateRef: React.MutableRefObject<
   return <group ref={groupRef} />;
 }
 
+// ---------- RAAS radios and spawn points ----------
+/** Own radios always; enemy ones only while your troops can see them. Rebuilt only when something changes. */
+function FobLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const lastKey = useRef('');
+  const mats = useMemo(() => ({
+    player: new THREE.MeshStandardMaterial({ color: 0x4a90d9, roughness: .7 }),
+    enemy: new THREE.MeshStandardMaterial({ color: 0xd94a4a, roughness: .7 }),
+    building: new THREE.MeshStandardMaterial({ color: 0xd9c07a, roughness: .8, transparent: true, opacity: .75 }),
+    overrun: new THREE.MeshStandardMaterial({ color: 0xff6a3a, roughness: .8 }),
+    ringPlayer: new THREE.MeshBasicMaterial({ color: 0x4a90d9, transparent: true, opacity: .35, side: THREE.DoubleSide }),
+    ringEnemy: new THREE.MeshBasicMaterial({ color: 0xd94a4a, transparent: true, opacity: .35, side: THREE.DoubleSide }),
+  }), []);
+  const geos = useMemo(() => ({
+    mast: new THREE.CylinderGeometry(.06, .08, 2.4, 6),
+    base: new THREE.BoxGeometry(.7, .35, .5),
+    hab: new THREE.BoxGeometry(1.4, .8, 1.1),
+    ring: new THREE.RingGeometry(FOB_RULES.radioRadius / S - .12, FOB_RULES.radioRadius / S, 48),
+  }), []);
+  useEffect(() => () => { Object.values(mats).forEach(m => m.dispose()); Object.values(geos).forEach(g => g.dispose()); }, [mats, geos]);
+  useFrame(() => {
+    const state = gameStateRef.current, group = groupRef.current;
+    if (!group || !state.raas) return;
+    const fobs = visibleFobs(state, state.raas, 'player');
+    const key = fobs.map(f => `${f.id}:${f.hab ? `${Math.round(f.hab.progress * 20)}${f.hab.built ? 'b' : ''}${f.overrun ? 'o' : ''}` : '-'}`).join('|');
+    if (key === lastKey.current) return;
+    lastKey.current = key;
+    group.clear();
+    for (const f of fobs) {
+      const x = f.radio.x / S, z = f.radio.y / S, y = surfaceY(x, z);
+      const team = f.team === 'player' ? mats.player : mats.enemy;
+      const base = new THREE.Mesh(geos.base, team); base.position.set(x, y + .18, z); group.add(base);
+      const mast = new THREE.Mesh(geos.mast, team); mast.position.set(x + .2, y + 1.4, z); group.add(mast);
+      if (f.team === 'player') {
+        const ring = new THREE.Mesh(geos.ring, f.team === 'player' ? mats.ringPlayer : mats.ringEnemy);
+        ring.rotation.x = -Math.PI / 2; ring.position.set(x, y + .1, z); group.add(ring);
+      }
+      if (f.hab) {
+        const hx = f.hab.pos.x / S, hz = f.hab.pos.y / S, hy = surfaceY(hx, hz);
+        const hab = new THREE.Mesh(geos.hab, !f.hab.built ? mats.building : f.overrun ? mats.overrun : team);
+        const h = f.hab.built ? 1 : Math.max(.15, f.hab.progress);
+        hab.scale.set(1, h, 1); hab.position.set(hx, hy + .4 * h, hz); group.add(hab);
+      }
+    }
+  });
+  return <group ref={groupRef} />;
+}
+
 // ---------- Selected-unit path lines ----------
 function PathsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
   const ref = useRef<THREE.LineSegments>(null);
@@ -1523,6 +1572,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <TerrainMesh terrain={terrain} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} />
         <TerrainDebugLayer gameStateRef={gameStateRef} />
         <CapturePoints gameStateRef={gameStateRef} />
+        <FobLayer gameStateRef={gameStateRef} />
         <UnitsLayer gameStateRef={gameStateRef} inputRef={inputRef} />
         <GhostContactsLayer gameStateRef={gameStateRef} />
         <PathsLayer gameStateRef={gameStateRef} />

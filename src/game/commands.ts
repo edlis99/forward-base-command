@@ -4,6 +4,7 @@ import { clearUnitOrders, distance, setDestination } from './units';
 import { isVisibleTo } from './awareness';
 import { issueSquadMove } from './playerSquads';
 import { coverLabel, occupyCover } from './cover';
+import { deployRadio, layOutSpawn } from './fob';
 
 /**
  * The only way a side can influence a match. Commands are plain serializable
@@ -18,7 +19,9 @@ export type Command =
   | { type: 'stance'; unitIds: string[]; stance: Stance }
   | { type: 'hold'; unitIds: string[] }
   | { type: 'dig'; unitIds: string[] }
-  | { type: 'disembark'; unitIds: string[] };
+  | { type: 'disembark'; unitIds: string[] }
+  | { type: 'build_radio'; unitId: string }
+  | { type: 'build_spawn'; x: number; y: number };
 
 export type CommandResult = { ok: true } | { ok: false; reason: string };
 
@@ -178,6 +181,21 @@ export function applyCommand(state: GameState, team: Team, cmd: Command): Comman
         state.eventLog.unshift({ message: unloaded ? `APC unloaded ${unloaded} infantry` : 'APC: no safe dismount space or no passengers', time: state.time, type: 'info' });
       }
       return { ok: true };
+    }
+
+    case 'build_radio': {
+      if (!state.raas) return fail('radios exist in RAAS only');
+      const apc = state.units.find(u => u.id === cmd.unitId && u.alive && u.team === team && !u.insideOf);
+      if (!apc) return fail('no controllable APC');
+      const why = deployRadio(state, state.raas, team, apc);
+      return why ? fail(why) : { ok: true };
+    }
+
+    case 'build_spawn': {
+      if (!state.raas) return fail('spawn points exist in RAAS only');
+      if (!finite(cmd.x) || !finite(cmd.y)) return fail('bad position');
+      const why = layOutSpawn(state, state.raas, team, { x: cmd.x, y: cmd.y });
+      return why ? fail(why) : { ok: true };
     }
 
     default:
