@@ -295,8 +295,13 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
       const settlement = SETTLEMENTS.find(t => t.id === home.settlementId);
       if (!settlement || settlement.size === 'centre') continue;
       const a = home.propAngle ?? 0;
-      const backX = Math.round(Math.sin(a)), backY = -Math.round(Math.cos(a));
-      const sideX = Math.round(Math.cos(a)), sideY = Math.round(Math.sin(a));
+      // Snap orientation to one cardinal neighbour: roads can bend at
+      // arbitrary angles, but game cover/yard logic uses four-cell adjacency.
+      const dxRoad = Math.sin(a), dyRoad = -Math.cos(a);
+      const eastWest = Math.abs(dxRoad) > Math.abs(dyRoad);
+      const backX = eastWest ? Math.sign(dxRoad) : 0;
+      const backY = eastWest ? 0 : Math.sign(dyRoad);
+      const sideX = -backY, sideY = backX;
       // Two-cell gap leaves a usable yard/footpath between structures.
       const candidates: [number, number][] = [
         [hx + backX * 2, hy + backY * 2],
@@ -320,8 +325,11 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     if (house.type !== 'urban' || !house.settlementId) continue;
     const x = house.x / CELL_SIZE, y = house.y / CELL_SIZE;
     const a = house.propAngle ?? 0;
-    const backX = Math.round(Math.sin(a)), backY = -Math.round(Math.cos(a));
-    const sideX = Math.round(Math.cos(a)), sideY = Math.round(Math.sin(a));
+    const dxRoad = Math.sin(a), dyRoad = -Math.cos(a);
+    const eastWest = Math.abs(dxRoad) > Math.abs(dyRoad);
+    const backX = eastWest ? Math.sign(dxRoad) : 0;
+    const backY = eastWest ? 0 : Math.sign(dyRoad);
+    const sideX = -backY, sideY = backX;
     // Prefer the rear garden, then side yards, never block a street entrance
     // unless no other cell is available.
     const offsets = [[backX, backY], [sideX, sideY], [-sideX, -sideY],
