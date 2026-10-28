@@ -206,6 +206,9 @@ function runEnemyBehavior(unit: Unit, state: GameState, dt: number) {
     return;
   }
 
+  // In RAAS the objective commander decides where to go; local AI only fights, takes cover and breaks.
+  if (state.raas) return;
+
   // No engageable: patrol / hold / advance via flank
   if (unit.order === 'patrol' && unit.patrolPoints && unit.patrolPoints.length > 0) {
     if (!unit.targetPos && unit.path.length === 0) {

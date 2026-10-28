@@ -88,6 +88,7 @@ export interface Snapshot {
   units: UnitView[];
   capturePoints: Array<{ id: string; label: string; x: number; y: number; radius: number; owner: string; progress: number }>;
   score?: Record<Team, number>;
+  raas?: { chain: string; tickets: Record<Team, number>; objectives: Array<{ id: string; name: string; owner: string; progress: number; status: string; reason: string; yourTurn: boolean }> };
   gameOver: boolean; winner: Team | null;
 }
 
@@ -115,6 +116,8 @@ export function snapshotFor(match: Match, team: Team): Snapshot {
   return {
     tick: match.tick, time: round(state.time), you: team, units,
     capturePoints: state.capturePoints.map(c => ({ id: c.id, label: c.label, x: c.pos.x, y: c.pos.y, radius: c.radius, owner: c.owner, progress: Math.round(c.progress * 100) / 100 })),
+    raas: state.raas ? { chain: state.raas.chainName, tickets: { ...state.raas.tickets },
+      objectives: state.raas.objectives.map(o => ({ id: o.id, name: o.name, owner: o.owner, progress: Math.round(o.progress * 100) / 100, status: o.status, reason: o.reason, yourTurn: o.eligible[team] })) } : undefined,
     score: state.duel ? { player: Math.floor(state.duel.score.player), enemy: Math.floor(state.duel.score.enemy) } : undefined,
     gameOver: state.gameOver, winner: state.winner ?? null,
   };
@@ -133,5 +136,6 @@ export function stateDigest(state: GameState): string {
   }
   for (const c of state.capturePoints) { eat(c.id); eat(c.progress); }
   if (state.duel) { eat(state.duel.score.player); eat(state.duel.score.enemy); }
+  if (state.raas) { eat(state.raas.tickets.player); eat(state.raas.tickets.enemy); }
   return (h >>> 0).toString(16).padStart(8, '0');
 }

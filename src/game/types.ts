@@ -9,7 +9,7 @@ export type TerrainType =
 export type Stance = 'hold_fire' | 'tight' | 'defend' | 'aggressive';
 export type OrderType = 'idle' | 'move' | 'attack_move' | 'attack' | 'hold_position' | 'retreat' | 'patrol' | 'entrench';
 export type FormationType = 'line' | 'wedge' | 'column';
-export type MissionId = 'leipalingis' | 'duel';
+export type MissionId = 'leipalingis' | 'duel' | 'raas';
 export type ObjectiveStatus = 'active' | 'complete' | 'failed';
 export type MapLayoutId = 'farmhouse_complex' | 'village_crossroads' | 'forest_outpost' | 'desert_road' | 'leipalingis_region';
 export type DeploymentTownId = 'jovaisiai' | 'didziasalis' | 'versiai' | 'straciunai' | 'seirijai';
@@ -298,6 +298,8 @@ export interface GameState {
   winner?: Team | null;
   /** Next unit id number for units spawned during this match. */
   nextUnitId?: number;
+  /** RAAS match state (see raas.ts). */
+  raas?: import('./raas').RaasState;
   /** Head-to-head scoring (see duel.ts). */
   duel?: { score: Record<Team, number>; scoreToWin: number; timeLimit: number; pointsPerSecond: number };
 }

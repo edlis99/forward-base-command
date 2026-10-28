@@ -59,3 +59,9 @@ The simulation (`src/game`) is now organised so a server can run it and two brow
 - **Head-to-head rules.** `capture.ts` (symmetric capture) and `duel.ts` (`makeDuelMission`: points race, time limit, elimination). Not wired into the menu yet.
 
 Not done yet: the network server and lobby; client interpolation of snapshots; a symmetric 1v1 map (`mirror()` reflects spawns through the map centre but terrain is not symmetric); commands for trench lines, reinforcements, fire support and formation preference (the latter can already be sent per `move`); the AI and squad brain still assume they play `'enemy'`; team ids `'player'`/`'enemy'` act as side A/B.
+
+## RAAS mode (rules implemented, map pending)
+
+`src/game/raas.ts` implements the competitive RAAS variant from `docs/squad_gameplay_and_competitive_map_design.md`: one chain drawn from an authored pool before deployment (`pickChain`) and revealed to both sides; capture in sequence from each side's end, recapture in both directions (double neutral falls out of the rule); dismounted infantry only, minimum commitment (1 to capture neutral, 2 to neutralise), strict superiority, equal strength stalls, extra infantry speed capture up to 2x, abandoned attempts drain back; tickets for losses, lost points and a territorial lead of two or more. `updateRaasAi` plays any AI-controlled side through `applyCommand`, with the same information. Snapshots tell each side which objective it may attack and why progress is stalled, without revealing head counts. All numbers in `DEFAULT_RAAS_RULES` are first test values.
+
+Not yet selectable in the menu: it needs the RAAS version of the map and a ticket HUD.

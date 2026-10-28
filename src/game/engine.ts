@@ -70,6 +70,7 @@ export function createInitialState(mission: MissionDef, deployment?: import('./t
     winner: null,
     nextUnitId,
     duel: initial.duel,
+    raas: initial.raas,
   };
   state.units = initial.units ?? [];
   // Snap any unit that spawned on impassable terrain to the nearest passable cell.
@@ -201,7 +202,7 @@ export function update(state: GameState, input: InputState, dt: number) {
 
   // The built-in AI only plays a side nobody is commanding.
   if (!isHumanTeam(state, 'enemy')) {
-    updateSquads(state, dt);
+    if (!state.raas) updateSquads(state, dt); // in RAAS the objective commander owns movement
     updateAI(state, dt);
   }
 
