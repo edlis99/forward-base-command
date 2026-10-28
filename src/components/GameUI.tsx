@@ -94,7 +94,7 @@ const GameUI: React.FC = () => {
         // RAAS: a selected, stopped APC deploys a radio where it stands.
         const apc = state.units.find(u => u.alive && u.selected && u.team === 'player' && u.type === 'apc' && !u.insideOf);
         const result: CommandResult = apc ? applyCommand(state, 'player', { type: 'build_radio', unitId: apc.id }) : { ok: false, reason: 'select an APC first' };
-        if (!result.ok) state.eventLog.unshift({ message: `Radio: ${result.reason}`, time: state.time, type: 'info' });
+        if (result.ok === false) state.eventLog.unshift({ message: `Radio: ${result.reason}`, time: state.time, type: 'info' });
         triggerHudUpdate();
       }
       if (k === 'b' && state.raas) {
@@ -103,7 +103,7 @@ const GameUI: React.FC = () => {
         const result: CommandResult = inf.length
           ? applyCommand(state, 'player', { type: 'build_spawn', x: inf.reduce((n, u) => n + u.pos.x, 0) / inf.length, y: inf.reduce((n, u) => n + u.pos.y, 0) / inf.length })
           : { ok: false, reason: 'select infantry standing near your radio' };
-        if (!result.ok) state.eventLog.unshift({ message: `Spawn point: ${result.reason}`, time: state.time, type: 'info' });
+        if (result.ok === false) state.eventLog.unshift({ message: `Spawn point: ${result.reason}`, time: state.time, type: 'info' });
         triggerHudUpdate();
       }
       if (k === ' ') { e.preventDefault(); togglePause(state); triggerHudUpdate(); }
