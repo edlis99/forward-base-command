@@ -7,7 +7,6 @@ interface Props { onStart: (m: MissionDef) => void; }
 type Panel = 'none' | 'briefing';
 
 const MissionSelect: React.FC<Props> = ({ onStart }) => {
-  const [panel, setPanel] = useState<Panel>('none');
   const [hovered, setHovered] = useState<string | null>(null);
 
   const startRaas = () => onStart(makeLeipalingisRaas(Math.floor(Math.random() * 0x7fffffff)));
@@ -63,12 +62,11 @@ const MissionSelect: React.FC<Props> = ({ onStart }) => {
           <div className="w-[420px] flex flex-col gap-2">
             <div className="text-[10px] tracking-[0.35em] mb-1 px-1" style={{ color: '#6a7a5a' }}>— MAIN MENU —</div>
             {menuItem('deploy', 'DEPLOY', 'RAAS · LEIPALINGIS', startRaas, true)}
-            {menuItem('briefing', 'OPERATION BRIEFING', panel === 'briefing' ? 'HIDE' : 'VIEW', () => setPanel(p => p === 'briefing' ? 'none' : 'briefing'))}
             {menuItem('settings', 'SETTINGS', 'SOON', () => {})}
             {menuItem('quit', 'QUIT', 'SOON', () => {})}
           </div>
 
-          {panel === 'briefing' && (
+          {hovered === 'deploy' && (
             <div className="flex-1 p-5 border" style={{ background: 'rgba(16,24,16,0.85)', borderColor: '#3a4a3a' }}>
               <div className="text-sm tracking-[0.25em] mb-3" style={{ color: '#a5cf6f' }}>OPERATION: RAAS · LEIPALINGIS</div>
               <div className="text-[12px] leading-relaxed space-y-3" style={{ color: '#b0c0a0' }}>
