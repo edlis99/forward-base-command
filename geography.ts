@@ -21,7 +21,21 @@ export const geography = {
   streams: ((source as { streams?: number[][][] }).streams ?? []).map(s => s.map(projectSourcePoint)),
   fords: ((source as { fords?: number[][] }).fords ?? []).map(projectSourcePoint),
   hedges: ((source as { hedges?: number[][][] }).hedges ?? []).map(h => h.map(projectSourcePoint)),
+  /** River half-width in cells (designed map). */
+  streamWidth: (source as { streamWidth?: number }).streamWidth ?? .95,
+  /** Coarse height map: elevation above the base level, in cells' elevation units. */
+  heights: (source as { heights?: { cols: number; rows: number; step: number; scale: number; data: number[] } }).heights,
 };
+/** Height (0..~3.2) at gameplay cell coordinates from the coarse height map; 0 without one. */
+export function mapHeightAt(x: number, y: number): number {
+  const hm = geography.heights;
+  if (!hm) return 0;
+  const step = hm.step * GEOGRAPHIC_SCALE_X;
+  const fx = Math.max(0, Math.min(hm.cols - 1.001, x / step)), fy = Math.max(0, Math.min(hm.rows - 1.001, y / step));
+  const ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+  const at = (i: number, j: number) => hm.data[j * hm.cols + i] / hm.scale;
+  return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
+}
 /** Playable rectangle in gameplay cells [x0, y0, x1, y1]; outside it is scenery. */
 export const PLAYABLE_CELLS = [source.playable[0] * GEOGRAPHIC_SCALE_X, source.playable[1] * GEOGRAPHIC_SCALE_Y,
   source.playable[2] * GEOGRAPHIC_SCALE_X, source.playable[3] * GEOGRAPHIC_SCALE_Y] as const;

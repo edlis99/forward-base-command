@@ -1,6 +1,7 @@
 import { availableSpeed, routeRemaining } from './movement';
 import { Unit, UnitType, Team, Position, GameState, Stance } from './types';
 import { random } from './rng';
+import { HIGH_GROUND } from './terrain';
 import { isHumanTeam } from './controllers';
 import {
   UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS,
@@ -357,13 +358,23 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     // A friendly has settled beside the slot: close enough is arrived, instead
     // of yielding forever one step short of a crowded square.
     unit.trafficWait = (unit.trafficWait ?? 0) + dt;
-    if (unit.path.length === 0 && unit.finalDest && distance(unit.pos, unit.finalDest) < CELL_SIZE * 1.5 && unit.trafficWait > 2.5) {
+    const toGo = unit.finalDest ? distance(unit.pos, unit.finalDest) : Infinity;
+    const lastLeg = unit.waypoints.length === 0;
+    if (lastLeg && ((unit.path.length <= 1 && toGo < CELL_SIZE * 2.2 && unit.trafficWait > 2.5) ||
+        (toGo < CELL_SIZE * 4 && unit.trafficWait > 6))) {
+      // Close enough in a jammed square: stop here instead of yielding forever.
       unit.trafficWait = 0; unit.waiting = undefined;
       arriveHere(unit);
+    } else if (unit.trafficWait > 10 && unit.finalDest) {
+      // Long jam further out: plan the route again; another way round may be free.
+      unit.trafficWait = 0;
+      setDestination(unit, state, unit.finalDest, true);
     }
     return;
   }
-  unit.trafficWait = 0;
+  // Decay rather than reset: a unit that alternates between yielding and
+  // creeping is still stuck in traffic.
+  unit.trafficWait = Math.max(0, (unit.trafficWait ?? 0) - dt * .5);
   if (stepOk) {
     unit.pos.x = nextX; unit.pos.y = nextY;
     unit.stuckTimer = 0;
@@ -630,8 +641,9 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
   if (isCrit) dmg *= 1.8;
   dmg *= 1 + flankBonus;
   const elevDiff = (attackerTerrain?.elevation ?? 1) - (targetTerrain?.elevation ?? 1);
-  if (elevDiff > 0) dmg *= 1.15;
-  if (elevDiff < 0) dmg *= 0.9;
+  // High ground: plunging fire into exposed targets; shooting uphill at a crest is harder.
+  if (elevDiff > HIGH_GROUND) dmg *= 1.15;
+  if (elevDiff < -HIGH_GROUND) dmg *= 0.9;
   const coverBonus = target.inCover ? targetTerrain?.coverBonus ?? 0 : 0;
   const effectiveArmor = target.armor * (1 + coverBonus);
   dmg = Math.max(dmg * (1 - effectiveArmor / (effectiveArmor + 50)), 1);

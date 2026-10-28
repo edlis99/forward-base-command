@@ -13,6 +13,7 @@ import { CampaignMap } from '../components/CampaignMap';
 import { SETTLEMENTS } from '../game/maps/settlements';
 import { PLAYABLE_CELLS } from '../game/maps/geography';
 import { FOB_RULES, visibleFobs } from '../game/fob';
+import { revealUniforms, MAX_REVEAL } from './canopyReveal';
 import { SettlementLabelPositions } from './SettlementLabels';
 import { Woodland, RuralBuildingsAndProps } from './Environment';
 import { getTerrainAt } from '../game/terrain';
@@ -1081,6 +1082,25 @@ function FobLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameS
   return <group ref={groupRef} />;
 }
 
+// ---------- See-through canopy above your troops ----------
+/** Feeds the canopy shader with your soldiers that stand in or at the edge of a wood. */
+function CanopyReveal({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
+  useFrame(() => {
+    const state = gameStateRef.current, pts = revealUniforms.revealPts.value;
+    let n = 0;
+    for (const u of state.units) {
+      if (n >= MAX_REVEAL) break;
+      if (!u.alive || u.insideOf || u.team !== 'player') continue;
+      const gx = u.pos.x / S, gz = u.pos.y / S, cx = Math.floor(gx), cz = Math.floor(gz);
+      const woods = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => state.terrain[cz + dz]?.[cx + dx]?.type === 'forest');
+      if (!woods) continue;
+      pts[n++].set(gx, surfaceY(gx, gz), gz);
+    }
+    revealUniforms.revealCount.value = n;
+  });
+  return null;
+}
+
 // ---------- Selected-unit path lines ----------
 function PathsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
   const ref = useRef<THREE.LineSegments>(null);
@@ -1573,6 +1593,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <TerrainDebugLayer gameStateRef={gameStateRef} />
         <CapturePoints gameStateRef={gameStateRef} />
         <FobLayer gameStateRef={gameStateRef} />
+        <CanopyReveal gameStateRef={gameStateRef} />
         <UnitsLayer gameStateRef={gameStateRef} inputRef={inputRef} />
         <GhostContactsLayer gameStateRef={gameStateRef} />
         <PathsLayer gameStateRef={gameStateRef} />

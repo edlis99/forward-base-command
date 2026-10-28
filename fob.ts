@@ -143,7 +143,7 @@ export function updateReinforcements(state: GameState, r: RaasState, forwardOf: 
     const unit = createUnit(q.type, q.team, spot.x, spot.y);
     state.nextUnitId = peekUnitId();
     unit.homePos = { ...unit.pos };
-    unit.facing = q.team === 'player' ? Math.PI / 2 : -Math.PI / 2;
+    unit.facing = Math.atan2(r.mains[q.team === 'player' ? 'enemy' : 'player'].y - at.pos.y, r.mains[q.team === 'player' ? 'enemy' : 'player'].x - at.pos.x);
     state.units.push(unit);
     if (q.team === 'player') state.eventLog.unshift({ message: `Reinforcement: ${q.type} at ${at.kind === 'main' ? 'main' : 'spawn point'}`, time: state.time, type: 'spawn' });
   }
