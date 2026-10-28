@@ -1,4 +1,5 @@
-import { geography as snapshot, GEOGRAPHIC_SCALE } from './geography';
+import { geography as snapshot, GEOGRAPHIC_SCALE, PLAYABLE_CELLS, MAIN_CELLS } from './geography';
+export { PLAYABLE_CELLS, MAIN_CELLS };
 import { TerrainCell, TerrainType } from '../types';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../constants';
 import { SETTLEMENTS, settlementAt } from './settlements';
@@ -162,7 +163,7 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
   const building = (x: number, y: number, angle: number) => {
     const town = settlementAt(x + .5, y + .5);
     if (!free(x, y)) return false;
-    if (town && (count[town.id] ?? 0) >= (town.id === 'leipalingis' ? 280 : 120)) return false;
+    if (town && (count[town.id] ?? 0) >= (town.size === 'centre' ? 320 : town.size === 'town' ? 160 : 110)) return false;
     set(grid, x, y, 'urban');
     const c = grid[y][x]; c.propAngle = angle; c.settlementId = town?.id;
     c.buildingKind = town?.id === 'didziasalis' && deterministic(x, y) > .65 ? 'barn' : 'house';
@@ -195,7 +196,7 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     for (let y = Math.floor(town.y - town.ry); y <= town.y + town.ry; y++) {
       for (let x = Math.floor(town.x - town.rx); x <= town.x + town.rx; x++) {
         if (settlementAt(x + .5, y + .5)?.id !== town.id || !free(x, y)) continue;
-        if ((count[town.id] ?? 0) >= (town.id === 'leipalingis' ? 180 : 60)) continue;
+        if ((count[town.id] ?? 0) >= (town.size === 'centre' ? 180 : town.size === 'hamlet' ? 18 : 60)) continue;
         const nearStreet = [-2, -1, 1, 2].some(d => grid[y]?.[x + d]?.type === 'road' || grid[y + d]?.[x]?.type === 'road');
         if (nearStreet && deterministic(x, y) > .3) building(x, y, 0);
       }
@@ -264,5 +265,15 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
         dug = true;
       }
     }
+  }
+
+  // Scenery border: rendered like the rest of the map, but out of bounds for
+  // every unit, so the board edge never sits next to the fighting.
+  const [x0, y0, x1, y1] = PLAYABLE_CELLS;
+  for (let y = 0; y < MAP_ROWS; y++) for (let x = 0; x < MAP_COLS; x++) {
+    if (x >= x0 && x < x1 && y >= y0 && y < y1) continue;
+    const c = grid[y][x];
+    c.blocksMovement = true; c.vehicleImpassable = true;
+    c.prop = undefined;
   }
 }

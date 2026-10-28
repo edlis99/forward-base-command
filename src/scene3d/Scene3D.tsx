@@ -11,6 +11,7 @@ import { GroundSurface, WaterSheet, GrassTufts, GroundDetail } from './GroundSur
 import { MAP_SECTIONS, MapSection } from './mapSections';
 import { CampaignMap } from '../components/CampaignMap';
 import { SETTLEMENTS } from '../game/maps/settlements';
+import { PLAYABLE_CELLS } from '../game/maps/geography';
 import { SettlementLabelPositions } from './SettlementLabels';
 import { Woodland, RuralBuildingsAndProps } from './Environment';
 import { getTerrainAt } from '../game/terrain';
@@ -1369,9 +1370,25 @@ function SelectionOverlayUpdater({ inputRef, overlayRef }: { inputRef: React.Mut
   return null;
 }
 
+// ---------- Countryside beyond the board ----------
+/** Four flat strips framing the map, so the board edge meets ground, not a void. */
+function OuterGround() {
+  const M = Math.max(W, H) * 2, e = 0.5;
+  const strips: [number, number, number, number][] = [
+    [-M / 2 + e, H / 2, M, H + 2 * M], [W + M / 2 - e, H / 2, M, H + 2 * M],
+    [W / 2, -M / 2 + e, W, M], [W / 2, H + M / 2 - e, W, M],
+  ];
+  return <group>{strips.map(([x, z, w, h], i) => (
+    <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[x, -0.15, z]} receiveShadow raycast={() => null}>
+      <planeGeometry args={[w, h]} />
+      <meshStandardMaterial color="#77894f" roughness={1} />
+    </mesh>
+  ))}</group>;
+}
+
 // ---------- Camera rig ----------
 function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObject<InputState>; gameStateRef: React.MutableRefObject<GameState> }) {
-  const { camera } = useThree();
+  const { camera, scene } = useThree();
   const players = gameStateRef.current.units.filter(u => u.team === 'player' && u.alive);
   const targetRef = useRef({ x: players.reduce((n, u) => n + u.pos.x / S, 0) / (players.length || 1), z: players.reduce((n, u) => n + u.pos.y / S, 0) / (players.length || 1) });
   const distRef = useRef(32);
@@ -1400,9 +1417,13 @@ function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObjec
     if (keys.has('s') || keys.has('arrowdown')) targetRef.current.z += sp;
     if (keys.has('a') || keys.has('arrowleft')) targetRef.current.x -= sp;
     if (keys.has('d') || keys.has('arrowright')) targetRef.current.x += sp;
-    targetRef.current.x = Math.max(5, Math.min(W - 5, targetRef.current.x));
-    targetRef.current.z = Math.max(5, Math.min(H - 5, targetRef.current.z));
+    // Keep the view over the playable area; the scenery border fills the rest.
+    targetRef.current.x = Math.max(PLAYABLE_CELLS[0], Math.min(PLAYABLE_CELLS[2], targetRef.current.x));
+    targetRef.current.z = Math.max(PLAYABLE_CELLS[1], Math.min(PLAYABLE_CELLS[3], targetRef.current.z));
     const d = distRef.current;
+    // Distance haze scales with zoom: close up the far countryside fades out,
+    // zoomed out the whole board stays clear.
+    if (scene.fog instanceof THREE.Fog) { scene.fog.near = d * 2.2 + 30; scene.fog.far = d * 5 + 140; }
     camera.position.set(targetRef.current.x, d * 0.85, targetRef.current.z + d * 0.55);
     camera.lookAt(targetRef.current.x, surfaceY(targetRef.current.x, targetRef.current.z), targetRef.current.z);
   }, -2);
@@ -1498,6 +1519,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <UnitBadgePositions gameStateRef={gameStateRef} elements={unitBadges} />
         <SettlementLabelPositions elements={settlementLabels} />
         <CameraRig inputRef={inputRef} gameStateRef={gameStateRef} />
+        <OuterGround />
         <TerrainMesh terrain={terrain} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} />
         <TerrainDebugLayer gameStateRef={gameStateRef} />
         <CapturePoints gameStateRef={gameStateRef} />

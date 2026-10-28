@@ -29,8 +29,16 @@ const GameUI: React.FC = () => {
 
   const openBriefing = useCallback((m: MissionDef) => {
     setMission(m);
+    if (m.id === 'raas') {
+      // RAAS has fixed mains on both sides: no campaign deployment screen.
+      inputRef.current = createInputState();
+      gameStateRef.current = createInitialState(m, undefined, { seed: Math.floor(Math.random() * 0x7fffffff) });
+      setPhase('combat');
+      triggerHudUpdate();
+      return;
+    }
     setPhase('deployment');
-  }, []);
+  }, [triggerHudUpdate]);
 
   const beginCombat = useCallback((ctx: DeploymentContext) => {
     if (!mission) return;

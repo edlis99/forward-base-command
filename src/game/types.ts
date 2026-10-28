@@ -77,6 +77,8 @@ export interface Unit {
   arrivalFacing?: number;
   routeLength?: number;
   waiting?: 'formation' | 'traffic';
+  /** Seconds spent continuously yielding to friendly traffic. */
+  trafficWait?: number;
   /** Group-move speed cap so a formation advances at its slowest member's pace. */
   groupSpeedCap: number | null;
   /** Shared command id used to pace units in the same moving formation. */

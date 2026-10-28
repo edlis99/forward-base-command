@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { MISSIONS } from '../game/missions';
 import { MissionDef } from '../game/types';
+import { makeLeipalingisRaas } from '../game/maps/raasLeipalingis';
 
 interface Props { onStart: (m: MissionDef) => void; }
 
@@ -32,6 +33,19 @@ const MissionSelect: React.FC<Props> = ({ onStart }) => {
             <button onClick={() => onStart(m)} className="px-5 py-2 border text-sm"
               style={{ background: 'rgba(60,90,50,0.9)', borderColor: '#a5cf6f', color: '#e8f0c8' }}>
               PROCEED TO DEPLOYMENT →
+            </button>
+          </div>
+        </div>
+        <div className="p-5 border mt-4" style={{ background: 'rgba(20,30,20,0.9)', borderColor: '#3a4a3a' }}>
+          <div className="text-xl mb-1" style={{ color: '#a5cf6f' }}>RAAS · Leipalingis (vs AI)</div>
+          <div className="text-[12px] leading-relaxed" style={{ color: '#b0c0a0' }}>
+            Mirrored head-to-head map. A random lane of five objectives is chosen; capture them in order with infantry,
+            hold your line and drain the enemy's tickets. You start in the north, the AI in the south.
+          </div>
+          <div className="flex justify-end mt-4">
+            <button onClick={() => onStart(makeLeipalingisRaas(Math.floor(Math.random() * 0x7fffffff)))} className="px-5 py-2 border text-sm"
+              style={{ background: 'rgba(60,90,50,0.9)', borderColor: '#a5cf6f', color: '#e8f0c8' }}>
+              START RAAS →
             </button>
           </div>
         </div>
