@@ -1,23 +1,35 @@
-# Nature assets — imported into the game
+# Realistic forest assets — Forward Base Command
 
-These CC0 assets were imported from publicly available GitHub repositories for evaluation in Forward Base Command. They are now rendered by `src/scene3d/RealisticVegetation.tsx` in the visible forest sections, alongside the procedural woodland. The imported geometry is visual only and does not change terrain cover, collision, or movement.
+The imported **CC0** nature assets are now used to render forests across all map layouts.
+The active Three.js implementation is `src/scene3d/RealisticVegetation.tsx`, called by `TerrainSection` in `Scene3D.tsx`.
 
-## Pine Tree 01 — optimized OBJ (CC0)
-- Original asset: https://polyhaven.com/a/pine_tree_01 (Poly Haven, CC0)
-- Game-optimized derivative: https://github.com/drsnuggles8/OloEngineBase/tree/master/OloEditor/SandboxProject/Assets/Models/Vegetation/pine
-- Formats: OBJ + MTL + PNG textures, about 25,146 triangles.
-- License and provenance: `pine/LICENSE.md`.
-- **Important: foliage texture is a provisional placeholder.** The original `pine_foliage.png` in the source GitHub repository exceeds the accessible binary-download limit. This directory includes an identical copy of `pine_card.png` under the name `pine_foliage.png` so the MTL references resolve; foliage appearance may therefore be inaccurate. Replace it with the original `Textures/pine_foliage.png` from the source before production use. No geometry has been modified.
+## Included assets and licenses
 
-## Fern 02 — original Poly Haven 1K glTF (CC0)
-- Asset: https://polyhaven.com/a/fern_02
-- GitHub mirror: https://github.com/Joshkaki00/godotmark/tree/main/art/nature-benchmark-archive-20260311_173846/fern_02_1k.gltf
-- Complete glTF model, binary buffer and three JPEG PBR textures.
-- License: Poly Haven CC0, https://polyhaven.com/license
+| Asset | Source | Format | Use |
+| --- | --- | --- | --- |
+| Scots pine 01 | [Poly Haven](https://polyhaven.com/a/pine_tree_01), optimized via [OloEngineBase](https://github.com/drsnuggles8/OloEngineBase/tree/master/OloEditor/SandboxProject/Assets/Models/Vegetation/pine) | OBJ + PNG; 25,146 triangles | Detailed nearby conifer trees |
+| Pine card | Same as above | PNG | Crossed planes for pine stands throughout forests |
+| Island tree 01 (broadleaf card) | [Poly Haven](https://polyhaven.com/a/island_tree_01), optimized via [OloEngineBase](https://github.com/drsnuggles8/OloEngineBase/tree/master/OloEditor/SandboxProject/Assets/Models/Vegetation/broadleaf) | PNG | Mixed / deciduous crowns |
+| Fern 02 | [Poly Haven](https://polyhaven.com/a/fern_02), mirrored in [godotmark](https://github.com/Joshkaki00/godotmark) | glTF + BIN + JPEG PBR | Four natural fern variants |
+| Shrub 02 | [Poly Haven](https://polyhaven.com/a/shrub_02), optimized via OloEngineBase | OBJ + PNG | Woodland bushes |
+| Grass Medium 01 | [Poly Haven](https://polyhaven.com/a/grass_medium_01), optimized via OloEngineBase | OBJ + PNG | Low groundcover |
 
-## Integration notes
-- `src/scene3d/RealisticVegetation.tsx` loads pines with OBJLoader and ferns with GLTFLoader, preserving the fern's sibling `fern_02.bin` and `textures/` directory.
-- The new visuals are instanced and capped per visible map section. High graphics allows 8 pines / 44 ferns per section; Standard allows 3 / 16.
-- The previous trees remain as fallback and maintain their existing canopy/cover visuals; imported models do not add gameplay collision.
-- **Pine foliage is provisional** until its true atlas replaces the card placeholder. Check the pine silhouette in game before relying on it as the final tree style.
-- Runtime graphics and frame rates must be checked in Lovable before applying the imported vegetation to larger areas.
+All of these assets are **CC0 1.0**. Source-specific attribution, provenance and details are retained in each pack's `LICENSE.md` and `README.md`, or in the Poly Haven source link above.
+
+## Rendering and performance
+
+- Every cell with `terrain.type === 'forest'` receives deterministic forest-cover placement; empty openings are scattered naturally, not on a regular grid.
+- Pine and broadleaf tree cards provide dense forests at low cost, batched into instanced cross-planes. They also fade their foliage above friendly units via the existing canopy-reveal shader.
+- A limited selection of real high-detail OBJ pine meshes renders near the camera (up to 10 per visible section in High, 3 in Standard), with distance culling.
+- Instanced OBJ shrubs/grass and glTF ferns add fine detail. Density is capped per visible section and respects the current graphics setting.
+- Vegetation is **visual only**: tactical forest properties, movement blocking, LOS, cover and gameplay simulations have not changed.
+- The previous procedural trees are a suspense/error fallback only, not the normal forest renderer.
+- The map section frustum system continues to mount only visible sections; asset loaders cache models by URL.
+
+## Known visual limitations
+
+**The detailed pine's foliage texture is temporarily incomplete.** `pine/Textures/pine_foliage.png` is currently a copy of `pine_card.png`, rather than the proper original texture, which was too large for the available GitHub file-transfer API. The pine cards use the intentional billboard atlas and are valid. The 3D pine foliage could look odd until the original 2 MB texture is restored from [the source repo](https://github.com/drsnuggles8/OloEngineBase/tree/master/OloEditor/SandboxProject/Assets/Models/Vegetation/pine/Textures). Avoid judging the final close-up appearance by the provisional material.
+
+Deciduous trees are currently represented by realistic texture cards; the broadleaf high-detail mesh and its large foliage atlas have not been imported. This is an intentionally performance-conscious interim solution.
+
+**Build and runtime testing still required in Lovable** to validate loaders, shaders, vegetation scale and FPS. The scene integration does not by itself establish measured game performance.

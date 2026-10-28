@@ -18,7 +18,7 @@ import { Sky } from '@react-three/drei';
 import PostEffects from './PostEffects';
 import { AmbienceClock, ChimneySmoke, Birds, AmbientSound } from './Ambience';
 import { SettlementLabelPositions } from './SettlementLabels';
-import { Woodland, RuralBuildingsAndProps } from './Environment';
+import { RuralBuildingsAndProps } from './Environment';
 import { RealisticVegetation } from './RealisticVegetation';
 import { getTerrainAt } from '../game/terrain';
 import { coverLabel, isOccupyableCover, coverState, unitStatus } from '../game/cover';
@@ -126,7 +126,7 @@ function TerrainSection({ terrain, regional, section, highQuality }: { terrain: 
         <InstancedTerrainGroup key={type} type={type} positions={g.positions} sizes={g.sizes} />
       ))}
       <TrenchInstances terrain={terrain} section={section} />
-      <Woodland terrain={terrain} section={section} />
+      {/* Full forest replacement: pack-derived trees and vegetation in every forest cell. */}
       <RealisticVegetation terrain={terrain} section={section} highQuality={highQuality} />
       <HedgerowInstances terrain={terrain} section={section} />
       <RuralBuildingsAndProps terrain={terrain} section={section} />
