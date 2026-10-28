@@ -96,6 +96,7 @@ describe('usable tactical objects', () => {
   it('reduces incoming hit probability at physical cover', () => {
     const shoot = (covered: boolean) => {
       const state = flat(), a = world(20, 20), b = world(22, 20);
+      state.random = () => .72;
       const attacker = createUnit('infantry', 'player', a.x, a.y);
       const target = createUnit('infantry', 'enemy', b.x, b.y);
       target.spottedByEnemy = true; target.detectionLevel = 1; target.facing = Math.PI;
@@ -104,7 +105,6 @@ describe('usable tactical objects', () => {
       state.units = [attacker, target]; updateCombat(attacker, .1, state);
       return state.projectiles[0]?.hit;
     };
-    vi.spyOn(Math, 'random').mockReturnValue(.72);
     expect(shoot(false)).toBe(true); expect(shoot(true)).toBe(false);
   });
 });

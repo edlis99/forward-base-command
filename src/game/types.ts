@@ -1,5 +1,7 @@
 export type UnitType = 'infantry' | 'tank' | 'apc' | 'helicopter';
 export type Team = 'player' | 'enemy';
+/** Who drives a side: a human (commands) or the built-in AI. */
+export type Controller = 'human' | 'ai';
 export type TerrainType =
   | 'open' | 'urban' | 'forest' | 'road' | 'water'
   | 'wall' | 'trench' | 'rubble' | 'sandbag'
@@ -7,7 +9,7 @@ export type TerrainType =
 export type Stance = 'hold_fire' | 'tight' | 'defend' | 'aggressive';
 export type OrderType = 'idle' | 'move' | 'attack_move' | 'attack' | 'hold_position' | 'retreat' | 'patrol' | 'entrench';
 export type FormationType = 'line' | 'wedge' | 'column';
-export type MissionId = 'leipalingis';
+export type MissionId = 'leipalingis' | 'duel';
 export type ObjectiveStatus = 'active' | 'complete' | 'failed';
 export type MapLayoutId = 'farmhouse_complex' | 'village_crossroads' | 'forest_outpost' | 'desert_road' | 'leipalingis_region';
 export type DeploymentTownId = 'jovaisiai' | 'didziasalis' | 'versiai' | 'straciunai' | 'seirijai';
@@ -286,6 +288,18 @@ export interface GameState {
   nextMoveGroupId: number;
   /** Active coordinated player formations. */
   playerSquads: PlayerSquad[];
+  /** Deterministic RNG state (see rng.ts). */
+  rngState?: number;
+  /** Test/replay hook: replaces the seeded generator when set. */
+  random?: () => number;
+  /** Who controls each side. Default: the player is human, the enemy is the AI. */
+  controllers?: Record<Team, Controller>;
+  /** Set when a head-to-head match is decided. */
+  winner?: Team | null;
+  /** Next unit id number for units spawned during this match. */
+  nextUnitId?: number;
+  /** Head-to-head scoring (see duel.ts). */
+  duel?: { score: Record<Team, number>; scoreToWin: number; timeLimit: number; pointsPerSecond: number };
 }
 
 export interface DebugFlags {

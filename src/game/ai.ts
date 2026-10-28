@@ -1,3 +1,4 @@
+import { random } from './rng';
 import { GameState, Unit, Position } from './types';
 import { distance, setDestination } from './units';
 import { hasLineOfSight, getTerrainAt } from './terrain';
@@ -45,7 +46,7 @@ function flankApproach(unit: Unit, target: Unit, state: GameState): Position {
   const standoff = veh ? unit.range * 0.8 : unit.range * 0.85;
   const baseX = target.pos.x - (dx / len) * standoff;
   const baseY = target.pos.y - (dy / len) * standoff;
-  const flankAmt = CELL_SIZE * 3 + Math.random() * CELL_SIZE * 2;
+  const flankAmt = CELL_SIZE * 3 + random(state) * CELL_SIZE * 2;
   const candidate = { x: baseX + px * flankAmt, y: baseY + py * flankAmt };
   // Snap to best tactical cell near the candidate that still sees the target.
   const cover = findBestTacticalCell(state, candidate, {
@@ -152,7 +153,7 @@ function runEnemyBehavior(unit: Unit, state: GameState, dt: number) {
   // Apply reaction delay on first contact
   if (unit.reactionTarget !== (closest?.id ?? null)) {
     unit.reactionTarget = closest?.id ?? null;
-    unit.reactionDelay = closest ? 0.3 + Math.random() * 0.5 : 0;
+    unit.reactionDelay = closest ? 0.3 + random(state) * 0.5 : 0;
   }
   if (unit.reactionDelay > 0) return;
 
@@ -162,7 +163,7 @@ function runEnemyBehavior(unit: Unit, state: GameState, dt: number) {
       const p = state.units.find(u => u.id === pid);
       if (p) {
         p.insideOf = null;
-        p.pos = { x: unit.pos.x + (Math.random() - 0.5) * 30, y: unit.pos.y + (Math.random() - 0.5) * 30 };
+        p.pos = { x: unit.pos.x + (random(state) - 0.5) * 30, y: unit.pos.y + (random(state) - 0.5) * 30 };
       }
     }
     unit.passengers = [];
@@ -184,7 +185,7 @@ function runEnemyBehavior(unit: Unit, state: GameState, dt: number) {
     }
     // Infantry cover-seek: if standing in poor cover, slide to nearby better cell that still has LOS.
     if (!veh && unit.coverSeekCooldown <= 0) {
-      unit.coverSeekCooldown = 1.5 + Math.random();
+      unit.coverSeekCooldown = 1.5 + random(state);
       const curCell = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
       const curScore = curCell ? cellTacticalScore(curCell) : 0;
       const tag = unit as Unit & { _squadRole?: string };

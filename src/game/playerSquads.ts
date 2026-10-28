@@ -173,6 +173,8 @@ export interface SquadMoveOptions {
   queue?: boolean;
   /** Advance with weapons free. */
   attackMove?: boolean;
+  /** Formation for this order; undefined = the global preference, null = default spread. */
+  formation?: import('./types').FormationType | null;
   /** Explicit arrival facing (radians). Defaults to army-centre -> destination. */
   facing?: number;
   /** Drag-controlled frontage multiplier (1 = default spacing). */
@@ -201,6 +203,7 @@ export function planSquadMove(
   const ground = selected.filter(u => u.alive && !u.insideOf);
   if (ground.length === 0) return [];
 
+  const formation = opts.formation === undefined ? state.preferredFormation : (opts.formation ?? undefined);
   const armyCenter = centroid(ground);
   const baseFacing = opts.facing ?? Math.atan2(dest.y - armyCenter.y, dest.x - armyCenter.x);
   const fwd = { x: Math.cos(baseFacing), y: Math.sin(baseFacing) };
@@ -215,8 +218,8 @@ export function planSquadMove(
     const c = centroid(members);
     const lateral = (c.x - armyCenter.x) * right.x + (c.y - armyCenter.y) * right.y;
     const spacing = Math.max(...members.map(slotSpacing));
-    const cols = state.preferredFormation === 'column' ? 1
-      : state.preferredFormation ? members.length
+    const cols = formation === 'column' ? 1
+      : formation ? members.length
         : Math.max(2, Math.min(6, Math.ceil(Math.sqrt(members.length * 1.5))));
     return { i, members, lateral, width: cols * spacing * widthScale };
   });
@@ -245,7 +248,7 @@ export function planSquadMove(
     const lateralOf = (u: Unit) =>
       (u.pos.x - squadCenter.x) * sr.x + (u.pos.y - squadCenter.y) * sr.y;
 
-    const local = localSlots(block.members, compression, lateralOf, state.preferredFormation, !!settlementAt(squadDest.x / state.cellSize, squadDest.y / state.cellSize) || opennessAt(state, squadDest) < .65);
+    const local = localSlots(block.members, compression, lateralOf, formation, !!settlementAt(squadDest.x / state.cellSize, squadDest.y / state.cellSize) || opennessAt(state, squadDest) < .65);
     const slots: Record<string, Position> = {};
     const localOffsets: Record<string, Position> = {};
 
