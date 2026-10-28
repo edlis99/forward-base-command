@@ -4,8 +4,6 @@ import { makeLeipalingisRaas } from '../game/maps/raasLeipalingis';
 
 interface Props { onStart: (m: MissionDef) => void; }
 
-type Panel = 'none' | 'briefing';
-
 const MissionSelect: React.FC<Props> = ({ onStart }) => {
   const [hovered, setHovered] = useState<string | null>(null);
 
