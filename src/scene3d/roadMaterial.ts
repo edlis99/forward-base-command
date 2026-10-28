@@ -42,6 +42,7 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
     vertexColors: true, normalMap: normal, normalScale: new THREE.Vector2(0.7, 0.7),
     roughnessMap: rough, roughness: 1, metalness: 0,
   });
+  material.name = 'Poly Haven terrain';
   const diffuse = SURFACES.map(s => groundTex(s, 'diffuse'));
   material.onBeforeCompile = shader => {
     SURFACES.forEach((_, i) => { shader.uniforms[`gDiff${i}`] = { value: diffuse[i] }; });
@@ -68,7 +69,7 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
       vec3 tex = GS(gDiff0) * vSplatA.x + GS(gDiff1) * vSplatA.y + GS(gDiff2) * vSplatA.z
                + GS(gDiff3) * vSplatB.x + GS(gDiff4) * vSplatB.y + GS(gDiff5) * vSplatB.z;
       float wsum = dot(vSplatA, vec3(1.0)) + dot(vSplatB, vec3(1.0));
-      tex /= max(wsum, 0.001);
+      tex = wsum > 0.001 ? tex / wsum : GS(gDiff0);
       // Vertex colours keep the old patchiness as a gentle brightness/tint shift.
       float lum = dot(vColor.rgb, vec3(0.333));
       vec3 tint = mix(vec3(1.0), vColor.rgb / max(lum, 0.02), 0.25);
@@ -81,6 +82,6 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
       diffuseColor.rgb = mix(diffuseColor.rgb, roadColor * clamp(detail, 0.7, 1.35), paving.a);` : ''}
     `);
   };
-  material.customProgramCacheKey = () => `polyhaven-landscape-v1-${roads ? 'r' : 'n'}`;
+  material.customProgramCacheKey = () => `polyhaven-landscape-v2-${roads ? 'r' : 'n'}`;
   return material;
 }

@@ -19,4 +19,6 @@ The supplied Blender archives contain some maps in EXR format. Where a JPG was a
 
 These assets use [Poly Haven's CC0 licence](https://polyhaven.com/license), which permits commercial use and redistribution without required attribution.
 
-The game can serve these files from `/assets/textures/<folder>/<filename>`. The terrain renderer must load and apply the maps for them to affect the graphics. The Blender projects, displacement maps, and masks are not included in these runtime folders. The sky HDRI is a separate asset and is not included in this texture import.
+The game serves these files from `/assets/textures/<folder>/<filename>`. The terrain renderer blends the six diffuse materials using the surface weights built in `src/scene3d/groundGeometry.ts`. Texture loading is cached in `groundTextures.ts`, with fallback colours while images load; `roadMaterial.ts` keeps the tiling aligned across map sections and supplies normal/roughness detail.
+
+The Blender projects, displacement maps, and masks are not included in these runtime folders. The sky HDRI is a separate asset and is not included in this texture import.
