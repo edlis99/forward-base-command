@@ -46,7 +46,7 @@ const MissionSelect: React.FC<Props> = ({ onStart }) => {
         background: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0px, rgba(0,0,0,0.18) 1px, transparent 1px, transparent 4px)',
       }} />
 
-      <div className="relative h-full flex flex-col justify-between p-10 max-w-5xl mx-auto">
+      <div className="relative h-full flex flex-col p-10 max-w-5xl mx-auto">
         {/* header */}
         <div>
           <div className="text-[11px] tracking-[0.4em] mb-2" style={{ color: '#6a7a5a' }}>
@@ -59,7 +59,7 @@ const MissionSelect: React.FC<Props> = ({ onStart }) => {
         </div>
 
         {/* menu + side panel */}
-        <div className="flex gap-8 items-start mt-6">
+        <div className="flex gap-8 items-start mt-14">
           <div className="w-[420px] flex flex-col gap-2">
             <div className="text-[10px] tracking-[0.35em] mb-1 px-1" style={{ color: '#6a7a5a' }}>— MAIN MENU —</div>
             {menuItem('deploy', 'DEPLOY', 'RAAS · LEIPALINGIS', startRaas, true)}
@@ -90,7 +90,7 @@ const MissionSelect: React.FC<Props> = ({ onStart }) => {
         </div>
 
         {/* footer */}
-        <div className="flex justify-between items-end text-[10px] tracking-widest" style={{ color: '#5a6a4a' }}>
+        <div className="mt-auto flex justify-between items-end text-[10px] tracking-widest" style={{ color: '#5a6a4a' }}>
           <div>COMBAT PROTOTYPE · SQUAD MOVEMENT BUILD</div>
           <div>CLICK DEPLOY TO BEGIN</div>
         </div>
