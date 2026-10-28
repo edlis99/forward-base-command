@@ -1,4 +1,4 @@
-import { geography as snapshot, GEOGRAPHIC_SCALE, PLAYABLE_CELLS, MAIN_CELLS } from './geography';
+import { geography as snapshot, GEOGRAPHIC_SCALE, PLAYABLE_CELLS, MAIN_CELLS, mapHeightAt } from './geography';
 export { PLAYABLE_CELLS, MAIN_CELLS };
 import { TerrainCell, TerrainType } from '../types';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../constants';
@@ -107,6 +107,19 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     }
   }
 
+  // Designed map: streams (crossed by bridges where roads pass, and by muddy fords).
+  const designed = snapshot.designed;
+  const paintDisc = (cx: number, cy: number, radius: number, type: TerrainType) => {
+    for (let y = Math.floor(cy - radius); y <= Math.ceil(cy + radius); y++) for (let x = Math.floor(cx - radius); x <= Math.ceil(cx + radius); x++) {
+      if (grid[y]?.[x] && Math.hypot(x + .5 - cx, y + .5 - cy) <= radius) set(grid, x, y, type);
+    }
+  };
+  for (const stream of snapshot.streams) for (let i = 1; i < stream.length; i++) {
+    const [a, b] = [stream[i - 1], stream[i]], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) * 2));
+    for (let k = 0; k <= n; k++) paintDisc(a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n, snapshot.streamWidth, 'water');
+  }
+  for (const [fx, fy] of snapshot.fords) paintDisc(fx, fy, 2.2, 'mud');
+
   // Road shoulders remain traversable for the calibrated vehicle footprint. Tracks are slower and do not acquire asphalt bonuses.
   const paintSegment = (a: Point, b: Point, radius: number, type: TerrainType, name?: string) => {
     const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -138,8 +151,18 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
   // gameplay vegetation, not additional claimed geographic features.
   for (let y = 0; y < MAP_ROWS; y++) for (let x = 0; x < MAP_COLS; x++) {
     const c = grid[y][x];
-    if (c.type === 'open' && !c.roadName && Math.sin(x * .31) + Math.cos(y * .27) + Math.sin((x + y) * .19) > .9) {
+    if (!designed && c.type === 'open' && !c.roadName && Math.sin(x * .31) + Math.cos(y * .27) + Math.sin((x + y) * .19) > .9) {
       set(grid, x, y, 'tall_grass');
+    }
+  }
+
+  // Designed map: hedgerows and tree lines along field edges (with gaps to pass through).
+  for (const hedge of snapshot.hedges) for (let i = 1; i < hedge.length; i++) {
+    const [a, b] = [hedge[i - 1], hedge[i]], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) * 2));
+    for (let k = 0; k <= n; k++) {
+      const x = Math.floor(a[0] + (b[0] - a[0]) * k / n), y = Math.floor(a[1] + (b[1] - a[1]) * k / n);
+      const c = grid[y]?.[x];
+      if (c && !c.roadName && (c.type === 'open' || c.type === 'tall_grass')) set(grid, x, y, 'hedgerow');
     }
   }
 
@@ -159,6 +182,15 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
   // Dense named centres and sparse intervening farms: the earlier uniform
   // scatter erased the distinction between a village and the countryside.
   const count: Record<string, number> = {};
+  /** Designed map: apartment blocks and brick houses in town centres, wooden houses and barns elsewhere. */
+  const designedKind = (town: ReturnType<typeof settlementAt>, x: number, y: number): NonNullable<TerrainCell['buildingKind']> => {
+    const r = deterministic(x + 17, y + 41);
+    if (!town) return r < .45 ? 'barn' : r < .52 ? 'workshop' : 'house';
+    const q = ((x + .5 - town.x) / town.rx) ** 2 + ((y + .5 - town.y) / town.ry) ** 2;
+    if (town.size === 'centre') return q < .25 && r < .35 ? 'block' : q < .55 && r < .55 ? 'brick' : r < .08 ? 'workshop' : r < .16 ? 'barn' : 'house';
+    if (town.size === 'town') return q < .3 && r < .25 ? 'brick' : r < .12 ? 'workshop' : r < .3 ? 'barn' : 'house';
+    return r < .35 ? 'barn' : 'house';
+  };
   const deterministic = (x: number, y: number) => Math.abs(Math.sin(x * 71.17 + y * 31.63) * 43758.5) % 1;
   const building = (x: number, y: number, angle: number) => {
     const town = settlementAt(x + .5, y + .5);
@@ -166,7 +198,7 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     if (town && (count[town.id] ?? 0) >= (town.size === 'centre' ? 320 : town.size === 'town' ? 160 : 110)) return false;
     set(grid, x, y, 'urban');
     const c = grid[y][x]; c.propAngle = angle; c.settlementId = town?.id;
-    c.buildingKind = town?.id === 'didziasalis' && deterministic(x, y) > .65 ? 'barn' : 'house';
+    c.buildingKind = designed ? designedKind(town, x, y) : town?.id === 'didziasalis' && deterministic(x, y) > .65 ? 'barn' : 'house';
     if (town) count[town.id] = (count[town.id] ?? 0) + 1;
     // Yard details are added after all buildings, so props cannot erase frontage.
     return true;
@@ -175,7 +207,8 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     let x = Math.floor(bx), y = Math.floor(by);
     if (!grid[y]?.[x]) continue;
     const town = settlementAt(bx, by);
-    if (!town && deterministic(bx, by) > .055) continue;
+    // The OSM import thinned its rural buildings; the designed map places farmsteads on purpose.
+    if (!town && !designed && deterministic(bx, by) > .055) continue;
     if (!free(x, y)) {
       if (!town) continue;
       let best: { x: number; y: number; d: number } | null = null;
@@ -196,9 +229,20 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     for (let y = Math.floor(town.y - town.ry); y <= town.y + town.ry; y++) {
       for (let x = Math.floor(town.x - town.rx); x <= town.x + town.rx; x++) {
         if (settlementAt(x + .5, y + .5)?.id !== town.id || !free(x, y)) continue;
-        if ((count[town.id] ?? 0) >= (town.size === 'centre' ? 180 : town.size === 'hamlet' ? 18 : 60)) continue;
+        if ((count[town.id] ?? 0) >= (town.size === 'centre' ? 180 : town.size === 'hamlet' ? 30 : 60)) continue;
         const nearStreet = [-2, -1, 1, 2].some(d => grid[y]?.[x + d]?.type === 'road' || grid[y + d]?.[x]?.type === 'road');
         if (nearStreet && deterministic(x, y) > .3) building(x, y, 0);
+      }
+    }
+    if (designed && (town.size === 'centre' || town.size === 'town')) {
+      // Blocks behind the street frontage: big towns are built up, not one row deep.
+      const target = town.size === 'centre' ? 240 : 95;
+      for (let y = Math.floor(town.y - town.ry); y <= town.y + town.ry; y++) for (let x = Math.floor(town.x - town.rx); x <= town.x + town.rx; x++) {
+        if ((count[town.id] ?? 0) >= target) break;
+        const q = ((x + .5 - town.x) / town.rx) ** 2 + ((y + .5 - town.y) / town.ry) ** 2;
+        if (q > .8 || settlementAt(x + .5, y + .5)?.id !== town.id || !free(x, y)) continue;
+        const lot = town.size === 'centre' ? x % 3 !== 0 : (x + y) % 2 === 0;
+        if (lot && deterministic(x + 3, y + 9) > .3) building(x, y, (deterministic(x, y) > .5 ? 0 : Math.PI / 2));
       }
     }
     const candidates = grid.flat().filter(c => c.type === 'urban' && c.settlementId === town.id)
@@ -235,10 +279,16 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     if (!free(x, y)) continue;
     const forestEdge = grid[y - 1][x].type === 'forest' || grid[y + 1][x].type === 'forest';
     const roadEdge = grid[y][x - 2].roadName || grid[y][x + 2].roadName;
+    if (designed) {
+      // Designed map: a few log piles at wood edges and the odd field stone; hay stays by the barns.
+      if (forestEdge && rand() < 0.025) placeProp(x, y, 'logs', rand() * Math.PI);
+      else if (!roadEdge && deterministic(x + 431, y + 919) < .0025) placeProp(x, y, 'boulder', deterministic(x, y + 55) * Math.PI);
+      continue;
+    }
     if (forestEdge && rand() < 0.15) placeProp(x, y, 'logs', rand() * Math.PI);
     else if (roadEdge && rand() < 0.07) {
       placeProp(x, y, rand() < 0.4 ? 'wreck' : 'barricade', Math.PI / 2);
-    } else if ((x % 18 === 0 || y % 16 === 0) && rand() < 0.28) {
+    } else if (!designed && (x % 18 === 0 || y % 16 === 0) && rand() < 0.28) {
       if (rand() < 0.5) set(grid, x, y, 'hedgerow'); else placeProp(x, y, 'hay', 0);
     } else if (deterministic(x + 431, y + 919) < .009) {
       placeProp(x, y, deterministic(x + 88, y) < .5 ? 'boulder' : 'scrub', deterministic(x, y + 55) * Math.PI);
@@ -274,6 +324,23 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     if (x >= x0 && x < x1 && y >= y0 && y < y1) continue;
     const c = grid[y][x];
     c.blocksMovement = true; c.vehicleImpassable = true;
-    c.prop = undefined;
+    c.prop = undefined; c.yard = undefined;
+  }
+
+  if (designed) {
+    // Hills: elevation from the designed height map (water stays at 0).
+    for (let y = 0; y < MAP_ROWS; y++) for (let x = 0; x < MAP_COLS; x++) {
+      const c = grid[y][x];
+      if (c.type !== 'water') c.elevation = 1 + mapHeightAt(x + .5, y + .5);
+    }
+    // Wood edges are the best fighting positions: trunks for cover, undergrowth
+    // for concealment, open ground in front. Deep woods hide well but slow you.
+    for (let y = 1; y < MAP_ROWS - 1; y++) for (let x = 1; x < MAP_COLS - 1; x++) {
+      const c = grid[y][x];
+      if (c.type !== 'forest') continue;
+      const edge = [grid[y - 1][x], grid[y + 1][x], grid[y][x - 1], grid[y][x + 1]].some(n => n.type !== 'forest');
+      if (edge) { c.coverBonus = .38; c.concealment = .52; }
+      else { c.coverBonus = .25; c.concealment = .45; }
+    }
   }
 }

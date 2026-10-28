@@ -69,16 +69,17 @@ const MissionSelect: React.FC<Props> = ({ onStart }) => {
               <div className="text-sm tracking-[0.25em] mb-3" style={{ color: '#a5cf6f' }}>OPERATION: RAAS · LEIPALINGIS</div>
               <div className="text-[12px] leading-relaxed space-y-3" style={{ color: '#b0c0a0' }}>
                 <p>
-                  Mirrored head-to-head engagement against the AI. A random lane of five objectives is drawn
-                  across the map — capture them in order with infantry, hold your line, and bleed the enemy's
-                  tickets dry.
+                  The real Leipalingis area against the AI: lakes, woods, a river and two towns, Leipalingis and
+                  Seirijai. A random lane of five objectives is drawn and revealed as you advance — capture them in
+                  order with infantry, hold your line, and bleed the enemy's tickets dry.
                 </p>
                 <p>
-                  You stage in the north, the enemy in the south. APCs can deploy radios (R) and infantry can
+                  You stage in the west, the enemy in the east. APCs can deploy radios (R) and infantry can
                   raise forward spawn points (B) near a radio — keep your reinforcements close to the front.
                 </p>
                 <p style={{ color: '#8a9a7a' }}>
-                  Victory: capture the final objective in the lane, or reduce enemy tickets to zero.
+                  Victory: reduce enemy tickets to zero. Losses, lost objectives and losing ground all cost tickets;
+                  holding every objective drains the enemy fast.
                 </p>
               </div>
             </div>

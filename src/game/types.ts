@@ -79,6 +79,8 @@ export interface Unit {
   waiting?: 'formation' | 'traffic';
   /** Seconds spent continuously yielding to friendly traffic. */
   trafficWait?: number;
+  /** Consecutive re-paths that made no progress. */
+  noProgressRepaths?: number;
   /** Group-move speed cap so a formation advances at its slowest member's pace. */
   groupSpeedCap: number | null;
   /** Shared command id used to pace units in the same moving formation. */
@@ -138,7 +140,7 @@ export interface TerrainCell {
   roadName?: string;
   yard?: 'courtyard' | 'garden' | 'orchard';
   settlementId?: string;
-  buildingKind?: 'house' | 'barn' | 'church' | 'civic' | 'workshop';
+  buildingKind?: 'house' | 'brick' | 'block' | 'barn' | 'church' | 'civic' | 'workshop';
   /** Detection multiplier; paved roads expose moving and stationary units. */
   exposure?: number;
 }

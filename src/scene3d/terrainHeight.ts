@@ -1,5 +1,12 @@
 import { TerrainCell, TerrainType } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
+import { geography } from '../game/maps/geography';
+
+// The designed Leipalingis map carries real hills in its height map (they block
+// sight in the simulation), so show those, a little exaggerated for readability,
+// and keep the decorative bumps small so the eye and the rules agree.
+const HILL_SCALE = geography.designed ? 1.7 : 1.05;
+const BUMP_SCALE = geography.designed ? .35 : 1;
 
 /**
  * Single source of truth for the landscape's surface height.
@@ -79,10 +86,10 @@ export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number,
     relief += (c.roadName ? 1 : RELIEF[c.type] ?? 1) * w;
     elev += ((c.elevation ?? 1) - 1) * w;
   }
-  const hills = (fbm(gx * 0.03, gz * 0.03) - 0.5) * 2.4;
+  const hills = (fbm(gx * 0.03, gz * 0.03) - 0.5) * 2.4 * BUMP_SCALE;
   const mid = (fbm(gx * 0.11, gz * 0.11) - 0.5) * 0.36;
   const fine = (fbm(gx * 0.45, gz * 0.45) - 0.5) * 0.06;
-  return level + elev * 1.05 + (hills + mid + fine) * relief;
+  return level + elev * HILL_SCALE + (hills + mid + fine) * relief;
 }
 
 /**

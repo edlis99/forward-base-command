@@ -1,5 +1,5 @@
 import { GameState, Unit, Team } from './types';
-import { getTerrainAt, hasLineOfSight } from './terrain';
+import { getTerrainAt, hasLineOfSight, HIGH_GROUND } from './terrain';
 import { distance } from './units';
 
 /**
@@ -19,14 +19,18 @@ export function updateAwareness(state: GameState, dt: number): string[] {
     let bestSpotter: Unit | null = null;
     for (const sp of opponents) {
       const d = distance(sp.pos, target.pos);
-      if (d > sp.sightRange) continue;
+      // High ground sees further: +20% sight range when clearly above the target.
+      const spotterElev = getTerrainAt(state.terrain, sp.pos.x, sp.pos.y)?.elevation ?? 1;
+      const targetElev = getTerrainAt(state.terrain, target.pos.x, target.pos.y)?.elevation ?? 1;
+      const reach = sp.sightRange * (spotterElev - targetElev > HIGH_GROUND ? 1.2 : 1);
+      if (d > reach) continue;
       const isHeli = sp.type === 'helicopter';
       if (!hasLineOfSight(state.terrain, sp.pos.x, sp.pos.y, target.pos.x, target.pos.y, isHeli)) continue;
 
       // base
       let rate = 1.0;
       // distance falloff
-      rate *= 1 - (d / sp.sightRange) * 0.6;
+      rate *= 1 - Math.min(1, d / reach) * 0.6;
       // helicopters spot better
       if (isHeli) rate *= 1.4;
       // target concealment from terrain

@@ -425,6 +425,12 @@ export function findNearestPassableWorld(
   return { x: best.x * CELL_SIZE + CELL_SIZE / 2, y: best.y * CELL_SIZE + CELL_SIZE / 2 };
 }
 
+/** Eye height above the ground, in elevation units (a hill is up to ~2 units). */
+export const EYE_HEIGHT = 0.3;
+const CREST_MARGIN = 0.05;
+/** Elevation difference that counts as holding the high ground. */
+export const HIGH_GROUND = 0.4;
+
 export function losInfo(
   terrain: TerrainCell[][],
   fromX: number, fromY: number, toX: number, toY: number,
@@ -435,6 +441,10 @@ export function losInfo(
   const dist = Math.sqrt(dx * dx + dy * dy);
   const steps = Math.ceil(dist / (CELL_SIZE * 0.5));
   let concealmentSum = 0;
+  // Terrain masking: the sight line runs between eye heights above the ground
+  // at both ends; a crest that rises above it hides the target.
+  const elevAt = (x: number, y: number) => terrain[Math.floor(y / CELL_SIZE)]?.[Math.floor(x / CELL_SIZE)]?.elevation ?? 1;
+  const eyeFrom = elevAt(fromX, fromY) + EYE_HEIGHT, eyeTo = elevAt(toX, toY) + EYE_HEIGHT;
   for (let i = 1; i < steps; i++) {
     const t = i / steps;
     const cx = fromX + dx * t, cy = fromY + dy * t;
@@ -446,6 +456,7 @@ export function losInfo(
     const endpoint = (gx === Math.floor(fromX / CELL_SIZE) && gy === Math.floor(fromY / CELL_SIZE)) ||
       (gx === Math.floor(toX / CELL_SIZE) && gy === Math.floor(toY / CELL_SIZE));
     if (cell.blocksLOS && !endpoint) return { clear: false, concealmentSum: 0 };
+    if (!endpoint && cell.elevation > eyeFrom + (eyeTo - eyeFrom) * t + CREST_MARGIN) return { clear: false, concealmentSum: 0 };
     concealmentSum += cell.concealment;
   }
   return { clear: true, concealmentSum };
