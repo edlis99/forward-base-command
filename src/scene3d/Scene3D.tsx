@@ -19,6 +19,7 @@ import PostEffects from './PostEffects';
 import { AmbienceClock, ChimneySmoke, Birds, AmbientSound } from './Ambience';
 import { SettlementLabelPositions } from './SettlementLabels';
 import { Woodland, RuralBuildingsAndProps } from './Environment';
+import { RealisticVegetation } from './RealisticVegetation';
 import { getTerrainAt } from '../game/terrain';
 import { coverLabel, isOccupyableCover, coverState, unitStatus } from '../game/cover';
 import { controllable, selectUnits } from '../game/selection';
@@ -73,7 +74,7 @@ const FLAT_TYPES = new Set([
 
 // Only nearby sections allocate geometry, vegetation and road textures. Unit
 // simulation remains global: leaving the camera does not freeze a battle.
-function TerrainMesh({ terrain, regional }: { terrain: TerrainCell[][]; regional: boolean }) {
+function TerrainMesh({ terrain, regional, highQuality }: { terrain: TerrainCell[][]; regional: boolean; highQuality: boolean }) {
   const { camera, gl } = useThree();
   const frustum = useMemo(() => new THREE.Frustum(), []);
   const matrix = useMemo(() => new THREE.Matrix4(), []);
@@ -95,11 +96,11 @@ function TerrainMesh({ terrain, regional }: { terrain: TerrainCell[][]; regional
     <mesh position={[W / 2, -10, H / 2]} receiveShadow raycast={() => null}>
       <boxGeometry args={[W, 14, H]} /><meshStandardMaterial color="#6f6450" />
     </mesh>
-    {visible.map(section => <TerrainSection key={section.id} terrain={terrain} regional={regional} section={section} />)}
+    {visible.map(section => <TerrainSection key={section.id} terrain={terrain} regional={regional} section={section} highQuality={highQuality} />)}
   </group>;
 }
 
-function TerrainSection({ terrain, regional, section }: { terrain: TerrainCell[][]; regional: boolean; section: MapSection }) {
+function TerrainSection({ terrain, regional, section, highQuality }: { terrain: TerrainCell[][]; regional: boolean; section: MapSection; highQuality: boolean }) {
   const groups = useMemo(() => {
     const byType: Record<string, { positions: [number, number, number][]; sizes: [number, number, number][] }> = {};
     for (let y = section.y; y < section.y + section.height; y++) for (let x = section.x; x < section.x + section.width; x++) {
@@ -126,6 +127,7 @@ function TerrainSection({ terrain, regional, section }: { terrain: TerrainCell[]
       ))}
       <TrenchInstances terrain={terrain} section={section} />
       <Woodland terrain={terrain} section={section} />
+      <RealisticVegetation terrain={terrain} section={section} highQuality={highQuality} />
       <HedgerowInstances terrain={terrain} section={section} />
       <RuralBuildingsAndProps terrain={terrain} section={section} />
     </group>
@@ -1600,7 +1602,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <SettlementLabelPositions elements={settlementLabels} />
         <CameraRig inputRef={inputRef} gameStateRef={gameStateRef} />
         <OuterGround />
-        <TerrainMesh terrain={terrain} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} />
+        <TerrainMesh terrain={terrain} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} highQuality={highQuality} />
         <TerrainDebugLayer gameStateRef={gameStateRef} />
         <CapturePoints gameStateRef={gameStateRef} />
         <FobLayer gameStateRef={gameStateRef} />
