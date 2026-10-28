@@ -129,7 +129,8 @@ export function RuralBuildingsAndProps({ terrain, section }: { terrain: TerrainC
       if (cell.type !== 'urban' && !cell.prop && !cell.yard) continue;
       const angle = cell.propAngle ?? 0;
       const town = SETTLEMENTS.find(s => s.id === cell.settlementId);
-      const cx = x + .5, cz = z + .5, y = groundHeightAt(terrain, cx, cz);
+      const off = cell.type === 'urban' ? cell.buildingOffset : undefined;
+      const cx = x + .5 + (off?.[0] ?? 0), cz = z + .5 + (off?.[1] ?? 0), y = groundHeightAt(terrain, cx, cz);
       // Geometry sits on the rear/side of a cell; its centre is a usable
       // firing slot. Clicking uses the same cell in the simulation.
       const add = (shape: Shape, ox: number, oy: number, oz: number, sx: number, sy: number, sz: number, color: string, rx = 0, rz = 0) => {

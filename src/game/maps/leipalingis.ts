@@ -192,12 +192,33 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     return r < .35 ? 'barn' : 'house';
   };
   const deterministic = (x: number, y: number) => Math.abs(Math.sin(x * 71.17 + y * 31.63) * 43758.5) % 1;
-  const building = (x: number, y: number, angle: number) => {
+  /** Turn a building so its front (door side) faces the nearest street; footprint angle kept modulo 90°. */
+  const faceStreet = (x: number, y: number, angle: number) => {
+    let best: [number, number] | null = null, bestD = Infinity;
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+      const n = grid[y + dy]?.[x + dx];
+      if (!n || !(n.type === 'road' || n.type === 'gravel') || (dx === 0 && dy === 0)) continue;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = [dx, dy]; }
+    }
+    if (!best) return angle;
+    const len = Math.hypot(best[0], best[1]), fx = best[0] / len, fz = best[1] / len;
+    // Front is local +z; rotation `a` maps it to (-sin a, cos a). Pick the quarter turn that faces the road.
+    let choice = angle, score = -Infinity;
+    for (let k = 0; k < 4; k++) {
+      const a = angle + k * Math.PI / 2, s = -Math.sin(a) * fx + Math.cos(a) * fz;
+      if (s > score) { score = s; choice = a; }
+    }
+    return choice;
+  };
+  const building = (x: number, y: number, angle: number, offset?: [number, number]) => {
     const town = settlementAt(x + .5, y + .5);
     if (!free(x, y)) return false;
     if (town && (count[town.id] ?? 0) >= (town.size === 'centre' ? 320 : town.size === 'town' ? 160 : 110)) return false;
     set(grid, x, y, 'urban');
-    const c = grid[y][x]; c.propAngle = angle; c.settlementId = town?.id;
+    const c = grid[y][x]; c.settlementId = town?.id;
+    c.propAngle = designed ? faceStreet(x, y, angle) : angle;
+    if (designed && offset) c.buildingOffset = [Math.max(-.28, Math.min(.28, offset[0])), Math.max(-.28, Math.min(.28, offset[1]))];
     c.buildingKind = designed ? designedKind(town, x, y) : town?.id === 'didziasalis' && deterministic(x, y) > .65 ? 'barn' : 'house';
     if (town) count[town.id] = (count[town.id] ?? 0) + 1;
     // Yard details are added after all buildings, so props cannot erase frontage.
@@ -221,7 +242,8 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
       x = best.x; y = best.y;
     }
     if (!town && [-2, 0, 2].some(dy => [-2, 0, 2].some(dx => grid[y + dy]?.[x + dx]?.type === 'urban'))) continue;
-    building(x, y, angle);
+    // Keep where the real building stands inside its cell (only when it was not moved to a free neighbour).
+    building(x, y, angle, x === Math.floor(bx) && y === Math.floor(by) ? [bx - x - .5, by - y - .5] : undefined);
   }
   // Representative frontage fills coarse-grid omissions beside real roads.
   // These are stylised buildings, not a claim about exact real-world footprints.
@@ -231,7 +253,8 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
         if (settlementAt(x + .5, y + .5)?.id !== town.id || !free(x, y)) continue;
         if ((count[town.id] ?? 0) >= (town.size === 'centre' ? 180 : town.size === 'hamlet' ? 30 : 60)) continue;
         const nearStreet = [-2, -1, 1, 2].some(d => grid[y]?.[x + d]?.type === 'road' || grid[y + d]?.[x]?.type === 'road');
-        if (nearStreet && deterministic(x, y) > .3) building(x, y, 0);
+        if (nearStreet && deterministic(x, y) > .3) building(x, y, designed ? (deterministic(x + 5, y) - .5) * .25 : 0,
+          designed ? [(deterministic(x, y + 8) - .5) * .4, (deterministic(x + 8, y) - .5) * .4] : undefined);
       }
     }
     if (designed && (town.size === 'centre' || town.size === 'town')) {
@@ -242,7 +265,8 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
         const q = ((x + .5 - town.x) / town.rx) ** 2 + ((y + .5 - town.y) / town.ry) ** 2;
         if (q > .8 || settlementAt(x + .5, y + .5)?.id !== town.id || !free(x, y)) continue;
         const lot = town.size === 'centre' ? x % 3 !== 0 : (x + y) % 2 === 0;
-        if (lot && deterministic(x + 3, y + 9) > .3) building(x, y, (deterministic(x, y) > .5 ? 0 : Math.PI / 2));
+        if (lot && deterministic(x + 3, y + 9) > .3) building(x, y, (deterministic(x, y) - .5) * .3,
+          [(deterministic(x, y + 4) - .5) * .4, (deterministic(x + 4, y) - .5) * .4]);
       }
     }
     const candidates = grid.flat().filter(c => c.type === 'urban' && c.settlementId === town.id)

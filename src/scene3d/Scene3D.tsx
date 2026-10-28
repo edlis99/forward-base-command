@@ -16,6 +16,7 @@ import { FOB_RULES, visibleFobs } from '../game/fob';
 import { revealUniforms, MAX_REVEAL } from './canopyReveal';
 import { Sky } from '@react-three/drei';
 import PostEffects from './PostEffects';
+import { AmbienceClock, ChimneySmoke, Birds, AmbientSound } from './Ambience';
 import { SettlementLabelPositions } from './SettlementLabels';
 import { Woodland, RuralBuildingsAndProps } from './Environment';
 import { getTerrainAt } from '../game/terrain';
@@ -1604,6 +1605,11 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <CapturePoints gameStateRef={gameStateRef} />
         <FobLayer gameStateRef={gameStateRef} />
         <CanopyReveal gameStateRef={gameStateRef} />
+        {/* The living map: each line can be removed on its own */}
+        <AmbienceClock />
+        <ChimneySmoke terrain={terrain} />
+        <Birds gameStateRef={gameStateRef} />
+        <AmbientSound gameStateRef={gameStateRef} />
         <UnitsLayer gameStateRef={gameStateRef} inputRef={inputRef} />
         <GhostContactsLayer gameStateRef={gameStateRef} />
         <PathsLayer gameStateRef={gameStateRef} />

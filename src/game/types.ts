@@ -137,6 +137,8 @@ export interface TerrainCell {
   /** Tactical objects have an open firing/occupancy slot in their cell. */
   prop?: 'logs' | 'hay' | 'stone_wall' | 'wreck' | 'barricade' | 'boulder' | 'scrub';
   propAngle?: number;
+  /** Real building position inside the cell (cells, about ±0.3); the cell centre stays the firing slot. */
+  buildingOffset?: [number, number];
   roadName?: string;
   yard?: 'courtyard' | 'garden' | 'orchard';
   settlementId?: string;

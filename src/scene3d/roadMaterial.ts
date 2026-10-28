@@ -3,6 +3,7 @@ import { MapSection } from './mapSections';
 import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
 import { paintRoadNetwork, roadJunctions } from '../game/maps/roadSurface';
 import { groundTex, SURFACES, TILE_CELLS } from './groundTextures';
+import { ambienceUniforms } from './ambienceUniforms';
 
 // Gutters use global road coordinates, so filtering cannot reveal seams at
 // section borders. Junction paint is computed once for the whole network.
@@ -48,6 +49,7 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
     SURFACES.forEach((_, i) => { shader.uniforms[`gDiff${i}`] = { value: diffuse[i] }; });
     shader.uniforms.gTile = { value: 1 / TILE_CELLS };
     shader.uniforms.asphaltTex = { value: diffuse[5] };
+    shader.uniforms.uTime = ambienceUniforms.uTime;
     shader.vertexShader = 'attribute vec3 splatA;\nattribute vec3 splatB;\nuniform float gTile;\nvarying vec3 vSplatA;\nvarying vec3 vSplatB;\nvarying vec2 gUv;\n' + shader.vertexShader;
     let begin = '#include <begin_vertex>\nvSplatA = splatA; vSplatB = splatB; gUv = position.xz * gTile;';
     if (roads) {
@@ -59,7 +61,10 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
     }
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', begin);
     shader.fragmentShader = SURFACES.map((_, i) => `uniform sampler2D gDiff${i};`).join('\n')
-      + '\nvarying vec3 vSplatA;\nvarying vec3 vSplatB;\nvarying vec2 gUv;\n'
+      + '\nvarying vec3 vSplatA;\nvarying vec3 vSplatB;\nvarying vec2 gUv;\nuniform float uTime;\nuniform float gTile;\n'
+      + 'float cHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n'
+      + 'float cNoise(vec2 p) { vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);\n'
+      + '  return mix(mix(cHash(i), cHash(i + vec2(1.0, 0.0)), u.x), mix(cHash(i + vec2(0.0, 1.0)), cHash(i + vec2(1.0, 1.0)), u.x), u.y); }\n'
       + (roads ? 'uniform sampler2D campaignRoads;\nvarying vec2 campaignUv;\n' : '')
       + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `
@@ -80,8 +85,12 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
       vec3 asph = texture2D(gDiff5, gUv * 1.6).rgb;
       float detail = dot(asph, vec3(0.333)) / 0.18;
       diffuseColor.rgb = mix(diffuseColor.rgb, roadColor * clamp(detail, 0.7, 1.35), paving.a);` : ''}
+      // Drifting cloud shadows: big soft patches sliding slowly across the land.
+      vec2 cw = gUv / gTile;
+      float cloud = cNoise(cw * 0.012 + vec2(uTime * 0.006, uTime * 0.0025)) * 0.65 + cNoise(cw * 0.031 + vec2(uTime * 0.01, 0.0)) * 0.35;
+      diffuseColor.rgb *= 1.0 - smoothstep(0.52, 0.74, cloud) * 0.26;
     `);
   };
-  material.customProgramCacheKey = () => `polyhaven-landscape-v2-${roads ? 'r' : 'n'}`;
+  material.customProgramCacheKey = () => `polyhaven-landscape-v3-${roads ? 'r' : 'n'}`;
   return material;
 }
