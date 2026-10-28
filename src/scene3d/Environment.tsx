@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import { TerrainCell } from '../game/types';
 import { MapSection } from './mapSections';
@@ -7,13 +8,14 @@ import { groundHeightAt, hash2, fbm } from './terrainHeight';
 import { canopyMaterial } from './canopyReveal';
 
 type V3 = [number, number, number];
-interface Part { p: V3; s: V3; r?: V3; color: string; }
+type Finish = 'plain' | 'timber' | 'weathered' | 'brick' | 'plaster' | 'clay' | 'slate' | 'metal';
+interface Part { p: V3; s: V3; r?: V3; color: string; finish?: Finish; }
 type Shape = 'box' | 'crown' | 'cone' | 'cylinder' | 'roof';
 type Parts = Record<Shape, Part[]>;
 const emptyParts = (): Parts => ({ box: [], crown: [], cone: [], cylinder: [], roof: [] });
 
 /** All props are batched by geometry, with per-instance material colours. */
-function Batch({ shape, parts, shadows = true, canopy = false }: { shape: Shape; parts: Part[]; shadows?: boolean; canopy?: boolean }) {
+function Batch({ shape, parts, shadows = true, canopy = false, texture }: { shape: Shape; parts: Part[]; shadows?: boolean; canopy?: boolean; texture?: THREE.Texture }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const canopyMat = useMemo(() => (canopy ? canopyMaterial() : undefined), [canopy]);
   useEffect(() => () => canopyMat?.dispose(), [canopyMat]);
@@ -25,6 +27,10 @@ function Batch({ shape, parts, shadows = true, canopy = false }: { shape: Shape;
       -.5,0,-.5, 0,.5,-.5, -.5,0,.5, 0,.5,-.5, 0,.5,.5, -.5,0,.5,
       0,.5,-.5, .5,0,-.5, .5,0,.5, 0,.5,-.5, .5,0,.5, 0,.5,.5,
     ], 3));
+    const a = geo.getAttribute('position');
+    const uv: number[] = [];
+    for (let i = 0; i < a.count; i++) uv.push(a.getX(i) + .5, a.getZ(i) + .5);
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     geo.computeVertexNormals(); return geo;
   }, [shape]);
   useEffect(() => () => roof?.dispose(), [roof]);
@@ -33,12 +39,15 @@ function Batch({ shape, parts, shadows = true, canopy = false }: { shape: Shape;
     const dummy = new THREE.Object3D(), color = new THREE.Color();
     parts.forEach((part, i) => {
       dummy.position.set(...part.p); dummy.scale.set(...part.s); dummy.rotation.set(...(part.r ?? [0, 0, 0])); dummy.updateMatrix();
-      ref.current!.setMatrixAt(i, dummy.matrix); ref.current!.setColorAt(i, color.set(part.color));
+      ref.current!.setMatrixAt(i, dummy.matrix);
+      color.set(part.color);
+      if (texture) color.lerp(new THREE.Color('#ffffff'), .8);
+      ref.current!.setColorAt(i, color);
     });
     ref.current.instanceMatrix.needsUpdate = true;
     if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
     ref.current.computeBoundingSphere();
-  }, [parts]);
+  }, [parts, texture]);
   if (!parts.length) return null;
   return <instancedMesh ref={ref} args={[undefined, undefined, parts.length]} castShadow={shadows} receiveShadow raycast={() => null}>
     {shape === 'box' && <boxGeometry />}
@@ -47,8 +56,41 @@ function Batch({ shape, parts, shadows = true, canopy = false }: { shape: Shape;
     {shape === 'cylinder' && <cylinderGeometry args={[0.5, 0.5, 1, 8]} />}
     {shape === 'roof' && <primitive object={roof} attach="geometry" />}
     {canopyMat ? <primitive object={canopyMat} attach="material" />
-      : <meshStandardMaterial roughness={0.92} side={shape === 'roof' ? THREE.DoubleSide : THREE.FrontSide} />}
+      : <meshStandardMaterial map={texture ?? null} roughness={texture ? .9 : .92}
+          side={shape === 'roof' ? THREE.DoubleSide : THREE.FrontSide} />}
   </instancedMesh>;
+}
+/** Textures are cached by useLoader: all visible settlements reuse the same 1K maps. */
+function BuildingBatches({ parts }: { parts: Parts }) {
+  const images = useLoader(THREE.TextureLoader, [
+    '/assets/buildings/wood_siding.jpg', '/assets/buildings/wood_weathered.jpg',
+    '/assets/buildings/brick_red.jpg', '/assets/buildings/concrete.jpg',
+    '/assets/buildings/roof_clay.jpg', '/assets/buildings/roof_slate.jpg',
+    '/assets/buildings/roof_corrugated.jpg',
+  ]);
+  const textures = useMemo(() => {
+    images.forEach(t => {
+      t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.anisotropy = 4; t.needsUpdate = true;
+    });
+    return { timber: images[0], weathered: images[1], brick: images[2], plaster: images[3],
+      clay: images[4], slate: images[5], metal: images[6] } as Record<Exclude<Finish, 'plain'>, THREE.Texture>;
+  }, [images]);
+  const groups = useMemo(() => {
+    const grouped: { key: string; shape: Shape; finish: Finish; items: Part[] }[] = [];
+    for (const shape of Object.keys(parts) as Shape[]) {
+      const buckets = new Map<Finish, Part[]>();
+      for (const part of parts[shape]) {
+        const f = part.finish ?? 'plain';
+        if (!buckets.has(f)) buckets.set(f, []);
+        buckets.get(f)!.push(part);
+      }
+      for (const [finish, items] of buckets) grouped.push({ key: shape + '-' + finish, shape, finish, items });
+    }
+    return grouped;
+  }, [parts]);
+  return <group>{groups.map(g => <Batch key={g.key} shape={g.shape} parts={g.items}
+    texture={g.finish === 'plain' ? undefined : textures[g.finish]} />)}</group>;
 }
 function Batches({ parts, canopy = false }: { parts: Parts; canopy?: boolean }) {
   // With canopy on, leaf shapes (crowns, cones) thin out above your troops; trunks stay solid.
@@ -133,97 +175,166 @@ export function RuralBuildingsAndProps({ terrain, section }: { terrain: TerrainC
       const cx = x + .5 + (off?.[0] ?? 0), cz = z + .5 + (off?.[1] ?? 0), y = groundHeightAt(terrain, cx, cz);
       // Geometry sits on the rear/side of a cell; its centre is a usable
       // firing slot. Clicking uses the same cell in the simulation.
-      const add = (shape: Shape, ox: number, oy: number, oz: number, sx: number, sy: number, sz: number, color: string, rx = 0, rz = 0) => {
+      const add = (shape: Shape, ox: number, oy: number, oz: number, sx: number, sy: number, sz: number, color: string, rx = 0, rz = 0, finish: Finish = 'plain') => {
         const propScale = cell.type === 'urban' || cell.yard ? 1 : .58;
         ox *= propScale; oy *= propScale; oz *= propScale; sx *= propScale; sy *= propScale; sz *= propScale;
         parts[shape].push({ p: [cx + Math.cos(angle) * ox - Math.sin(angle) * oz, y + oy, cz + Math.sin(angle) * ox + Math.cos(angle) * oz],
-          s: [sx, sy, sz], r: [rx, -angle, rz], color });
+          s: [sx, sy, sz], r: [rx, -angle, rz], color, finish });
       };
       if (cell.yard) {
-        // Open entrance on the south edge; low side fences and garden beds.
+        // Dzūkija farmstead: low picket fencing, vegetable plots and small
+        // service structures behind the house. The road-facing entrance stays open.
         for (const side of [-1, 1]) {
-          add('box', side * .43, .08, -.08, .025, .12, .68, '#8b896d');
-          add('box', side * .43, .1, -.39, .045, .2, .045, '#77735c');
+          for (const iz of [-.40, -.19, .02, .23]) {
+            add('box', side * .44, .115, iz, .026, .23, .028, '#938a70');
+          }
+          add('box', side * .44, .16, -.09, .026, .035, .72, '#a89f83');
         }
+        for (const ox of [-.40, -.18, .18, .40]) add('box', ox, .105, -.43, .023, .21, .03, '#8e846c');
         if (cell.yard === 'garden') {
+          // Garden rows and a narrow central path: not a uniform green block.
           for (const side of [-1, 1]) {
-            add('box', side * .20, .013, -.14, .22, .026, .42, '#6c6047');
-            for (const oz of [-.28, -.15, -.02]) add('box', side * .20, .055, oz, .17, .08, .04, '#647847');
+            add('box', side * .24, .012, -.17, .23, .024, .44, '#66563e');
+            for (const oz of [-.32, -.19, -.06]) {
+              add('box', side * .24, .049, oz, .18, .061, .055,
+                hash2(x + oz * 19, z) > .5 ? '#638050' : '#537344');
+            }
+          }
+          if (hash2(x + 71, z + 19) > .71) {
+            add('cylinder', .30, .22, .22, .06, .44, .06, '#71634e');
+            add('box', .30, .45, .22, .25, .04, .21, '#91816a');
+            add('roof', .30, .48, .22, .36, .18, .30, '#6c5d50', 0, 0, 'slate');
           }
         } else if (cell.yard === 'orchard') {
-          for (const ox of [-.22, .22]) {
-            add('cylinder', ox, .23, -.2, .045, .46, .045, '#6f6045');
-            add('crown', ox, .55, -.2, .36, .4, .36, '#7e9554');
+          for (const ox of [-.22, .24]) {
+            add('cylinder', ox, .25, -.22, .046, .50, .046, '#776146');
+            add('crown', ox, .59, -.22, .38, .41, .39, '#708e54');
+            add('crown', ox + .10, .56, -.25, .27, .29, .31, '#80985e');
           }
-        } else add('box', .25, .09, -.26, .22, .18, .2, '#8a8067');
+          add('box', -.08, .045, .28, .28, .09, .14, '#806e50');
+        } else {
+          // Work yard: open storage, lean-to, logs, small granary.
+          add('box', -.20, .18, -.15, .50, .34, .33, '#755f48', 0, 0, 'weathered');
+          add('roof', -.20, .35, -.15, .58, .18, .42, '#72716d', 0, 0, 'metal');
+          add('box', -.20, .18, .03, .20, .24, .025, '#4c4034');
+          for (const i of [0, 1, 2]) add('cylinder', .26, .09 + i * .10, -.22, .11, .40, .11, '#756049', Math.PI / 2);
+        }
       } else if (cell.type === 'urban') {
-        // Lithuanian town and countryside: painted wooden cottages, brick
-        // houses, Soviet-era apartment blocks in the large towns, long barns,
-        // sheds. Each building picks its own size and colours.
         const kind = cell.buildingKind ?? 'house';
         const r1 = hash2(x + 11, z), r2 = hash2(x, z + 13), r3 = hash2(x + 29, z + 7);
         const pick = (arr: string[], r: number) => arr[Math.floor(r * arr.length) % arr.length];
-        const WOOD = ['#8a6a4a', '#7b5d43', '#a0805c', '#6f7f62', '#5f7a86', '#b49a6a', '#9a6e52', '#c2b28a'];
-        const PLASTER = ['#d8cfb8', '#cfc4a8', '#e0d6c0', '#c9c1b0', '#d6cbb0', '#d9d2c2'];
-        const BRICK = ['#9a4f3c', '#a85d45', '#8c4a39', '#b06a4f'];
-        const ROOF = ['#5f625e', '#6e716b', '#7a3f31', '#8c4a36', '#4f5a5e', '#665446'];
-        const roof = r3 < .3 && town?.roof ? town.roof : pick(ROOF, r2);
-        const glass = '#3f4f52', frame = '#e3dcc2';
+        const WOOD = ['#886c50', '#785f47', '#997b58', '#899079', '#7d8a89', '#b1a184', '#9b755a', '#c0b295'];
+        const PLASTER = ['#d3c9b6', '#e1d6c1', '#c3bcae', '#bcbbae', '#ddd7cc'];
+        const BRICK = ['#a15e48', '#9b533d', '#b07456', '#8e5545'];
+        const ROOF = ['#545959', '#656661', '#824e3f', '#7c5146', '#545c62', '#675e54'];
+        const roofColor = r3 < .25 && town?.roof ? town.roof : pick(ROOF, r2);
+        const siding = pick(WOOD, r1);
+        const roofFinish: Finish = r2 < .24 ? 'clay' : r2 < .64 ? 'slate' : 'metal';
+        const glass = '#3b4e51', frame = '#e4decf';
+
+        // All measurements stay within the existing navigational cell. The
+        // building still occupies exactly one tactical cell for LOS and cover.
+        const wallBox = (ox: number, oy: number, oz: number, sx: number, sy: number, sz: number,
+          color: string, finish: Finish) => add('box', ox, oy, oz, sx, sy, sz, color, 0, 0, finish);
+        const roofTop = (ox: number, oy: number, oz: number, sx: number, sy: number, sz: number,
+          color: string, finish: Finish) => add('roof', ox, oy, oz, sx, sy, sz, color, 0, 0, finish);
         const windows = (h: number, rows: number, cols: number, w: number, d: number) => {
-          for (let row = 0; row < rows; row++) for (let c = 0; c < cols; c++) {
-            const ox = (c - (cols - 1) / 2) * (w / cols), oy = .16 + (row + .55) * (h / rows);
-            for (const side of [1, -1]) {
-              add('box', ox, oy, -.18 + side * (d / 2 + .006), .11, .13, .02, frame);
-              add('box', ox, oy, -.18 + side * (d / 2 + .014), .08, .1, .02, glass);
+          const winW = Math.min(.13, w / (cols + 1));
+          const winH = Math.min(.17, h / (rows + 1) * .56);
+          for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+            const ox = (col - (cols - 1) / 2) * (w / cols), oy = .13 + (row + .54) * (h / rows);
+            for (const side of [-1, 1]) {
+              const oz = -.18 + side * (d / 2 + .01);
+              add('box', ox, oy, oz, winW + .035, winH + .035, .025, frame);
+              add('box', ox, oy, oz + side * .015, winW, winH, .016, glass);
+              add('box', ox, oy, oz + side * .024, .009, winH, .012, '#d0cabb');
+              add('box', ox, oy, oz + side * .025, winW, .009, .012, '#d0cabb');
+              if (cols <= 3 && row === 0 && side === 1) {
+                for (const shutter of [-1, 1]) add('box', ox + shutter * (winW * .5 + .028),
+                  oy, oz + .02, .025, winH + .025, .013, r1 < .5 ? '#b7b6a2' : '#6d785e');
+              }
             }
           }
         };
-        add('box', 0, .04, -.18, .96, .08, .72, '#8c897c'); // plinth / yard edge
+        add('box', 0, .045, -.18, .96, .09, .76, '#8b877c');
+
         if (kind === 'block') {
-          // Three to five storeys, flat roof, window grid, balconies.
-          const floors = 3 + Math.floor(r1 * 3), h = floors * .32, w = .94, d = .66;
-          add('box', 0, .08 + h / 2, -.18, w, h, d, pick(PLASTER, r2));
-          add('box', 0, .1 + h, -.18, w + .03, .05, d + .03, '#5d605c');
-          windows(h, floors, 4, w * .92, d);
-          for (let f = 1; f < floors; f++) add('box', .22, .1 + f * .32, -.18 + d / 2 + .05, .22, .03, .1, '#8f8c84');
+          // Post-war panel housing is reserved for actual town centres.
+          const floors = 3 + Math.floor(r1 * 2), h = floors * .30, w = .91, d = .68;
+          wallBox(0, .09 + h / 2, -.18, w, h, d, pick(PLASTER, r2), 'plaster');
+          add('box', 0, .11 + h, -.18, w + .055, .07, d + .05, '#666968');
+          windows(h, floors, 4, w * .90, d);
+          for (let f = 1; f < floors; f++) {
+            add('box', .25, .09 + f * .30, -.18 + d / 2 + .06, .19, .033, .12, '#96918a');
+            add('box', .25, .14 + f * .30, -.18 + d / 2 + .11, .19, .065, .014, '#656560');
+          }
+          add('box', -.25, .19, -.18 + d / 2 + .02, .16, .22, .025, '#756c60');
         } else if (kind === 'brick' || kind === 'civic') {
-          const h = kind === 'civic' ? .82 : .62 + r1 * .2, w = .84, d = .6;
-          add('box', 0, .08 + h / 2, -.18, w, h, d, kind === 'civic' ? pick(PLASTER, r1) : (r2 < .6 ? pick(BRICK, r1) : pick(PLASTER, r1)));
-          add('roof', 0, .08 + h, -.18, w + .08, .32, d + .08, roof);
-          windows(h, 2, 3, w * .9, d);
-          add('box', .0, .2, -.18 + d / 2 + .01, .14, .26, .02, '#4e4438');
+          // Interwar masonry homes, plastered public buildings and schools.
+          const h = kind === 'civic' ? .80 : .56 + r1 * .16, w = .85, d = .66;
+          const plaster = kind === 'civic' || r2 > .68;
+          wallBox(0, .09 + h / 2, -.18, w, h, d,
+            plaster ? pick(PLASTER, r1) : pick(BRICK, r1), plaster ? 'plaster' : 'brick');
+          roofTop(0, .09 + h, -.18, w + .14, .38, d + .16, roofColor, r2 < .5 ? 'clay' : 'slate');
+          add('box', 0, .08 + h, -.18, w + .12, .028, d + .10, '#e1d9c6');
+          windows(h, kind === 'civic' ? 2 : 1, 3, w * .86, d);
+          add('box', .05, .21, -.18 + d / 2 + .02, .15, .28, .029, '#645243');
+          // Simple rendered plaster cornice and entrance canopy.
+          add('box', .05, .39, -.18 + d / 2 + .14, .25, .038, .20, '#c7c4b6');
+          add('box', .05, .10, -.18 + d / 2 + .12, .25, .04, .20, '#98918a');
         } else if (kind === 'barn') {
-          // Long, dark timber, big roof, wide door.
-          const h = .42 + r1 * .12, w = .94, d = .58;
-          add('box', 0, .08 + h / 2, -.18, w, h, d, pick(['#6b5a46', '#7a6650', '#5d4f40', '#8a6d52'], r2));
-          add('roof', 0, .08 + h, -.18, w + .06, .4, d + .1, pick(['#5f625e', '#4f5450', '#6e716b', '#7a3f31'], r3));
-          add('box', 0, .26, -.18 + d / 2 + .01, .34, .34, .02, '#4a3e30');
-          add('box', 0, .26, -.18 + d / 2 + .02, .02, .34, .02, '#9c8c6c');
+          // Long, relatively low threshing barns / granaries, not red US barns.
+          const h = .45 + r1 * .14, w = .94, d = .60;
+          wallBox(0, .09 + h / 2, -.18, w, h, d, pick(WOOD, r2), 'weathered');
+          roofTop(0, .09 + h, -.18, w + .14, .41, d + .16,
+            roofColor, r3 < .34 ? 'slate' : 'metal');
+          // Tall double door, side braces, exposed timber posts.
+          add('box', 0, .30, -.18 + d / 2 + .022, .35, .40, .030, '#544635');
+          add('box', 0, .30, -.18 + d / 2 + .046, .020, .40, .01, '#9f896a');
+          for (const side of [-1, 1]) {
+            add('box', side * .43, .32, -.18 + d / 2 + .024, .035, .55, .025, '#b1a081');
+            add('box', side * .23, .29, -.18 + d / 2 + .038, .025, .39, .020, '#a98b6c');
+          }
         } else if (kind === 'workshop') {
-          const h = .4 + r1 * .1, w = .9, d = .66;
-          add('box', 0, .08 + h / 2, -.18, w, h, d, pick(['#8d9496', '#9aa09a', '#a09a8a', '#7f8a8c'], r2));
-          add('roof', 0, .08 + h, -.18, w + .05, .14, d + .06, '#7d8486');
-          add('box', .14, .22, -.18 + d / 2 + .01, .34, .28, .02, '#5d6668');
-          add('box', -.28, .1, .28, .22, .16, .18, '#77765d');
+          const h = .43 + r1 * .13, w = .91, d = .70;
+          wallBox(0, .09 + h / 2, -.18, w, h, d, pick(PLASTER, r2), 'plaster');
+          roofTop(0, .09 + h, -.18, w + .10, .22, d + .10, '#767978', 'metal');
+          add('box', .15, .25, -.18 + d / 2 + .03, .35, .29, .024, '#626f71');
+          add('box', -.29, .26, -.18 + d / 2 + .026, .16, .22, .022, '#4c5351');
+          add('box', -.27, .13, .28, .24, .18, .17, '#827e66');
         } else {
-          // Wooden cottage (or church body): one storey, gable roof, chimney, painted boards.
-          const h = .38 + r1 * .14, w = .72 + r2 * .14, d = .52;
-          const wall = kind === 'church' ? '#d6cbb1' : (r3 < .25 && town?.wall ? town.wall : pick(WOOD, r1 * 7.3));
-          add('box', 0, .08 + h / 2, -.18, w, h, d, wall);
-          add('roof', 0, .08 + h, -.18, w + .14, .38, d + .12, roof);
-          add('box', -.18, .08 + h + .12, -.24, .08, .22, .09, '#9a8676');
-          windows(h, 1, 2, w * .85, d);
-          add('box', .04, .17, -.18 + d / 2 + .01, .11, .2, .02, '#594d3e');
-          if (kind !== 'church') for (const side of [-1, 1]) {
-            add('box', side * .46, .16, .28, .03, .28, .03, '#908471');
-            add('box', side * .46, .19, .06, .025, .05, .44, '#a2957c');
+          // Traditional one-storey pirkia: horizontal pine boards, large
+          // pitched roof, pale window casings, porch and a smoke chimney.
+          const h = .46 + r1 * .12, w = .76 + r2 * .13, d = .59;
+          const cottage = kind !== 'church';
+          const wall = cottage ? (r3 < .30 && town?.wall ? town.wall : siding) : '#d9d2c2';
+          wallBox(0, .09 + h / 2, -.18, w, h, d, wall,
+            cottage ? (r1 < .65 ? 'timber' : 'weathered') : 'plaster');
+          roofTop(0, .09 + h, -.18, w + .18, .49, d + .19, roofColor,
+            kind === 'church' ? 'slate' : roofFinish);
+          add('box', 0, .09 + h, -.18, w + .15, .026, d + .15, '#7a7061');
+          // Chimney near the rear ridge, capped with dark brick.
+          add('box', -.19, .09 + h + .17, -.33, .09, .30, .10, '#b9a996');
+          add('box', -.19, .09 + h + .33, -.33, .12, .045, .13, '#55524b');
+          windows(h, 1, 2, w * .87, d);
+          const front = -.18 + d / 2;
+          add('box', 0, .18, front + .013, .11, .22, .025, '#564f45');
+          add('box', 0, .11, front + .16, .32, .045, .25, '#857963');
+          // One-bay wooden porch under its own gabled roof.
+          for (const post of [-.15, .15]) add('box', post, .29, front + .23, .028, .38, .028, '#b2a88e');
+          roofTop(0, .48, front + .17, .37, .20, .33, roofColor, roofFinish);
+          if (cottage && r1 > .25) {
+            // Modest white corner boarding, consistent with local cottages.
+            for (const side of [-1, 1]) add('box', side * (w / 2 - .018), .32, front + .017,
+              .032, .50, .023, '#d8cdb2');
           }
         }
         if (kind === 'church') {
-          add('box', .26, .62, -.15, .28, 1.24, .3, '#e0d7bf');
-          add('cone', .26, 1.5, -.15, .42, .55, .42, '#5f6b6d');
-          add('box', .26, 1.86, -.15, .022, .22, .022, '#535e58');
-          add('box', .26, 1.9, -.15, .11, .022, .022, '#535e58');
+          // Small gabled rural church and tower, not a generic skyscraper.
+          add('box', .25, .69, -.16, .28, 1.38, .32, '#dbd1b9');
+          roofTop(.25, 1.38, -.16, .38, .45, .38, '#565f64', 'slate');
+          add('box', .25, 1.70, -.16, .029, .23, .03, '#555a56');
+          add('box', .25, 1.77, -.16, .14, .025, .025, '#555a56');
         }
       } else if (cell.prop === 'boulder') {
         add('crown', -.16, .22, -.25, .62, .46, .48, '#858c7d');
@@ -266,5 +377,5 @@ export function RuralBuildingsAndProps({ terrain, section }: { terrain: TerrainC
     }
     return parts;
   }, [terrain, section]);
-  return <Batches parts={parts} />;
+  return <BuildingBatches parts={parts} />;
 }

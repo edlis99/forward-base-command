@@ -129,7 +129,9 @@ function TerrainSection({ terrain, regional, section, highQuality }: { terrain: 
       {/* Full forest replacement: pack-derived trees and vegetation in every forest cell. */}
       <RealisticVegetation terrain={terrain} section={section} highQuality={highQuality} />
       <HedgerowInstances terrain={terrain} section={section} />
-      <RuralBuildingsAndProps terrain={terrain} section={section} />
+      <React.Suspense fallback={null}>
+        <RuralBuildingsAndProps terrain={terrain} section={section} />
+      </React.Suspense>
     </group>
   );
 }

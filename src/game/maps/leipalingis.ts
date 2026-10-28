@@ -187,9 +187,14 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     const r = deterministic(x + 17, y + 41);
     if (!town) return r < .45 ? 'barn' : r < .52 ? 'workshop' : 'house';
     const q = ((x + .5 - town.x) / town.rx) ** 2 + ((y + .5 - town.y) / town.ry) ** 2;
-    if (town.size === 'centre') return q < .25 && r < .35 ? 'block' : q < .55 && r < .55 ? 'brick' : r < .08 ? 'workshop' : r < .16 ? 'barn' : 'house';
-    if (town.size === 'town') return q < .3 && r < .25 ? 'brick' : r < .12 ? 'workshop' : r < .3 ? 'barn' : 'house';
-    return r < .35 ? 'barn' : 'house';
+    // Dzūkija villages are mostly timber homes, with a few granaries, barns
+    // and brick civic buildings. Apartment blocks belong only in town cores.
+    if (town.size === 'centre') return q < .18 && r < .18 ? 'block'
+      : q < .58 && r < .57 ? 'brick' : r < .055 ? 'workshop'
+      : r < .13 ? 'barn' : 'house';
+    if (town.size === 'town') return q < .23 && r < .12 ? 'brick'
+      : r < .09 ? 'workshop' : r < .24 ? 'barn' : 'house';
+    return r < .21 ? 'barn' : r < .25 ? 'workshop' : 'house';
   };
   const deterministic = (x: number, y: number) => Math.abs(Math.sin(x * 71.17 + y * 31.63) * 43758.5) % 1;
   /** Turn a building so its front (door side) faces the nearest street; footprint angle kept modulo 90°. */
@@ -253,8 +258,12 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
         if (settlementAt(x + .5, y + .5)?.id !== town.id || !free(x, y)) continue;
         if ((count[town.id] ?? 0) >= (town.size === 'centre' ? 180 : town.size === 'hamlet' ? 30 : 60)) continue;
         const nearStreet = [-2, -1, 1, 2].some(d => grid[y]?.[x + d]?.type === 'road' || grid[y + d]?.[x]?.type === 'road');
-        if (nearStreet && deterministic(x, y) > .3) building(x, y, designed ? (deterministic(x + 5, y) - .5) * .25 : 0,
-          designed ? [(deterministic(x, y + 8) - .5) * .4, (deterministic(x + 8, y) - .5) * .4] : undefined);
+        // Roadside houses in small villages are spaced by garden plots and
+        // fenced yards; only the two town cores have continuous frontage.
+        const density = town.size === 'centre' ? .30 : town.size === 'town' ? .48 : town.size === 'village' ? .35 : .40;
+        if (nearStreet && deterministic(x, y) > density) building(x, y,
+          designed ? (deterministic(x + 5, y) - .5) * .14 : 0,
+          designed ? [(deterministic(x, y + 8) - .5) * .28, (deterministic(x + 8, y) - .5) * .28] : undefined);
       }
     }
     if (designed && (town.size === 'centre' || town.size === 'town')) {
@@ -274,15 +283,50 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     if (candidates[0]) candidates[0].buildingKind = town.landmark;
   }
 
+  // Farmsteads: one modest granary or barn BEHIND selected timber houses,
+  // not randomly scattered in front of the street. Historic Dzūkija plots
+  // combine the roadside pirkia with yard, svirnas, shed and garden.
+  if (designed) {
+    const homes = grid.flat().filter(c => c.type === 'urban' &&
+      c.buildingKind === 'house' && c.settlementId);
+    for (const home of homes) {
+      const hx = home.x / CELL_SIZE, hy = home.y / CELL_SIZE;
+      if (deterministic(hx + 173, hy + 59) > .22) continue;
+      const settlement = SETTLEMENTS.find(t => t.id === home.settlementId);
+      if (!settlement || settlement.size === 'centre') continue;
+      const a = home.propAngle ?? 0;
+      const backX = Math.round(Math.sin(a)), backY = -Math.round(Math.cos(a));
+      const sideX = Math.round(Math.cos(a)), sideY = Math.round(Math.sin(a));
+      // Two-cell gap leaves a usable yard/footpath between structures.
+      const candidates: [number, number][] = [
+        [hx + backX * 2, hy + backY * 2],
+        [hx + backX * 2 + sideX, hy + backY * 2 + sideY],
+        [hx + backX * 2 - sideX, hy + backY * 2 - sideY],
+      ];
+      for (const [xx, yy] of candidates) {
+        if (!free(xx, yy) || settlementAt(xx + .5, yy + .5)?.id !== home.settlementId) continue;
+        if (building(xx, yy, a)) {
+          grid[yy][xx].buildingKind = 'barn';
+          grid[yy][xx].propAngle = a;
+          break;
+        }
+      }
+    }
+  }
+
   // Adjacent gardens and service yards leave entrances open. Add after houses
   // so cover props never consume the limited building placement space.
   for (const row of grid) for (const house of row) {
     if (house.type !== 'urban' || !house.settlementId) continue;
     const x = house.x / CELL_SIZE, y = house.y / CELL_SIZE;
-    const offsets = [[0, 1], [1, 0], [0, -1], [-1, 0]];
-    const first = Math.floor(deterministic(x, y) * offsets.length);
-    for (let k = 0; k < offsets.length; k++) {
-      const [dx, dy] = offsets[(first + k) % offsets.length];
+    const a = house.propAngle ?? 0;
+    const backX = Math.round(Math.sin(a)), backY = -Math.round(Math.cos(a));
+    const sideX = Math.round(Math.cos(a)), sideY = Math.round(Math.sin(a));
+    // Prefer the rear garden, then side yards, never block a street entrance
+    // unless no other cell is available.
+    const offsets = [[backX, backY], [sideX, sideY], [-sideX, -sideY],
+      [-backX, -backY]]; 
+    for (const [dx, dy] of offsets) {
       const xx = x + dx, yy = y + dy;
       if (!free(xx, yy) || settlementAt(xx + .5, yy + .5)?.id !== house.settlementId) continue;
       set(grid, xx, yy, 'open');
