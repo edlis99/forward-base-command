@@ -1,5 +1,7 @@
 import { availableSpeed, routeRemaining } from './movement';
 import { Unit, UnitType, Team, Position, GameState, Stance } from './types';
+import { random } from './rng';
+import { isHumanTeam } from './controllers';
 import {
   UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS,
   RETARGET_INTERVAL, RETARGET_HYSTERESIS, MAX_ENGAGE_TIME, DISENGAGE_GRACE, CHASE_STANDOFF, TARGET_LOST_TIMEOUT,
@@ -12,6 +14,9 @@ import { getUnitGrid, queryNeighbors } from './spatialGrid';
 import { spacingRadius, getSquad, cohesionSpeedFactor, ARRIVE_TOLERANCE } from './playerSquads';
 
 let nextId = 1;
+/** Id counter control: a match owns its counter (state.nextUnitId) so ids never depend on other matches in the process. */
+export function resetUnitIds(next = 1) { nextId = next; }
+export function peekUnitId() { return nextId; }
 
 export function createUnit(type: UnitType, team: Team, x: number, y: number): Unit {
   const stats = UNIT_STATS[type];
@@ -489,7 +494,7 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
 
   // Attack-move fights where it stands. After MAX_ENGAGE_TIME of stalemate the
   // unit pushes on for a short grace period so a stand-off cannot freeze an advance.
-  if (target && unit.team === 'player' && unit.order === 'attack_move' && state.time >= unit.disengageUntil) {
+  if (target && isHumanTeam(state, unit.team) && unit.order === 'attack_move' && state.time >= unit.disengageUntil) {
     unit.engageTime += dt;
     if (unit.engageTime > MAX_ENGAGE_TIME) {
       unit.engageTime = 0; unit.disengageUntil = state.time + DISENGAGE_GRACE;
@@ -571,11 +576,11 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
   hitChance = Math.min(0.95, hitChance + flankBonus * 0.1);
 
   unit.ammo -= 1;
-  const isHit = Math.random() <= hitChance;
-  const isCrit = isHit && Math.random() < unit.critChance * (1 + flankBonus);
+  const isHit = random(state) <= hitChance;
+  const isCrit = isHit && random(state) < unit.critChance * (1 + flankBonus);
   const projTarget = isHit
     ? { ...target.pos }
-    : { x: target.pos.x + (Math.random() - 0.5) * 30, y: target.pos.y + (Math.random() - 0.5) * 30 };
+    : { x: target.pos.x + (random(state) - 0.5) * 30, y: target.pos.y + (random(state) - 0.5) * 30 };
 
   state.projectiles.push({
     from: { ...unit.pos }, to: projTarget,
@@ -632,7 +637,7 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
         const p = state.units.find(u => u.id === pid);
         if (p) {
           p.insideOf = null;
-          p.pos = { x: target.pos.x + (Math.random() - 0.5) * 20, y: target.pos.y + (Math.random() - 0.5) * 20 };
+          p.pos = { x: target.pos.x + (random(state) - 0.5) * 20, y: target.pos.y + (random(state) - 0.5) * 20 };
           p.health *= 0.6;
         }
       }

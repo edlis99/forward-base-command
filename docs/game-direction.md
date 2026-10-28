@@ -46,3 +46,16 @@ How units behave once shooting starts (implemented in `src/game/units.ts`, tuned
 - **Suppression depends on the weapon.** `suppressionScale` makes small arms barely rattle armour and aircraft (`SUPPRESSION_RESIST`, `SMALL_ARMS_VS_VEHICLE`); only infantry go prone and become pinned.
 
 Open balance questions: whether a squad should wait for a pinned member or push on (currently waits, covered by a test), and whether capturing should require clearing the garrison, since a straight rush to a point is now very reliable.
+
+## Multiplayer foundations (player vs AI keeps working as before)
+
+The simulation (`src/game`) is now organised so a server can run it and two browsers can play it. Nothing here adds networking yet.
+
+- **Deterministic simulation.** All gameplay randomness goes through `random(state)` (`rng.ts`, seeded via `createInitialState(mission, ctx, { seed })`). Unit ids are per match. Same seed + same commands = same match, checked by `stateDigest` and by `replayMatch`. Single-player starts with a random seed (`GameUI.tsx`).
+- **Commands are the only way to act.** `commands.ts` defines serializable commands (`move`, `attack`, `board`, `stance`, `hold`, `dig`, `disembark`) that name units by id. `applyCommand(state, team, cmd)` validates ownership, bounds, visibility and shape. The mouse/selection functions in `engine.ts` are thin wrappers that build these commands, so the UI is unchanged.
+- **Authoritative match loop.** `match.ts`: `createMatch`, `submitCommand`, `stepMatch` (fixed 20 Hz), `replayMatch`, `snapshotFor(match, team)`. Snapshots enforce fog of war: own units in full, enemies only while spotted, no hidden fields.
+- **Who controls a side.** `state.controllers` (`human` | `ai`). The built-in AI only plays a side with no human; the stop-and-fight rule applies to every human side.
+- **Fair fights.** Combat resolves in a seeded random order each tick. Measured: the first-listed side won ~70% of symmetric 4v4 fights before, ~52% now.
+- **Head-to-head rules.** `capture.ts` (symmetric capture) and `duel.ts` (`makeDuelMission`: points race, time limit, elimination). Not wired into the menu yet.
+
+Not done yet: the network server and lobby; client interpolation of snapshots; a symmetric 1v1 map (`mirror()` reflects spawns through the map centre but terrain is not symmetric); commands for trench lines, reinforcements, fire support and formation preference (the latter can already be sent per `move`); the AI and squad brain still assume they play `'enemy'`; team ids `'player'`/`'enemy'` act as side A/B.

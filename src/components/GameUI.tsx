@@ -35,7 +35,8 @@ const GameUI: React.FC = () => {
   const beginCombat = useCallback((ctx: DeploymentContext) => {
     if (!mission) return;
     inputRef.current = createInputState();
-    gameStateRef.current = createInitialState(mission, ctx);
+    // Single-player: a fresh seed per game so battles differ; matches on a server pass an agreed seed instead.
+    gameStateRef.current = createInitialState(mission, ctx, { seed: Math.floor(Math.random() * 0x7fffffff) });
     setPhase('combat');
     triggerHudUpdate();
   }, [mission, triggerHudUpdate]);

@@ -1,7 +1,10 @@
+import { shuffled } from './rng';
+import { applyCommand, pushMarker } from './commands';
+import { defaultControllers, isHumanTeam } from './controllers';
 import { selectUnits } from './selection';
 import { GameState, InputState, MissionDef, Position, FormationType, Unit, CommandMarker, CommandMarkerType, DebugFlags } from './types';
 import { generateTerrain, getTerrainAt, canDigHere, digTrench, findNearestPassableWorld, isFootprintPassable } from './terrain';
-import { createUnit, clearUnitOrders, setDestination, updateCombat, updateOrders, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
+import { createUnit, resetUnitIds, peekUnitId, clearUnitOrders, setDestination, updateCombat, updateOrders, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
 import { updateAI } from './ai';
 import { updateAwareness, isVisibleTo } from './awareness';
 import { updateThreatMap } from './threatMap';
@@ -12,9 +15,18 @@ import { issueSquadMove, updatePlayerSquads, planSquadMove, planToSlots } from '
 import { refreshUnitGrid } from './spatialGrid';
 import { occupyCover, coverLabel } from './cover';
 
-export function createInitialState(mission: MissionDef, deployment?: import('./types').DeploymentContext): GameState {
+export interface StateOptions {
+  /** Seeds the deterministic RNG. Same seed + same commands = same match. */
+  seed?: number;
+  /** Who controls each side (default: human player vs AI enemy). */
+  controllers?: Record<import('./types').Team, import('./types').Controller>;
+}
+
+export function createInitialState(mission: MissionDef, deployment?: import('./types').DeploymentContext, options: StateOptions = {}): GameState {
   const terrain = generateTerrain(mission.mapLayout, mission.mapSeed);
+  resetUnitIds(1); // ids are per match: same setup => same ids
   const initial = mission.init(deployment);
+  const nextUnitId = peekUnitId();
 
   const state: GameState = {
     units: [],
@@ -53,6 +65,11 @@ export function createInitialState(mission: MissionDef, deployment?: import('./t
     smokeZones: [],
     nextMoveGroupId: 1,
     playerSquads: [],
+    rngState: (options.seed ?? mission.mapSeed ?? 1) | 0,
+    controllers: options.controllers ?? defaultControllers(),
+    winner: null,
+    nextUnitId,
+    duel: initial.duel,
   };
   state.units = initial.units ?? [];
   // Snap any unit that spawned on impassable terrain to the nearest passable cell.
@@ -75,11 +92,6 @@ export function createInputState(): InputState {
     isDragging: false, isPanning: false, dragStart: null,
     dragStartScreen: null, dragPromoted: false, rightMouseDown: false,
   };
-}
-
-function pushMarker(state: GameState, type: CommandMarkerType, pos: Position, team: import('./types').Team = 'player') {
-  const max = type === 'hold' ? 0.9 : 0.6;
-  state.commandMarkers.push({ pos: { x: pos.x, y: pos.y }, type, team, timer: max, max });
 }
 
 export function update(state: GameState, input: InputState, dt: number) {
@@ -162,7 +174,8 @@ export function update(state: GameState, input: InputState, dt: number) {
   updateThreatMap(state, dt);
 
 
-  for (const unit of state.units) {
+  // Randomised order each tick so neither side systematically shoots first.
+  for (const unit of shuffled(state.units, state)) {
     const result = updateCombat(unit, dt, state);
     if (result.killMsg) {
       state.eventLog.unshift({ message: result.killMsg, time: state.time, type: 'kill' });
@@ -186,8 +199,11 @@ export function update(state: GameState, input: InputState, dt: number) {
   for (const m of state.commandMarkers) m.timer -= dt;
   state.commandMarkers = state.commandMarkers.filter(m => m.timer > 0);
 
-  updateSquads(state, dt);
-  updateAI(state, dt);
+  // The built-in AI only plays a side nobody is commanding.
+  if (!isHumanTeam(state, 'enemy')) {
+    updateSquads(state, dt);
+    updateAI(state, dt);
+  }
 
   state.mission.update(state, dt);
 }
@@ -237,77 +253,35 @@ export function updateCommandPreview(
 
 export function clearCommandPreview(state: GameState) { state.commandPreview = null; }
 
+/**
+ * Local-player gesture -> command. Resolves what was clicked (enemy, friendly
+ * transport, ground) against the current selection and issues one command.
+ * Everything that changes the match goes through applyCommand.
+ */
 export function handleRightClickWorld(
   worldX: number, worldY: number, state: GameState, shiftKey = false, ctrlKey = false,
   facing?: number, widthScale?: number,
 ) {
   const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player' && !u.insideOf);
-  if (selected.length === 0) return;
-
-  if (state.gameOver) return;
+  if (selected.length === 0 || state.gameOver) return;
+  const unitIds = selected.map(u => u.id);
 
   // Click on a detected enemy unit
-  for (const unit of state.units) {
-    if (!unit.alive || unit.team !== 'player') {
-      const dx = unit.pos.x - worldX, dy = unit.pos.y - worldY;
-      if (unit.alive && !unit.insideOf && unit.team !== 'player' && isVisibleTo(unit, 'player') && Math.sqrt(dx * dx + dy * dy) < 22) {
-        selected.forEach(u => {
-          clearUnitOrders(u);
-          u.attackTarget = unit.id;
-          setDestination(u, state, { x: worldX, y: worldY });
-          u.waypoints = [];
-          u.order = 'attack';
-        });
-        pushMarker(state, 'attack', unit.pos);
-        return;
-      }
-    }
-  }
+  const enemy = state.units.find(u => u.alive && !u.insideOf && u.team !== 'player' && isVisibleTo(u, 'player') &&
+    Math.hypot(u.pos.x - worldX, u.pos.y - worldY) < 22);
+  if (enemy) { applyCommand(state, 'player', { type: 'attack', unitIds, targetId: enemy.id }); return; }
 
   // Friendly APC = board
-  for (const unit of state.units) {
-    if (shiftKey || ctrlKey || !unit.alive || unit.selected || unit.team !== 'player' || unit.type !== 'apc' || !selected.some(u => u.type === 'infantry')) continue;
-    const dx = unit.pos.x - worldX, dy = unit.pos.y - worldY;
-    if (Math.sqrt(dx * dx + dy * dy) < 24) {
-      selected.forEach(u => {
-        if (u.type === 'infantry' && u.id !== unit.id && unit.passengers.length < 4) {
-          clearUnitOrders(u);
-          setDestination(u, state, { x: unit.pos.x, y: unit.pos.y });
-          u.attackTarget = null;
-          u.order = 'move';
-          u.boardTarget = unit.id;
-        }
-      });
-      pushMarker(state, 'board', unit.pos);
-      return;
-    }
+  if (!shiftKey && !ctrlKey && selected.some(u => u.type === 'infantry')) {
+    const apc = state.units.find(u => u.alive && !u.selected && u.team === 'player' && u.type === 'apc' &&
+      Math.hypot(u.pos.x - worldX, u.pos.y - worldY) < 24);
+    if (apc) { applyCommand(state, 'player', { type: 'board', unitIds, apcId: apc.id }); return; }
   }
 
-  // Right-click a tactical object to occupy its firing positions. Shift/ctrl
-  // retain their existing waypoint and attack-move meanings.
-  if (!shiftKey && !ctrlKey) {
-    const assigned = occupyCover(state, selected, { x: worldX, y: worldY });
-    if (assigned.size > 0) {
-      const remaining = selected.filter(u => !assigned.has(u.id));
-      if (remaining.length) issueSquadMove(state, remaining, { x: worldX, y: worldY }, { facing, widthScale });
-      const cell = getTerrainAt(state.terrain, worldX, worldY)!;
-      state.eventLog.unshift({ message: `${assigned.size} infantry taking cover: ${coverLabel(cell)}`, time: state.time, type: 'info' });
-      pushMarker(state, 'hold', { x: worldX, y: worldY });
-      return;
-    }
-  }
-
-  // Capture point click?
-  let onCapture = false;
-  for (const cp of state.capturePoints) {
-    if (Math.hypot(cp.pos.x - worldX, cp.pos.y - worldY) < cp.radius) { onCapture = true; break; }
-  }
-
-  // Move with coordinated squads (formation layer above pathfinding)
-  const dest: Position = { x: worldX, y: worldY };
-  issueSquadMove(state, selected, dest, { queue: shiftKey, attackMove: ctrlKey, facing, widthScale });
-
-  pushMarker(state, onCapture ? 'capture' : ctrlKey ? 'attack_move' : 'move', dest);
+  applyCommand(state, 'player', {
+    type: 'move', unitIds, x: worldX, y: worldY, queue: shiftKey, attackMove: ctrlKey,
+    facing, widthScale, formation: state.preferredFormation ?? null,
+  });
 }
 
 export function setFormation(state: GameState, type: FormationType | null) {
@@ -315,19 +289,7 @@ export function setFormation(state: GameState, type: FormationType | null) {
 }
 
 export function digInForSelected(state: GameState) {
-  if (state.gameOver) return;
-  for (const u of state.units.filter(x => x.alive && !x.insideOf && x.selected && x.team === 'player' && x.type === 'infantry')) {
-    const cell = getTerrainAt(state.terrain, u.pos.x, u.pos.y);
-    if (!canDigHere(cell)) {
-      state.eventLog.unshift({ message: `${u.type} cannot dig here`, time: state.time, type: 'info' });
-      continue;
-    }
-    clearUnitOrders(u);
-    u.order = 'entrench';
-    u.digTimer = 0;
-    u.targetPos = null; u.path = []; u.waypoints = []; u.finalDest = null;
-    u.attackTarget = null;
-  }
+  applyCommand(state, 'player', { type: 'dig', unitIds: state.units.filter(u => u.selected && u.team === 'player').map(u => u.id) });
 }
 
 /**
@@ -420,58 +382,19 @@ export function handleBoxSelect(x1: number, y1: number, x2: number, y2: number, 
   state.previewSelected.clear();
 }
 
+const selectedIds = (state: GameState) => state.units.filter(u => u.alive && u.selected && u.team === 'player').map(u => u.id);
+
 export function setStanceForSelected(state: GameState, stance: import('./types').Stance) {
-  state.units.filter(u => u.alive && u.selected && u.team === 'player').forEach(u => u.stance = stance);
+  applyCommand(state, 'player', { type: 'stance', unitIds: selectedIds(state), stance });
 }
 
 export function holdPositionForSelected(state: GameState) {
-  if (state.gameOver) return;
-  const sel = state.units.filter(u => u.alive && !u.insideOf && u.selected && u.team === 'player');
-  sel.forEach(u => {
-    clearUnitOrders(u);
-    u.order = 'hold_position'; u.homePos = { ...u.pos };
-  });
-  if (sel.length > 0) {
-    const cx = sel.reduce((s, u) => s + u.pos.x, 0) / sel.length;
-    const cy = sel.reduce((s, u) => s + u.pos.y, 0) / sel.length;
-    pushMarker(state, 'hold', { x: cx, y: cy });
-  }
+  applyCommand(state, 'player', { type: 'hold', unitIds: selectedIds(state) });
 }
 
 /** Unload selected APCs into separate, passable cells near the carrier. */
 export function disembarkSelected(state: GameState) {
-  if (state.gameOver) return;
-  const cs = state.cellSize;
-  for (const apc of state.units.filter(u => u.alive && u.selected && u.team === 'player' && u.type === 'apc')) {
-    for (const unit of state.units.filter(u => u.boardTarget === apc.id)) clearUnitOrders(unit);
-    let unloaded = 0;
-    for (const id of [...apc.passengers]) {
-      const passenger = state.units.find(u => u.id === id && u.alive && u.insideOf === apc.id);
-      if (!passenger) { apc.passengers = apc.passengers.filter(pid => pid !== id); continue; }
-      let destination: Position | null = null;
-      const gx = Math.floor(apc.pos.x / cs), gy = Math.floor(apc.pos.y / cs);
-      search: for (let r = 1; r <= 5; r++) {
-        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
-          if (!isFootprintPassable(state.terrain, gx + dx, gy + dy, false, false)) continue;
-          const pos = { x: (gx + dx + 0.5) * cs, y: (gy + dy + 0.5) * cs };
-          if (state.units.some(u => u.alive && !u.insideOf && u.type !== 'helicopter' && distance(u.pos, pos) < cs)) continue;
-          destination = pos;
-          break search;
-        }
-      }
-      if (!destination) continue; // Keep passengers aboard if no safe exit exists.
-      clearUnitOrders(passenger);
-      passenger.insideOf = null;
-      passenger.pos = destination;
-      passenger.homePos = { ...destination };
-      passenger.facing = apc.facing;
-      passenger.order = 'hold_position';
-      apc.passengers = apc.passengers.filter(pid => pid !== id);
-      unloaded++;
-    }
-    state.eventLog.unshift({ message: unloaded ? `APC unloaded ${unloaded} infantry` : 'APC: no safe dismount space or no passengers', time: state.time, type: 'info' });
-  }
+  applyCommand(state, 'player', { type: 'disembark', unitIds: selectedIds(state) });
 }
 
 export function spawnReinforcement(type: import('./types').UnitType, state: GameState) {
@@ -490,7 +413,9 @@ export function spawnReinforcement(type: import('./types').UnitType, state: Game
   const veh = type === 'tank' || type === 'apc';
   const heli = type === 'helicopter';
   const spawn = findNearestPassableWorld(state.terrain, rawSpawn.x, rawSpawn.y, veh, heli, 12);
+  resetUnitIds(state.nextUnitId ?? peekUnitId());
   const u = createUnit(type, 'player', spawn.x, spawn.y);
+  state.nextUnitId = peekUnitId();
   u.homePos = { x: spawn.x, y: spawn.y };
   state.units.push(u);
   state.eventLog.unshift({ message: `Reinforcement: ${type}`, time: state.time, type: 'spawn' });
