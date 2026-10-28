@@ -13,7 +13,7 @@ import GameHUD from './GameHUD';
 import MissionSelect from './MissionSelect';
 import DeploymentScreen from './DeploymentScreen';
 import MissionSummary from './MissionSummary';
-import { applyCommand } from '../game/commands';
+import { applyCommand, CommandResult } from '../game/commands';
 
 type Phase = 'briefing' | 'deployment' | 'combat';
 
@@ -93,16 +93,16 @@ const GameUI: React.FC = () => {
       if (k === 'r' && state.raas) {
         // RAAS: a selected, stopped APC deploys a radio where it stands.
         const apc = state.units.find(u => u.alive && u.selected && u.team === 'player' && u.type === 'apc' && !u.insideOf);
-        const result = apc ? applyCommand(state, 'player', { type: 'build_radio', unitId: apc.id }) : { ok: false as const, reason: 'select an APC first' };
+        const result: CommandResult = apc ? applyCommand(state, 'player', { type: 'build_radio', unitId: apc.id }) : { ok: false, reason: 'select an APC first' };
         if (!result.ok) state.eventLog.unshift({ message: `Radio: ${result.reason}`, time: state.time, type: 'info' });
         triggerHudUpdate();
       }
       if (k === 'b' && state.raas) {
         // RAAS: lay out a spawn point where the selected infantry stand (near your radio).
         const inf = state.units.filter(u => u.alive && u.selected && u.team === 'player' && u.type === 'infantry' && !u.insideOf);
-        const result = inf.length
+        const result: CommandResult = inf.length
           ? applyCommand(state, 'player', { type: 'build_spawn', x: inf.reduce((n, u) => n + u.pos.x, 0) / inf.length, y: inf.reduce((n, u) => n + u.pos.y, 0) / inf.length })
-          : { ok: false as const, reason: 'select infantry standing near your radio' };
+          : { ok: false, reason: 'select infantry standing near your radio' };
         if (!result.ok) state.eventLog.unshift({ message: `Spawn point: ${result.reason}`, time: state.time, type: 'info' });
         triggerHudUpdate();
       }
