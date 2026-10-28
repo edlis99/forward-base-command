@@ -39,3 +39,24 @@ export const MOVING_ACC_PENALTY = 0.7;
 // Defense mission only
 export const CP_PER_KILL = 25;
 
+
+// ---- Engagement tuning ----
+/** How often (s) a unit may reconsider its automatically chosen target. */
+export const RETARGET_INTERVAL = 0.4;
+/** A new target must outscore the current one by this much to cause a switch. */
+export const RETARGET_HYSTERESIS = 0.3;
+/** Longest continuous stand-and-fight before an attack-move unit pushes on (s). */
+export const MAX_ENGAGE_TIME = 20;
+/** How long a unit that broke contact keeps advancing before it may halt again (s). */
+export const DISENGAGE_GRACE = 5;
+/** Share of weapon range an ordered attacker tries to close to before firing. */
+export const CHASE_STANDOFF = 0.75;
+/** Seconds an ordered target may stay out of sight before the attack order lapses. */
+export const TARGET_LOST_TIMEOUT = 10;
+/** Relative threat of each unit type when choosing what to shoot first. */
+export const TARGET_THREAT: Record<UnitType, number> = { tank: 1.0, helicopter: 0.9, apc: 0.55, infantry: 0.45 };
+/** How strongly each target type is shaken by suppressive fire (infantry = 1). */
+export const SUPPRESSION_RESIST: Record<UnitType, number> = { infantry: 1, apc: 0.45, tank: 0.3, helicopter: 0.35 };
+/** Small arms barely rattle armour; heavy weapons (damage >= this) fully suppress. */
+export const HEAVY_WEAPON_DAMAGE = 25;
+export const SMALL_ARMS_VS_VEHICLE = 0.3;

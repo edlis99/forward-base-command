@@ -66,7 +66,8 @@ export function updateAI(state: GameState, dt: number) {
     if (u.reactionDelay > 0) u.reactionDelay = Math.max(0, u.reactionDelay - dt);
     if (u.coverSeekCooldown > 0) u.coverSeekCooldown = Math.max(0, u.coverSeekCooldown - dt);
     // prone if suppressed; recover when calm
-    if (u.suppression > 0.55) u.prone = true;
+    // Only foot soldiers dive for the dirt; armour and aircraft stay mobile under small-arms fire.
+    if (u.suppression > 0.55) u.prone = u.type === 'infantry';
     else if (u.suppression < 0.2) {
       const terrain = getTerrainAt(state.terrain, u.pos.x, u.pos.y);
       // Keep infantry in a low firing posture while they occupy a trench.
@@ -168,7 +169,8 @@ function runEnemyBehavior(unit: Unit, state: GameState, dt: number) {
   }
 
   if (engageable) {
-    unit.attackTarget = engageable.id;
+    // Leave target choice to combat (scored, with hysteresis); only seed one if none is held.
+    if (!unit.attackTarget) unit.attackTarget = engageable.id;
     // Vehicles maintain standoff — back up if too close
     const veh = unit.type === 'tank' || unit.type === 'apc';
     if (veh && engageableDist < unit.range * 0.55) {

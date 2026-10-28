@@ -87,6 +87,7 @@ export function coverState(unit: Unit): 'moving' | 'covered' | 'none' {
 }
 export function unitStatus(unit: Unit, state: GameState): string {
   if (unit.prone && unit.suppression > .5) return 'Pinned';
+  if (unit.engaging) return 'Engaging';
   if (unit.waiting === 'formation') return 'Regrouping';
   if (unit.waiting === 'traffic') return 'Yielding';
   if (coverState(unit) === 'moving') return 'Taking cover';
