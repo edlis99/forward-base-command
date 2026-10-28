@@ -14,6 +14,8 @@ import { SETTLEMENTS } from '../game/maps/settlements';
 import { PLAYABLE_CELLS } from '../game/maps/geography';
 import { FOB_RULES, visibleFobs } from '../game/fob';
 import { revealUniforms, MAX_REVEAL } from './canopyReveal';
+import { Sky } from '@react-three/drei';
+import PostEffects from './PostEffects';
 import { SettlementLabelPositions } from './SettlementLabels';
 import { Woodland, RuralBuildingsAndProps } from './Environment';
 import { getTerrainAt } from '../game/terrain';
@@ -1504,6 +1506,9 @@ function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObjec
  * enclose it, so no region falls outside the shadow frustum (which would render
  * as a large permanently dark patch).
  */
+/** Direction towards the sun (normalised), shared by the light and the sky. */
+const SUN_DIR = (() => { const v = new THREE.Vector3(95, 75, 60).normalize(); return [v.x, v.y, v.z] as const; })();
+
 function SunLight({ high }: { high: boolean }) {
   const { camera } = useThree();
   const ref = useRef<THREE.DirectionalLight>(null);
@@ -1513,7 +1518,8 @@ function SunLight({ high }: { high: boolean }) {
     // Concentrate the shadow map on the view: sharper near shadows without
     // allocating a 4096 texture across the entire campaign region.
     const x = camera.position.x, z = camera.position.z - camera.position.y * .55 / .85;
-    light.position.set(x + 55, 90, z + 38);
+    // Low afternoon sun (about 34° up): long shadows give hills, woods and houses their shape.
+    light.position.set(x + SUN_DIR[0] * 120, SUN_DIR[1] * 120, z + SUN_DIR[2] * 120);
     light.target.position.set(x, 0, z); light.target.updateMatrixWorld();
     const extent = Math.max(32, Math.min(190, camera.position.y * .9));
     const shadow = light.shadow.camera;
@@ -1525,7 +1531,7 @@ function SunLight({ high }: { high: boolean }) {
       <directionalLight
         ref={ref}
         position={[W / 2 + 120, 190, H / 2 + 90]}
-        intensity={1.3} color="#fff3da"
+        intensity={2.5} color="#ffe8c6"
         castShadow
         shadow-mapSize-width={high ? 2048 : 1024} shadow-mapSize-height={high ? 2048 : 1024}
         shadow-bias={-0.0006} shadow-normalBias={0.05}
@@ -1568,22 +1574,26 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
   return (
     <div className="relative w-full h-full">
       <Canvas
-        shadows
+        shadows="soft"
         dpr={highQuality ? [1, 2] : [1, 1]}
-        camera={{ position: [W / 2, 35, H / 2 + 20], fov: 50 }}
+        camera={{ position: [W / 2, 35, H / 2 + 20], fov: 50, far: 3000 }}
         onContextMenu={(e) => e.preventDefault()}
-        gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.15 }}
-        style={{ background: '#b9c6bd' }}
+        gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.0 }}
+        style={{ background: '#c9d3d6' }}
       >
-        <fog attach="fog" args={['#b3c1b6', 320, 760]} />
-        {/* Sky/bounce fill so shaded slopes never read as black patches */}
-        <hemisphereLight args={['#cfe0e8', '#5f6b48', 0.95]} />
-        <ambientLight intensity={0.45} />
+        <fog attach="fog" args={['#c9d3d6', 320, 760]} />
+        {/* Atmospheric sky; the haze colour above matches its horizon. */}
+        <group position={[W / 2, 0, H / 2]}>
+          <Sky distance={1600} sunPosition={[SUN_DIR[0], SUN_DIR[1], SUN_DIR[2]]} turbidity={7} rayleigh={1.1} mieCoefficient={0.006} mieDirectionalG={0.86} />
+        </group>
+        {/* Sky/bounce fill: enough to keep shade readable, low enough that shapes have form */}
+        <hemisphereLight args={['#d4e2ea', '#4f5a3b', 0.55]} />
+        <ambientLight intensity={0.12} />
         {/* Shadows follow the camera across the expanded region. */}
         <SunLight key={String(highQuality)} high={highQuality} />
 
         {/* Cool counter-light from the opposite side to lift shadow interiors */}
-        <directionalLight position={[-50, 40, -35]} intensity={0.35} color="#9fb6c8" />
+        <directionalLight position={[-50, 40, -35]} intensity={0.25} color="#9fb6c8" />
 
         <UnitBadgePositions gameStateRef={gameStateRef} elements={unitBadges} />
         <SettlementLabelPositions elements={settlementLabels} />
@@ -1598,6 +1608,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <GhostContactsLayer gameStateRef={gameStateRef} />
         <PathsLayer gameStateRef={gameStateRef} />
         <MovementDebugLayer gameStateRef={gameStateRef} />
+        {highQuality && <PostEffects />}
         <CommandMarkersLayer gameStateRef={gameStateRef} />
         <EffectsLayer gameStateRef={gameStateRef} />
         <Ground gameStateRef={gameStateRef} inputRef={inputRef} onChange={onChange} />
