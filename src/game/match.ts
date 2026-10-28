@@ -1,6 +1,8 @@
 import { Command, CommandResult, applyCommand } from './commands';
 import { createInitialState, createInputState, update } from './engine';
 import { isVisibleTo } from './awareness';
+import { knownTo } from './raas';
+import { visibleFobs } from './fob';
 import { GameState, MissionDef, Team, Unit } from './types';
 import { Controller } from './types';
 
@@ -88,7 +90,9 @@ export interface Snapshot {
   units: UnitView[];
   capturePoints: Array<{ id: string; label: string; x: number; y: number; radius: number; owner: string; progress: number }>;
   score?: Record<Team, number>;
-  raas?: { chain: string; tickets: Record<Team, number>; objectives: Array<{ id: string; name: string; owner: string; progress: number; status: string; reason: string; yourTurn: boolean }> };
+  raas?: { tickets: Record<Team, number>; objectives: Array<{ id: string; name: string; owner: string; progress: number; status: string; reason: string; yourTurn: boolean }>;
+    fobs: Array<{ id: string; team: Team; x: number; y: number; spawn: 'none' | 'building' | 'ready' | 'overrun'; progress: number }>;
+    reinforcements: Array<{ type: string; readyIn: number }> };
   gameOver: boolean; winner: Team | null;
 }
 
@@ -115,9 +119,15 @@ export function snapshotFor(match: Match, team: Team): Snapshot {
   }
   return {
     tick: match.tick, time: round(state.time), you: team, units,
-    capturePoints: state.capturePoints.map(c => ({ id: c.id, label: c.label, x: c.pos.x, y: c.pos.y, radius: c.radius, owner: c.owner, progress: Math.round(c.progress * 100) / 100 })),
-    raas: state.raas ? { chain: state.raas.chainName, tickets: { ...state.raas.tickets },
-      objectives: state.raas.objectives.map(o => ({ id: o.id, name: o.name, owner: o.owner, progress: Math.round(o.progress * 100) / 100, status: o.status, reason: o.reason, yourTurn: o.eligible[team] })) } : undefined,
+    capturePoints: (state.raas ? state.raas.objectives.filter((_, i) => knownTo(state.raas!, team)[i]).map(o => ({ id: o.id, label: o.name, pos: o.pos, radius: o.radius, owner: o.owner, progress: o.progress })) : state.capturePoints).map(c => ({ id: c.id, label: c.label, x: c.pos.x, y: c.pos.y, radius: c.radius, owner: c.owner, progress: Math.round(c.progress * 100) / 100 })),
+    raas: state.raas ? (() => {
+      const r = state.raas!, known = knownTo(r, team);
+      return { tickets: { ...r.tickets },
+        objectives: r.objectives.filter((_, i) => known[i]).map(o => ({ id: o.id, name: o.name, owner: o.owner, progress: Math.round(o.progress * 100) / 100, status: o.status, reason: o.reason, yourTurn: o.eligible[team] })),
+        fobs: visibleFobs(state, r, team).map(f => ({ id: f.id, team: f.team, x: round(f.radio.x), y: round(f.radio.y),
+          spawn: (!f.hab ? 'none' : !f.hab.built ? 'building' : f.overrun ? 'overrun' : 'ready') as 'none' | 'building' | 'ready' | 'overrun', progress: f.hab ? Math.round(f.hab.progress * 100) / 100 : 0 })),
+        reinforcements: r.reserve.filter(q => q.team === team).map(q => ({ type: q.type, readyIn: Math.max(0, Math.round(q.readyAt - state.time)) })) };
+    })() : undefined,
     score: state.duel ? { player: Math.floor(state.duel.score.player), enemy: Math.floor(state.duel.score.enemy) } : undefined,
     gameOver: state.gameOver, winner: state.winner ?? null,
   };

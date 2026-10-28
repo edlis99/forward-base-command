@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { attackIndex, makeRaasMission, pickChain, RaasChain, RaasRules } from '../game/raas';
+import { attackIndex, knownTo, makeRaasMission, pickChain, RaasChain, RaasRules } from '../game/raas';
+import { applyCommand } from '../game/commands';
+import { FOB_RULES } from '../game/fob';
 import { createMatch, Match, replayMatch, snapshotFor, stateDigest, stepMatch, submitCommand, TICK_RATE } from '../game/match';
 import { createUnit } from '../game/units';
 import { GameState, Team, UnitType } from '../game/types';
@@ -12,13 +14,15 @@ function flatten(state: GameState) {
       blocksMovement: false, vehicleImpassable: false, trampled: false, traction: 1, fatigueRate: 0, prop: undefined, exposure: 1 });
   }
 }
-const mission = (rules: Partial<RaasRules> = {}) => makeRaasMission({
-  name: 'RAAS test', mapLayout: 'farmhouse_complex', mapSeed: 3, chain, rules,
-  mains: { player: { x: 2000, y: Y }, enemy: { x: 8000, y: Y } }, composition: { infantry: 4, tank: 1, apc: 0 },
+// The capture-rule tests below use the Squad starting state (each side owns
+// its first point) and reveal everything; the newer defaults are tested further down.
+const mission = (rules: Partial<RaasRules> = {}, composition = { infantry: 4, tank: 1, apc: 0 }) => makeRaasMission({
+  name: 'RAAS test', mapLayout: 'farmhouse_complex', mapSeed: 3, chain, rules: { startOwned: true, progressiveReveal: false, ...rules },
+  mains: { player: { x: 2000, y: Y }, enemy: { x: 8000, y: Y } }, composition,
 });
 /** Empty match; tests place exactly the soldiers they need (hold fire, so only capture rules act). */
-function bare(rules: Partial<RaasRules> = {}, controllers?: Record<Team, 'human' | 'ai'>): Match {
-  const m = createMatch(mission(rules), { seed: 1, setup: flatten, controllers });
+function bare(rules: Partial<RaasRules> = {}, controllers?: Record<Team, 'human' | 'ai'>, composition?: { infantry: number; tank: number; apc: number }): Match {
+  const m = createMatch(mission(rules, composition), { seed: 1, setup: flatten, controllers });
   return m;
 }
 function place(m: Match, team: Team, n: number, x: number, type: UnitType = 'infantry') {
@@ -28,6 +32,8 @@ function place(m: Match, team: Team, n: number, x: number, type: UnitType = 'inf
     m.state.units.push(u);
   }
 }
+/** Move the most recently placed soldier to (x, y) and make that its hold position. */
+function moveLast(m: Match, x: number, y: number) { const u = m.state.units[m.state.units.length - 1]; u.pos = { x, y }; u.homePos = { x, y }; }
 /** Keep both sides alive (elimination ends the match) without them interfering. */
 function reserves(m: Match) { m.state.units = []; place(m, 'player', 1, 1500); place(m, 'enemy', 1, 8500); }
 const run = (m: Match, seconds: number) => { for (let i = 0; i < seconds * TICK_RATE && !m.state.gameOver; i++) stepMatch(m); };
@@ -153,5 +159,123 @@ describe('RAAS chain pool, AI and determinism', () => {
     expect(view.objectives.map(o => o.yourTurn)).toEqual([false, true, false, false, false]);
     expect(snapshotFor(m, 'enemy').raas!.objectives[3].yourTurn).toBe(true);
     expect(JSON.stringify(view)).not.toContain('present');
+  });
+});
+
+describe('RAAS default start and reveal', () => {
+  it('starts every point neutral, so the first objective must be taken before the second', () => {
+    const m = bare({ startOwned: false }); reserves(m); place(m, 'player', 4, 4000); run(m, 60);
+    expect(obj(m, 0).owner).toBe('neutral');
+    expect(obj(m, 1).owner).toBe('neutral'); // standing on the second point does nothing yet
+    place(m, 'player', 2, 3000); run(m, 45);
+    expect(obj(m, 0).owner).toBe('player');
+    run(m, 40);
+    expect(obj(m, 1).owner).toBe('player');
+  });
+  it('reveals objectives as a side advances, separately for each side', () => {
+    const m = bare({ startOwned: false, progressiveReveal: true }); reserves(m); run(m, 0.1);
+    expect(knownTo(m.state.raas!, 'player')).toEqual([true, false, false, false, false]);
+    expect(knownTo(m.state.raas!, 'enemy')).toEqual([false, false, false, false, true]);
+    expect(m.state.capturePoints.map(c => c.id)).toEqual(['o0']);
+    expect(snapshotFor(m, 'enemy').raas!.objectives.map(o => o.id)).toEqual(['o4']);
+    place(m, 'player', 2, 3000); run(m, 45);
+    expect(knownTo(m.state.raas!, 'player')).toEqual([true, true, false, false, false]);
+  });
+});
+
+describe('RAAS radios, spawn points and reinforcements', () => {
+  const apcAt = (m: Match, team: Team, x: number) => {
+    const u = createUnit('apc', team, x, Y + 300); u.stance = 'hold_fire'; m.state.units.push(u); return u;
+  };
+  it('lets a stopped APC deploy a radio, but not near an objective or another radio', () => {
+    const m = bare(); reserves(m);
+    const near = apcAt(m, 'player', 3000); near.pos.y = Y + 100;
+    expect(applyCommand(m.state, 'player', { type: 'build_radio', unitId: near.id })).toEqual({ ok: false, reason: 'too close to an objective' });
+    const apc = apcAt(m, 'player', 3500);
+    expect(applyCommand(m.state, 'player', { type: 'build_radio', unitId: apc.id }).ok).toBe(true);
+    const second = apcAt(m, 'player', 3700);
+    expect(applyCommand(m.state, 'player', { type: 'build_radio', unitId: second.id })).toEqual({ ok: false, reason: 'too close to another friendly radio' });
+    const foot = m.state.units.find(u => u.type === 'infantry' && u.team === 'player')!;
+    expect(applyCommand(m.state, 'player', { type: 'build_radio', unitId: foot.id }).ok).toBe(false);
+  });
+  it('builds a spawn point only with two infantry on site and no enemy close, then marks it overrun', () => {
+    const m = bare(); reserves(m);
+    const apc = apcAt(m, 'player', 3500);
+    applyCommand(m.state, 'player', { type: 'build_radio', unitId: apc.id });
+    const site = { x: 3560, y: Y + 300 };
+    expect(applyCommand(m.state, 'player', { type: 'build_spawn', x: site.x + 2000, y: site.y }).ok).toBe(false); // outside radio radius
+    expect(applyCommand(m.state, 'player', { type: 'build_spawn', ...site }).ok).toBe(true);
+    const fob = m.state.raas!.fobs[0];
+    place(m, 'player', 1, site.x); moveLast(m, site.x, site.y);
+    run(m, FOB_RULES.habBuildSeconds + 2);
+    expect(fob.hab!.built).toBe(false);
+    place(m, 'player', 1, site.x + 10); moveLast(m, site.x + 10, site.y);
+    run(m, FOB_RULES.habBuildSeconds + 2);
+    expect(fob.hab!.built).toBe(true);
+    place(m, 'enemy', 1, site.x + 120); moveLast(m, site.x + 120, site.y);
+    run(m, 0.2);
+    expect(fob.overrun).toBe(true);
+  });
+  it('brings a lost soldier back after a delay at the forward spawn point, and charges tickets for the loss', () => {
+    const m = bare(); reserves(m);
+    const apc = apcAt(m, 'player', 3500);
+    applyCommand(m.state, 'player', { type: 'build_radio', unitId: apc.id });
+    applyCommand(m.state, 'player', { type: 'build_spawn', x: 3560, y: Y + 300 });
+    const fob = m.state.raas!.fobs[0];
+    fob.hab!.built = true; fob.hab!.progress = 1;
+    const victim = createUnit('infantry', 'player', 4500, Y); m.state.units.push(victim);
+    run(m, 0.1); victim.alive = false; run(m, 0.1);
+    expect(m.state.raas!.tickets.player).toBe(300 - 5);
+    expect(m.state.raas!.reserve).toHaveLength(1);
+    const before = m.state.units.length;
+    run(m, FOB_RULES.respawnSeconds.infantry + 1);
+    const fresh = m.state.units.slice(before);
+    expect(fresh).toHaveLength(1);
+    expect(Math.hypot(fresh[0].pos.x - 3560, fresh[0].pos.y - (Y + 300))).toBeLessThan(4 * 32);
+  });
+  it('returns vehicles at the main, and stops reinforcing a side with no tickets', () => {
+    const m = bare(); reserves(m);
+    const tank = createUnit('tank', 'player', 4500, Y); m.state.units.push(tank);
+    run(m, 0.1); tank.alive = false; run(m, FOB_RULES.respawnSeconds.tank + 1);
+    const back = m.state.units.find(u => u.type === 'tank' && u.alive && u.team === 'player')!;
+    expect(Math.hypot(back.pos.x - 2000, back.pos.y - Y)).toBeLessThan(5 * 32);
+    m.state.raas!.tickets.player = 3;
+    back.alive = false; run(m, 1);
+    expect(m.state.raas!.reserve.filter(q => q.team === 'player')).toHaveLength(0);
+  });
+  it('lets enemies dig down an undefended radio, taking its spawn point with it', () => {
+    const m = bare(); reserves(m);
+    const apc = apcAt(m, 'player', 3500);
+    applyCommand(m.state, 'player', { type: 'build_radio', unitId: apc.id });
+    m.state.units = m.state.units.filter(u => u !== apc);
+    place(m, 'enemy', 1, 3500); moveLast(m, 3500, Y + 300);
+    run(m, FOB_RULES.digSeconds + 1);
+    expect(m.state.raas!.fobs[0].alive).toBe(false);
+    expect(m.state.raas!.tickets.player).toBe(300 - FOB_RULES.radioLossTickets);
+  });
+});
+
+describe('RAAS win conditions', () => {
+  it('does not end the match when a side is wiped out but reinforcements are on the way', () => {
+    const m = bare(); m.state.units = []; place(m, 'player', 1, 1500); place(m, 'enemy', 1, 8500);
+    run(m, 0.1); m.state.units.filter(u => u.team === 'enemy').forEach(u => { u.alive = false; });
+    run(m, 1);
+    expect(m.state.gameOver).toBe(false);
+    run(m, 25);
+    expect(m.state.units.some(u => u.team === 'enemy' && u.alive)).toBe(true);
+  });
+  it('drains a side that has lost every objective fast', () => {
+    const m = bare({ startTickets: 100, bleedLead: 99 }); reserves(m);
+    m.state.raas!.objectives.forEach(o => { o.owner = 'player'; o.progress = 1; });
+    run(m, 30);
+    expect(m.state.raas!.tickets.enemy).toBeLessThanOrEqual(100 - 29);
+  });
+  it('the AI builds a radio and a spawn point on its own', () => {
+    const m = bare({}, { player: 'human', enemy: 'ai' }, { infantry: 4, tank: 1, apc: 1 });
+    m.state.units.filter(u => u.team === 'player').forEach(u => { u.stance = 'hold_fire'; });
+    run(m, 150);
+    const fob = m.state.raas!.fobs.find(f => f.team === 'enemy');
+    expect(fob).toBeDefined();
+    expect(fob!.hab?.built).toBe(true);
   });
 });
