@@ -205,6 +205,13 @@ export function updateRaas(state: GameState, dt: number) {
   // Keep the generic capture markers (HUD / 3D scene) in sync.
   state.capturePoints = r.objectives.map((o): CapturePoint => ({ id: o.id, label: o.name, pos: o.pos, radius: o.radius, owner: o.owner, progress: o.progress }));
 
+  // Live summary in the existing objectives panel (no extra HUD needed).
+  const next = attackIndex(r.objectives, 'player');
+  const target = next >= 0 ? r.objectives[next] : undefined;
+  const summary = `Tickets ${Math.max(0, Math.ceil(r.tickets.player))} : ${Math.max(0, Math.ceil(r.tickets.enemy))} · ` +
+    (target ? `Attack ${target.name}: ${target.reason}` : 'All objectives held');
+  if (state.objectives[0]) state.objectives[0].description = summary;
+
   // Outcome.
   const alive = (t: Team) => state.units.some(u => u.alive && u.team === t);
   let winner: Team | null | undefined;
@@ -215,6 +222,7 @@ export function updateRaas(state: GameState, dt: number) {
   else if (state.time >= rules.timeLimit) winner = r.tickets.player === r.tickets.enemy ? null : r.tickets.player > r.tickets.enemy ? 'player' : 'enemy';
   if (winner === undefined) return;
   state.gameOver = true; state.winner = winner;
+  if (state.objectives[0]) state.objectives[0].status = winner === 'player' ? 'complete' : 'failed';
   state.gameResult = winner === 'player' ? 'win' : winner === 'enemy' ? 'lose' : null;
   state.eventLog.unshift({ message: winner ? `${winner} wins (${r.tickets.player} v ${r.tickets.enemy} tickets)` : 'RAAS match drawn', time: state.time, type: 'objective' });
 }

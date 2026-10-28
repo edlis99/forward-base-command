@@ -353,8 +353,21 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       }
     }
     unit.vel = { x: 0, y: 0 }; unit.waiting = 'traffic';
-    unit.lastProgressTime = state.time; return;
+    unit.lastProgressTime = state.time;
+    // A friendly has settled beside the slot: close enough is arrived, instead
+    // of yielding forever one step short of a crowded square.
+    unit.trafficWait = (unit.trafficWait ?? 0) + dt;
+    if (unit.path.length === 0 && unit.finalDest && distance(unit.pos, unit.finalDest) < CELL_SIZE * 1.5 && unit.trafficWait > 2.5) {
+      unit.trafficWait = 0; unit.waiting = undefined;
+      unit.targetPos = null; unit.finalDest = null; unit.homePos = { ...unit.pos };
+      if (unit.waypoints.length === 0 && unit.order !== 'hold_position' && unit.order !== 'patrol' && unit.order !== 'attack') {
+        unit.order = unit.holdOnArrive ? 'hold_position' : 'idle';
+        unit.holdOnArrive = false; unit.groupSpeedCap = null; unit.moveGroupId = null;
+      }
+    }
+    return;
   }
+  unit.trafficWait = 0;
   if (stepOk) {
     unit.pos.x = nextX; unit.pos.y = nextY;
     unit.stuckTimer = 0;

@@ -13,7 +13,8 @@ describe('settlement identity and approach lanes', () => {
     const cells = terrain.flat();
     for (const town of SETTLEMENTS) {
       const buildings = cells.filter(c => c.type === 'urban' && c.settlementId === town.id);
-      expect(buildings.length, town.name).toBeGreaterThanOrEqual(town.id === 'leipalingis' ? 180 : town.id === 'versiai' ? 30 : 60);
+      // Sizes follow the designed map: centre, towns and villages, smaller hamlets.
+      expect(buildings.length, town.name).toBeGreaterThanOrEqual({ centre: 180, town: 80, village: 50, hamlet: 25 }[town.size]);
       expect(buildings.some(c => c.buildingKind === town.landmark), town.name).toBe(true);
       const builtDensity = buildings.length / (Math.PI * town.rx * town.ry);
       const rural = cells.filter(c => !settlementAt(c.x / CELL_SIZE, c.y / CELL_SIZE));
@@ -49,8 +50,9 @@ describe('expanded geographic scale', () => {
       expect(Math.abs(town.x - (p.lon - west) / (east - west) * MAP_COLS)).toBeLessThan(1);
       expect(Math.abs(town.y - (north - p.lat) / (north - south) * MAP_ROWS)).toBeLessThan(1);
     }
-    expect(SETTLEMENTS.some(s => s.x > 330)).toBe(true);
-    expect(SETTLEMENTS.some(s => s.y > 260)).toBe(true);
+    // Settlements spread across most of the playable region in both directions.
+    expect(Math.max(...SETTLEMENTS.map(s => s.x)) - Math.min(...SETTLEMENTS.map(s => s.x))).toBeGreaterThan(MAP_COLS * .55);
+    expect(Math.max(...SETTLEMENTS.map(s => s.y)) - Math.min(...SETTLEMENTS.map(s => s.y))).toBeGreaterThan(MAP_ROWS * .55);
     for (const road of LEIPALINGIS_ROADS) for (const [x, y] of road.points) {
       expect(x).toBeGreaterThanOrEqual(-.001); expect(x).toBeLessThanOrEqual(MAP_COLS + .001);
       expect(y).toBeGreaterThanOrEqual(-.001); expect(y).toBeLessThanOrEqual(MAP_ROWS + .001);
