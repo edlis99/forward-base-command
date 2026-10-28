@@ -1,6 +1,10 @@
 import { availableSpeed, routeRemaining } from './movement';
 import { Unit, UnitType, Team, Position, GameState, Stance } from './types';
-import { UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS } from './constants';
+import {
+  UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS,
+  RETARGET_INTERVAL, RETARGET_HYSTERESIS, MAX_ENGAGE_TIME, DISENGAGE_GRACE, CHASE_STANDOFF, TARGET_LOST_TIMEOUT,
+  TARGET_THREAT, SUPPRESSION_RESIST, HEAVY_WEAPON_DAMAGE, SMALL_ARMS_VS_VEHICLE,
+} from './constants';
 import { getTerrainAt, hasLineOfSight, losInfo, isPassable, isWorldFootprintPassable, findNearestPassableWorld } from './terrain';
 import { findPath } from './pathfinding';
 import { isVisibleTo } from './awareness';
@@ -42,6 +46,8 @@ export function createUnit(type: UnitType, team: Team, x: number, y: number): Un
     digTimer: 0, coverSeekCooldown: 0, lastAllyDeathTime: -999,
     spottedByEnemy: false, detectionLevel: 0,
     lastKnownPos: null, lastKnownTime: -999,
+    engaging: false, aiming: false, engageTime: 0, disengageUntil: 0, retargetTimer: 0,
+    lastFireTime: -999, chaseGoal: null, targetLostTimer: 0, chaseRepathTimer: 0,
   };
 }
 
@@ -101,6 +107,8 @@ export function clearUnitOrders(unit: Unit) {
   unit.squadId = null;
   unit.settled = false;
   unit.vel = { x: 0, y: 0 };
+  unit.engaging = false; unit.aiming = false; unit.engageTime = 0;
+  unit.chaseGoal = null; unit.targetLostTimer = 0;
   unit.order = 'idle';
 }
 
@@ -175,7 +183,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   // the trench's armor benefit.
   unit.waiting = undefined;
   const occupiedTerrain = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
-  unit.inCover = unit.type === 'infantry' && !unit.targetPos && (occupiedTerrain?.coverBonus ?? 0) > 0;
+  unit.inCover = unit.type === 'infantry' && (!unit.targetPos || unit.engaging) && (occupiedTerrain?.coverBonus ?? 0) > 0;
 
   // Entrenching: stay still, accrue dig progress
   if (unit.order === 'entrench') {
@@ -187,6 +195,15 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   // Suppressed/pinned units don't move
   if (unit.prone && unit.suppression > 0.5) {
     unit.vel.x *= 0.7; unit.vel.y *= 0.7;
+    return;
+  }
+
+  // Attack-move: stand and fight instead of walking through the contact. The
+  // destination and queued legs are kept, so the advance resumes by itself.
+  if (unit.engaging && unit.targetPos) {
+    unit.vel.x *= 0.5; unit.vel.y *= 0.5;
+    unit.lastProgressTime = state.time;
+    unit.stuckTimer = 0;
     return;
   }
 
@@ -239,7 +256,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       unit.targetPos = null;
       unit.finalDest = null;
       unit.homePos = { ...unit.pos };
-      if (unit.waypoints.length === 0 && unit.order !== 'hold_position' && unit.order !== 'patrol') {
+      if (unit.waypoints.length === 0 && unit.order !== 'hold_position' && unit.order !== 'patrol' && unit.order !== 'attack') {
         unit.order = unit.holdOnArrive ? 'hold_position' : 'idle';
         unit.holdOnArrive = false;
         unit.groupSpeedCap = null;
@@ -266,8 +283,11 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
 
   const facingDelta = normalizeAngle(desiredAngle - unit.facing);
   const maxTurn = unit.turnRate * dt;
-  if (Math.abs(facingDelta) > maxTurn) unit.facing += Math.sign(facingDelta) * maxTurn;
-  else unit.facing = desiredAngle;
+  // A soldier (or helicopter) with a target keeps facing it; only hulls must steer by heading.
+  if (!(unit.aiming && !veh)) {
+    if (Math.abs(facingDelta) > maxTurn) unit.facing += Math.sign(facingDelta) * maxTurn;
+    else unit.facing = desiredAngle;
+  }
 
   const alignment = Math.cos(facingDelta);
   const alignFactor = veh ? Math.max(0, alignment) ** 2 : (alignment > 0 ? 1 : 0.6);
@@ -385,14 +405,54 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   unit.fatigue = Math.min(1, unit.fatigue + fatigueGain);
 
   const cur = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
-  unit.inCover = unit.type === 'infantry' && !unit.targetPos && (cur?.coverBonus ?? 0) > 0;
+  unit.inCover = unit.type === 'infantry' && (!unit.targetPos || unit.engaging) && (cur?.coverBonus ?? 0) > 0;
 }
 
 function speedMagnitude(unit: Unit) { return Math.hypot(unit.vel.x, unit.vel.y); }
 
+/**
+ * How strongly `attacker`'s fire shakes `target`. Rifle fire pins infantry but
+ * barely rattles armour; main guns and rockets shake everything a little.
+ */
+export function suppressionScale(attacker: Unit, target: Unit): number {
+  let scale = SUPPRESSION_RESIST[target.type];
+  if (isVehicle(target) || target.type === 'helicopter') {
+    if (attacker.damage < HEAVY_WEAPON_DAMAGE) scale *= SMALL_ARMS_VS_VEHICLE;
+  }
+  return scale;
+}
+
+/** Higher = more worth shooting right now. Combines proximity, threat, effectiveness and urgency. */
+export function scoreTarget(unit: Unit, enemy: Unit, dist: number, state: GameState): number {
+  const proximity = 1 - Math.min(1, dist / Math.max(1, unit.range));
+  const smallArms = unit.damage < HEAVY_WEAPON_DAMAGE;
+  const effectiveness = 1 - enemy.armor / (enemy.armor + 50) * (smallArms ? 1.4 : 0.6);
+  const shootingMe = enemy.attackTarget === unit.id && state.time - enemy.lastFireTime < 3 ? 0.5 : 0;
+  const wounded = 1 - enemy.health / enemy.maxHealth;
+  return proximity * 0.9 + TARGET_THREAT[enemy.type] * 0.6 + Math.max(0, effectiveness) * (smallArms ? 0.9 : 0.5) + wounded * 0.3 + shootingMe;
+}
+
+/** Best visible, in-range enemy with a clear line of fire; the current target keeps its place unless clearly outscored. */
+function pickTarget(unit: Unit, enemies: Unit[], state: GameState, current?: Unit): Unit | undefined {
+  const heli = unit.type === 'helicopter';
+  let best: Unit | undefined, bestScore = -Infinity, currentScore = -Infinity;
+  for (const enemy of enemies) {
+    if (!isVisibleTo(enemy, unit.team)) continue;
+    const dist = distance(unit.pos, enemy.pos);
+    if (dist > unit.range || dist > unit.sightRange) continue;
+    if (!hasLineOfSight(state.terrain, unit.pos.x, unit.pos.y, enemy.pos.x, enemy.pos.y, heli)) continue;
+    const score = scoreTarget(unit, enemy, dist, state);
+    if (enemy === current) currentScore = score;
+    if (score > bestScore) { bestScore = score; best = enemy; }
+  }
+  if (current && currentScore > -Infinity && bestScore < currentScore + RETARGET_HYSTERESIS) return current;
+  return best;
+}
+
 export function updateCombat(unit: Unit, dt: number, state: GameState): { killMsg: string | null; killedTeam: Team | null } {
   if (!unit.alive || unit.insideOf) return { killMsg: null, killedTeam: null };
 
+  unit.engaging = false; unit.aiming = false;
   unit.attackTimer = Math.max(0, unit.attackTimer - dt);
   unit.reloadTimer = Math.max(0, unit.reloadTimer - dt);
   unit.suppression = Math.max(0, unit.suppression - dt * 0.18);
@@ -410,33 +470,44 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
 
   const enemies = state.units.filter(u => u.alive && u.team !== unit.team && !u.insideOf);
 
+  // A player-ordered target is followed (see updateOrders); anything else is a
+  // soft, automatically chosen target that must stay in range and in sight.
+  const ordered = unit.order === 'attack' && !!unit.attackTarget;
   let target: Unit | undefined;
   if (unit.attackTarget) {
-    target = enemies.find(e => e.id === unit.attackTarget && isVisibleTo(e, unit.team));
-    if (!target) unit.attackTarget = null;
+    const current = enemies.find(e => e.id === unit.attackTarget && isVisibleTo(e, unit.team));
+    if (current && (ordered || distance(unit.pos, current.pos) <= unit.range * 1.05)) target = current;
+    else if (!ordered) unit.attackTarget = null;
   }
 
-  if (!target && canAcquire) {
-    let closest = Infinity;
-    for (const enemy of enemies) {
-      // Engagement requires the enemy to be visible to our team (awareness gate)
-      if (!isVisibleTo(enemy, unit.team)) continue;
-      const dist = distance(unit.pos, enemy.pos);
-      if (dist <= unit.range && dist <= unit.sightRange && dist < closest) {
-        if (hasLineOfSight(state.terrain, unit.pos.x, unit.pos.y, enemy.pos.x, enemy.pos.y, unit.type === 'helicopter')) {
-          closest = dist;
-          target = enemy;
-        }
-      }
-    }
+  unit.retargetTimer = Math.max(0, unit.retargetTimer - dt);
+  if (canAcquire && !ordered && (!target || unit.retargetTimer <= 0)) {
+    unit.retargetTimer = RETARGET_INTERVAL;
+    const best = pickTarget(unit, enemies, state, target);
+    if (best !== target) { target = best; unit.attackTarget = best?.id ?? null; }
   }
+
+  // Attack-move fights where it stands. After MAX_ENGAGE_TIME of stalemate the
+  // unit pushes on for a short grace period so a stand-off cannot freeze an advance.
+  if (target && unit.team === 'player' && unit.order === 'attack_move' && state.time >= unit.disengageUntil) {
+    unit.engageTime += dt;
+    if (unit.engageTime > MAX_ENGAGE_TIME) {
+      unit.engageTime = 0; unit.disengageUntil = state.time + DISENGAGE_GRACE;
+    } else unit.engaging = true;
+  } else {
+    unit.engageTime = Math.max(0, unit.engageTime - dt * 2);
+  }
+  unit.aiming = !!target && !isVehicle(unit) && !(unit.order === 'retreat' && unit.targetPos != null);
 
   if (target) {
     const desired = angleBetween(unit.pos, target.pos);
     const delta = normalizeAngle(desired - unit.facing);
     const maxTurn = unit.turnRate * dt;
-    const activelyMoving = unit.targetPos != null && (unit.order === 'move' || unit.order === 'attack_move' || unit.order === 'retreat');
-    if (!activelyMoving) {
+    // Hulls steer by heading while driving; soldiers and halted vehicles can turn to fire.
+    const hullDriving = isVehicle(unit) && !unit.engaging && unit.targetPos != null &&
+      (unit.order === 'move' || unit.order === 'attack_move' || unit.order === 'retreat');
+    const running = unit.order === 'retreat' && unit.targetPos != null;
+    if (!hullDriving && !running) {
       if (Math.abs(delta) > maxTurn) unit.facing += Math.sign(delta) * maxTurn;
       else unit.facing = desired;
     }
@@ -512,10 +583,12 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
     hit: isHit, crit: isCrit, team: unit.team,
   });
   unit.attackTimer = unit.attackCooldown;
+  unit.lastFireTime = state.time;
   if (unit.ammo <= 0) unit.reloadTimer = UNIT_STATS[unit.type].reloadTime;
+  const suppressScale = suppressionScale(unit, target);
 
   if (!isHit) {
-    const suppressionGain = targetEntrenched ? 0.025 : 0.08;
+    const suppressionGain = (targetEntrenched ? 0.025 : 0.08) * suppressScale;
     target.suppression = Math.min(1, target.suppression + suppressionGain);
     return { killMsg: null, killedTeam: null };
   }
@@ -540,7 +613,7 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
 
   target.health -= dmg;
   target.lastDamageTime = state.time;
-  target.suppression = Math.min(1, target.suppression + (targetEntrenched ? 0.1 : 0.3));
+  target.suppression = Math.min(1, target.suppression + (targetEntrenched ? 0.1 : 0.3) * suppressScale);
   for (const ally of state.units) {
     if (ally.alive && ally.team === target.team && ally.id !== target.id) {
       const allyDist = distance(ally.pos, target.pos);
@@ -580,6 +653,64 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
     };
   }
   return { killMsg: null, killedTeam: null };
+}
+
+
+// ============ ORDERS THAT REACT TO THE BATTLE ============
+
+function endAttackOrder(unit: Unit) {
+  unit.attackTarget = null;
+  unit.order = 'idle';
+  unit.targetPos = null; unit.path = []; unit.finalDest = null;
+  unit.chaseGoal = null; unit.targetLostTimer = 0;
+}
+
+/**
+ * Explicit attack order: close to firing range with a clear line of fire,
+ * stop and shoot, follow the target if it moves, search its last known
+ * position if it disappears, and stand down when it dies or stays lost.
+ */
+function pursueOrderedTarget(unit: Unit, dt: number, state: GameState) {
+  const target = state.units.find(u => u.id === unit.attackTarget);
+  if (!target || !target.alive) { endAttackOrder(unit); return; }
+  const visible = !target.insideOf && isVisibleTo(target, unit.team);
+  if (visible) { unit.chaseGoal = { ...target.pos }; unit.targetLostTimer = 0; }
+  else unit.targetLostTimer += dt;
+  if (unit.targetLostTimer > TARGET_LOST_TIMEOUT) { endAttackOrder(unit); return; }
+
+  const dist = distance(unit.pos, target.pos);
+  const heli = unit.type === 'helicopter';
+  const inPosition = visible && dist <= unit.range * 0.95 &&
+    hasLineOfSight(state.terrain, unit.pos.x, unit.pos.y, target.pos.x, target.pos.y, heli);
+  if (inPosition) {
+    // Stand and fire; combat handles aiming. Do not keep walking into the target.
+    if (unit.targetPos || unit.path.length) { unit.targetPos = null; unit.path = []; unit.finalDest = null; }
+    return;
+  }
+
+  let goal: Position | null = null;
+  if (visible) {
+    const len = dist || 1;
+    // Out of range: close to the standoff distance. In range but blocked: get right up to it.
+    const standoff = dist > unit.range * 0.95 ? unit.range * CHASE_STANDOFF : unit.range * 0.35;
+    goal = { x: target.pos.x - ((target.pos.x - unit.pos.x) / len) * standoff, y: target.pos.y - ((target.pos.y - unit.pos.y) / len) * standoff };
+  } else if (unit.chaseGoal && distance(unit.pos, unit.chaseGoal) > CELL_SIZE) {
+    goal = unit.chaseGoal;
+  }
+  if (!goal) return;
+  const moving = !!unit.targetPos || unit.path.length > 0;
+  const drifted = !unit.finalDest || distance(unit.finalDest, goal) > CELL_SIZE * 1.5;
+  if (unit.chaseRepathTimer <= 0 && (!moving || drifted)) {
+    unit.chaseRepathTimer = 0.6;
+    setDestination(unit, state, goal);
+  }
+}
+
+/** Per-frame order upkeep that has to look at the battlefield. Runs before movement. */
+export function updateOrders(unit: Unit, dt: number, state: GameState) {
+  if (!unit.alive || unit.insideOf) return;
+  unit.chaseRepathTimer = Math.max(0, unit.chaseRepathTimer - dt);
+  if (unit.order === 'attack' && unit.attackTarget) pursueOrderedTarget(unit, dt, state);
 }
 
 export function getUnitsInRect(units: Unit[], x1: number, y1: number, x2: number, y2: number, team: Team): Unit[] {

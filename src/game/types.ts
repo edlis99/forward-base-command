@@ -101,6 +101,25 @@ export interface Unit {
   detectionLevel: number;     // 0..1 builds toward 1 = fully spotted
   lastKnownPos: Position | null; // for ghost markers when LOS lost
   lastKnownTime: number;
+  // engagement / reaction to combat
+  /** True while a halted attack-move unit is standing to fight a target. */
+  engaging: boolean;
+  /** True while a soldier/aircraft is turned toward a target instead of its travel direction. */
+  aiming: boolean;
+  /** Seconds spent continuously engaging (watchdog against endless stand-offs). */
+  engageTime: number;
+  /** Sim time until which this unit ignores contacts and keeps advancing. */
+  disengageUntil: number;
+  /** Seconds until the unit may re-evaluate its auto-selected target. */
+  retargetTimer: number;
+  /** Sim time this unit last fired a shot. */
+  lastFireTime: number;
+  /** Last place the ordered attack target was seen (chase / search). */
+  chaseGoal?: Position | null;
+  /** Seconds the ordered attack target has been out of sight. */
+  targetLostTimer: number;
+  /** Throttle for re-pathing while chasing an ordered target. */
+  chaseRepathTimer: number;
 }
 
 export interface TerrainCell {

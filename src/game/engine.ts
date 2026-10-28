@@ -1,7 +1,7 @@
 import { selectUnits } from './selection';
 import { GameState, InputState, MissionDef, Position, FormationType, Unit, CommandMarker, CommandMarkerType, DebugFlags } from './types';
 import { generateTerrain, getTerrainAt, canDigHere, digTrench, findNearestPassableWorld, isFootprintPassable } from './terrain';
-import { createUnit, clearUnitOrders, setDestination, updateCombat, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
+import { createUnit, clearUnitOrders, setDestination, updateCombat, updateOrders, getUnitsInRect, checkVeterancy, moveUnit, distance } from './units';
 import { updateAI } from './ai';
 import { updateAwareness, isVisibleTo } from './awareness';
 import { updateThreatMap } from './threatMap';
@@ -112,6 +112,7 @@ export function update(state: GameState, input: InputState, dt: number) {
 
   refreshUnitGrid(state);
   updatePlayerSquads(state, dt);
+  for (const unit of state.units) if (unit.alive) updateOrders(unit, dt, state);
   for (const unit of state.units) if (unit.alive) moveUnit(unit, dt, state);
   for (const unit of state.units) {
     if (!unit.alive || !unit.insideOf) continue;

@@ -34,3 +34,15 @@ New movement orders default to **Move together**. Ground units share an attainab
 Right-click a cover object to occupy separate infantry positions, or use **Take cover / C** to seek nearby cover. Field rocks provide hard cover; brush primarily provides concealment. Existing hay, logs, low walls, wrecks, barricades, buildings, woodland, hedges, rubble and trenches remain useful. An amber shield shows an approach to cover; a green shield, **In cover** status and crouched pose indicate a stationary soldier benefiting from cover. Roads still trade faster travel for exposure. Shift/Ctrl+right-click keep waypoint/attack-move semantics.
 
 This remains an abstract tactical model: cover bonuses are per terrain cell, not directional per-projectile geometry; there are no building interiors, infantry squads represented by multiple animated soldiers, or full vehicle drivetrain physics yet. Those are future systems, not implied by these controls.
+
+## Combat engagement and reaction to fire
+
+How units behave once shooting starts (implemented in `src/game/units.ts`, tuned in `constants.ts`):
+
+- **Attack-move stands and fights.** A player unit on `attack_move` halts when it has a visible target in range, keeps its destination and queued legs, and resumes the advance when the contact is over. After `MAX_ENGAGE_TIME` of stalemate it pushes on for `DISENGAGE_GRACE` seconds so a stand-off cannot freeze an advance. Plain `move` orders never halt: that is how a unit deliberately runs the gauntlet. Enemy AI orders are unchanged.
+- **Soldiers shoot on the move.** Infantry and helicopters turn to their target while walking (with the existing moving-accuracy penalty); only hulls steer by heading. Retreating units run and do not aim.
+- **Targets are scored, not just nearest.** `scoreTarget` weighs proximity, threat by unit type (`TARGET_THREAT`), weapon effectiveness against armour, whether the enemy is firing at this unit, and how wounded it is. The current target is kept unless a rival beats it by `RETARGET_HYSTERESIS`; re-evaluation happens every `RETARGET_INTERVAL`. A target that leaves range or sight is dropped, so being hit by a long-range unit no longer blinds a unit to nearer enemies. The enemy AI uses the same selection.
+- **Ordered attacks pursue.** An explicit attack order closes to `CHASE_STANDOFF` x weapon range with a clear line of fire, stops and fires, follows a moving target, searches the last known position when it is lost, and lapses after `TARGET_LOST_TIMEOUT` or when the target dies.
+- **Suppression depends on the weapon.** `suppressionScale` makes small arms barely rattle armour and aircraft (`SUPPRESSION_RESIST`, `SMALL_ARMS_VS_VEHICLE`); only infantry go prone and become pinned.
+
+Open balance questions: whether a squad should wait for a pinned member or push on (currently waits, covered by a test), and whether capturing should require clearing the garrison, since a straight rush to a point is now very reliable.
