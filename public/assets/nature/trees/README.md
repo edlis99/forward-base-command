@@ -1,31 +1,27 @@
-# Textures for volumetric Leipalingis trees
+# Tree texture atlas files
 
-These ten maps are applied to **three-dimensional instanced tree meshes** in
-`src/scene3d/VolumetricTrees.tsx`. Nothing in this folder is a flat billboard
-or a complete photographic tree model.
+## Runtime (new)
+All species render many individual textured botanical sprigs on fully 3D
+branches, not texture-painted geometric cones:
 
-## Texture files
-
-| Tree | Foliage map | Bark map |
+| Species | Transparent leaf / needle texture | Bark |
 | --- | --- | --- |
-| Scots pine | `pine_foliage.svg` | Existing `../pine/Textures/pine_bark.png` (imported Poly Haven model texture) |
-| Spruce | `spruce_foliage.svg` | `spruce_bark.svg` |
-| Birch | `birch_foliage.svg` | `birch_bark.svg` |
-| Oak | `oak_foliage.svg` | `oak_bark.svg` |
-| Alder | `alder_foliage.svg` | `alder_bark.svg` |
+| Scots pine | `pine_sprig.svg` | `../pine/Textures/pine_bark.png` |
+| Spruce | `spruce_sprig.svg` | `spruce_bark.svg` |
+| Birch | `birch_sprig.svg` | `birch_bark.svg` |
+| Oak | `oak_sprig.svg` | `oak_bark.svg` |
+| Alder | `alder_sprig.svg` | `alder_bark.svg` |
 
-The new 512 × 512 SVG patterns were generated specifically for this project
-with deterministic leaf, needle, branch and bark detail. They use fully opaque
-colours and can be rasterized by the browser as colour textures, with subtle bump
-mapping in Three.js. Their patterns are original, not scraped from paid packs.
-Pine bark is the real texture already present in the licensed CC0 source pack.
+The new SVGs use transparent backgrounds and per-species cutout silhouettes.
+They are small original botanical drawings rather than photographic atlas
+captures. Three.js uses alphaTest on these maps, preserving visible branches
+and gaps within the 3D canopy.
 
-The tree crowns remain simplified low-polygon solids. These maps provide actual
-surface colour and micro-detail, but do **not** make the geometry photorealistic.
-For that, upgrade to licensed bark/foliage atlas meshes or detailed species LODs.
+The previous opaque `*_foliage.svg` assets have deliberately stopped being
+used at runtime. They are kept only for provenance / comparison.
+The source pine bark is a retained CC0 Poly Haven import; see the source
+`../pine/LICENSE.md`.
 
-All textures load locally from `/assets/nature/trees/`, and
-`src/scene3d/preloadVisuals.ts` prefetches them before the mission begins.
-
-The procedural SVG patterns are offered as part of this game's source assets.
-See `../pine/LICENSE.md` for the source bark's Poly Haven CC0 provenance.
+`src/scene3d/ForestMeshes.ts` is the procedural geometry builder.
+`src/scene3d/ImportedPines.tsx` uses the actual source pine OBJ nearby.
+`src/scene3d/VolumetricTrees.tsx` instances the low- and high-detail meshes.
