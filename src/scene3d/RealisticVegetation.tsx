@@ -1,276 +1,153 @@
-import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { useFrame, useLoader, useThree } from '@react-three/fiber';
+import React, { Suspense, useEffect, useMemo, useRef } from 'react';
+import { useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import type { TerrainCell } from '../game/types';
 import type { MapSection } from './mapSections';
-import { Woodland } from './Environment';
-import { canopyMaterial } from './canopyReveal';
+import { SETTLEMENTS } from '../game/maps/settlements';
 import { fbm, groundHeightAt, hash2 } from './terrainHeight';
+import { VolumetricTrees, type TreePlacement } from './VolumetricTrees';
 
-/** World scale: trees were 2.5-4.6 cells tall (6-9x a house); real pines are ~3x house height. */
-export const TREE_SCALE = 0.42;
-const UNDERGROWTH_SCALE = 0.6;
-
-/**
- * Whole-map forest replacement. Every forest cell receives pack-derived
- * pine/broadleaf silhouettes; nearby sections also show the actual optimized
- * pine OBJ, fern glTF, shrub OBJ and grass OBJ models. Nothing here changes
- * tactical cell cover, collision, visibility, or unit movement.
- *
- * The full pine foliage atlas is not available yet. The OBJ's leaf material
- * uses the source's smaller tree-card placeholder until it is restored.
- * See public/assets/nature/README.md for CC0 sources and limitations.
- */
-const ROOT = '/assets/nature';
+export const TREE_SCALE = 0.48;
+const ROOT = `${import.meta.env.BASE_URL}assets/nature`;
 const TAU = Math.PI * 2;
-
-interface Placement {
-  x: number; y: number; z: number;
-  size: number; width: number; yaw: number; rank: number;
-}
 interface NatureLayout {
-  pine: Placement[];
-  broadleaf: Placement[];
-  fern: Placement[];
-  shrub: Placement[];
-  grass: Placement[];
+  pine: TreePlacement[];
+  broadleaf: TreePlacement[];
+  fern: TreePlacement[];
+  shrub: TreePlacement[];
+  grass: TreePlacement[];
 }
-
+// Landscape-specific forest mix: pine-dominated stands in the Gailiūnai / Didžiasalis
+// belt; birch, oak and alder dominate many other woods. This is art direction,
+// not a cadastral forest-species survey.
+const pineCentres = SETTLEMENTS.filter(s => s.id === 'gailiunai' || s.id === 'didziasalis');
+export function pineProbability(x: number, z: number): number {
+  const influence = Math.max(0, ...pineCentres.map(s => {
+    const radius = 30 + Math.min(s.rx, s.ry) * .7;
+    const d = Math.hypot(x - s.x, z - s.y);
+    return Math.exp(-.5 * (d / radius) ** 2);
+  }));
+  const localMix = (fbm(x * .05 + 40, z * .05 + 13) - .5) * .16;
+  return Math.max(.18, Math.min(.89, .30 + .56 * influence + localMix));
+}
 function scatter(terrain: TerrainCell[][], section: MapSection): NatureLayout {
   const result: NatureLayout = { pine: [], broadleaf: [], fern: [], shrub: [], grass: [] };
   const push = (kind: keyof NatureLayout, x: number, z: number, salt: number, height: number, width: number) => {
-    const xx = x + 0.13 + hash2(x + salt * 2, z + salt) * 0.74;
-    const zz = z + 0.13 + hash2(x + salt, z + salt * 3) * 0.74;
+    const xx = x + .12 + hash2(x + salt * 2, z + salt) * .76;
+    const zz = z + .12 + hash2(x + salt, z + salt * 3) * .76;
     result[kind].push({
-      x: xx, z: zz, y: groundHeightAt(terrain, xx, zz) + 0.006,
-      size: height, width, yaw: hash2(x + salt * 7, z + salt * 11) * TAU,
+      x: xx, z: zz, y: groundHeightAt(terrain, xx, zz) + .006,
+      size: height, width,
+      yaw: hash2(x + salt * 7, z + salt * 11) * TAU,
       rank: hash2(x + salt * 13, z + salt * 17),
     });
   };
-
-  for (let z = section.y; z < section.y + section.height; z++) {
+  for (let z = section.y; z < section.y + section.height; z++)
     for (let x = section.x; x < section.x + section.width; x++) {
       if (terrain[z][x].type !== 'forest') continue;
-      const stand = fbm(x * 0.045 + 40, z * 0.045 + 13) > 0.5;
-      const edge =
-        terrain[z - 1]?.[x]?.type !== 'forest' ||
-        terrain[z + 1]?.[x]?.type !== 'forest' ||
-        terrain[z]?.[x - 1]?.type !== 'forest' ||
-        terrain[z]?.[x + 1]?.type !== 'forest';
-      // Each forest cell gets a textured tree instead of procedural cones.
-      // Slightly staggered pairs fill dense woodland without grid repetition.
-      for (let n = 0; n < (hash2(x + 39, z + 81) < 0.35 ? 2 : 1); n++) {
-        if (hash2(x + n * 101, z + n * 173) < 0.07) continue;
+      const edge = terrain[z - 1]?.[x]?.type !== 'forest'
+        || terrain[z + 1]?.[x]?.type !== 'forest'
+        || terrain[z]?.[x - 1]?.type !== 'forest'
+        || terrain[z]?.[x + 1]?.type !== 'forest';
+      const trees = hash2(x + 39, z + 81) < .40 ? 2 : 1;
+      for (let n = 0; n < trees; n++) {
+        if (hash2(x + n * 101, z + n * 173) < .07) continue;
         const salt = 19 + n * 31;
-        const pine = hash2(x + salt, z + salt * 2) < (stand ? 0.85 : 0.56);
-        // Real proportions: pines about three times house height (see WORLD_SCALE in Scene3D notes).
-        const size = ((pine ? 3.15 : 2.50) + hash2(x + n * 47, z + n * 63) * (pine ? 1.50 : 1.15)) * TREE_SCALE;
-        push(pine ? 'pine' : 'broadleaf', x, z, salt, size, size * (pine ? 0.62 : 0.84));
+        const pine = hash2(x + salt, z + salt * 2) < pineProbability(x, z);
+        const size = ((pine ? 3.35 : 2.75) + hash2(x + n * 47, z + n * 63) * (pine ? 1.6 : 1.25)) * TREE_SCALE;
+        push(pine ? 'pine' : 'broadleaf', x, z, salt, size, size * (pine ? .64 : .86));
       }
-      if (hash2(x + 427, z + 213) < (edge ? 0.65 : 0.30))
-        push('fern', x, z, 79, (1.0 + hash2(x + 51, z + 33) * 0.7) * UNDERGROWTH_SCALE, 1);
-      if (hash2(x + 277, z + 33) < (edge ? 0.54 : 0.18))
-        push('shrub', x, z, 37, (0.65 + hash2(x + 57, z + 25) * 0.45) * UNDERGROWTH_SCALE, 1);
-      if (hash2(x + 13, z + 239) < 0.68)
-        push('grass', x, z, 67, (0.7 + hash2(x + 9, z + 203) * 0.75) * UNDERGROWTH_SCALE, 1);
+      if (hash2(x + 427, z + 213) < (edge ? .65 : .30))
+        push('fern', x, z, 79, .32 + hash2(x + 51, z + 33) * .27, 1);
+      if (hash2(x + 277, z + 33) < (edge ? .54 : .18))
+        push('shrub', x, z, 37, .29 + hash2(x + 57, z + 25) * .25, 1);
+      if (hash2(x + 13, z + 239) < .68)
+        push('grass', x, z, 67, .28 + hash2(x + 9, z + 203) * .38, 1);
     }
-  }
   return result;
 }
-
-function Instances({ geometry, material, plants, shadow = false, cards = false }: {
-  geometry: THREE.BufferGeometry;
-  material: THREE.Material | THREE.Material[];
-  plants: Placement[];
-  shadow?: boolean;
-  cards?: boolean;
+function Instances({ geometry, material, plants }: {
+  geometry: THREE.BufferGeometry; material: THREE.Material | THREE.Material[]; plants: TreePlacement[];
 }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   useEffect(() => {
-    if (!ref.current || plants.length === 0) return;
-    const tmp = new THREE.Object3D();
-    for (let i = 0; i < plants.length; i++) {
-      const p = plants[i];
-      tmp.position.set(p.x, p.y + (cards ? p.size * 0.5 : 0), p.z);
-      tmp.rotation.set(0, p.yaw, 0);
-      tmp.scale.set(cards ? p.width : p.size, p.size, cards ? p.width : p.size);
-      tmp.updateMatrix();
-      ref.current.setMatrixAt(i, tmp.matrix);
-    }
-    ref.current.instanceMatrix.needsUpdate = true;
-    ref.current.computeBoundingSphere();
-  }, [plants, cards]);
-
-  if (plants.length === 0) return null;
-  return <instancedMesh
-    ref={ref} args={[geometry, material, plants.length]}
-    frustumCulled castShadow={shadow} receiveShadow={false} raycast={() => null}
-  />;
+    const instanced = ref.current;
+    if (!instanced) return;
+    const dummy = new THREE.Object3D();
+    plants.forEach((p, i) => {
+      dummy.position.set(p.x, p.y, p.z);
+      dummy.rotation.set(0, p.yaw, 0);
+      dummy.scale.setScalar(p.size);
+      dummy.updateMatrix();
+      instanced.setMatrixAt(i, dummy.matrix);
+    });
+    instanced.instanceMatrix.needsUpdate = true;
+    instanced.computeBoundingSphere();
+  }, [plants]);
+  if (!plants.length) return null;
+  return <instancedMesh ref={ref} args={[geometry, material, plants.length]}
+    receiveShadow={false} castShadow={false} raycast={() => null} />;
 }
-
-function ForestCards({ plants, texture }: { plants: Placement[]; texture: THREE.Texture }) {
-  const geo = useMemo(() => {
-    const a = new THREE.PlaneGeometry(1, 1);
-    const b = new THREE.PlaneGeometry(1, 1);
-    b.rotateY(Math.PI / 2);
-    // Two crossing vertical quads remain visible from a top-down camera.
-    // Using two InstancedMeshes avoids expensive merge/clone operations.
-    return [a, b];
-  }, []);
-  useEffect(() => () => geo.forEach(g => g.dispose()), [geo]);
-
-  const material = useMemo(() => {
-    const m = canopyMaterial();
-    m.map = texture;
-    m.side = THREE.DoubleSide;
-    m.alphaTest = 0.42;
-    m.roughness = 0.97;
-    m.needsUpdate = true;
-    return m;
-  }, [texture]);
-  useEffect(() => () => material.dispose(), [material]);
-
-  return <group>
-    <Instances geometry={geo[0]} material={material} plants={plants} cards />
-    <Instances geometry={geo[1]} material={material} plants={plants} cards />
-  </group>;
-}
-
-function ImportedNature({ terrain, section, highQuality }: {
-  terrain: TerrainCell[][]; section: MapSection; highQuality: boolean;
+/** Understory meshes are licensed 3D OBJ/glTF assets, not tree billboards. */
+function ImportedUnderstory({ layout, highQuality }: {
+  layout: NatureLayout; highQuality: boolean;
 }) {
-  const { camera } = useThree();
-  const pineObj = useLoader(OBJLoader, `${ROOT}/pine/pine.obj`);
   const shrubObj = useLoader(OBJLoader, `${ROOT}/shrub/shrub.obj`);
   const grassObj = useLoader(OBJLoader, `${ROOT}/grass/grass.obj`);
   const fernGltf = useLoader(GLTFLoader, `${ROOT}/fern_02/fern_02_1k.gltf`);
-
-  const [pineTrunk, pineBark, pineFoliage, pineCard, broadleafCard, shrubTex, grassTex] =
-    useLoader(THREE.TextureLoader, [
-      `${ROOT}/pine/Textures/pine_trunk.png`,
-      `${ROOT}/pine/Textures/pine_bark.png`,
-      `${ROOT}/pine/Textures/pine_foliage.png`,
-      `${ROOT}/pine/Textures/pine_card.png`,
-      `${ROOT}/broadleaf/Textures/broadleaf_card.png`,
-      `${ROOT}/shrub/Textures/shrub_foliage.png`,
-      `${ROOT}/grass/Textures/grass_blades.png`,
-    ]);
-
-  const layout = useMemo(() => scatter(terrain, section), [terrain, section]);
-  // Detailed 25K-triangle trees only in the camera's neighbourhood.
-  const [near, setNear] = useState(false);
-  const clock = useRef(0);
-  useFrame((_, delta) => {
-    clock.current += delta;
-    if (clock.current < 0.7) return;
-    clock.current = 0;
-    const px = camera.position.x;
-    const pz = camera.position.z - camera.position.y * 0.55 / 0.85;
-    const cx = section.x + section.width / 2;
-    const cz = section.y + section.height / 2;
-    const d = Math.hypot(px - cx, pz - cz);
-    const next = d < (highQuality ? 75 : 37) && camera.position.y < (highQuality ? 130 : 80);
-    setNear(prev => prev === next ? prev : next);
-  });
-
-  const detailLimit = highQuality ? 10 : 3;
-  // Keep every tree visually represented by either a card or a mesh.
-  const sortedPines = useMemo(() =>
-    [...layout.pine].sort((a, b) => b.rank - a.rank), [layout.pine]);
-  const detail = near ? sortedPines.slice(0, detailLimit) : [];
-  const pineCards = near ? sortedPines.slice(detailLimit) : sortedPines;
-
-  const plantMaterials = useMemo(() => {
-    // These OBJ exports use glTF-style top-down UVs, so disable the loader's
-    // default Y flip. Billboard textures keep their usual orientation.
-    [pineTrunk, pineBark, pineFoliage, shrubTex, grassTex].forEach(t => {
+  const [shrubTex, grassTex] = useLoader(THREE.TextureLoader, [
+    `${ROOT}/shrub/Textures/shrub_foliage.png`,
+    `${ROOT}/grass/Textures/grass_blades.png`,
+  ]);
+  const mats = useMemo(() => {
+    [shrubTex, grassTex].forEach(t => {
       t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true;
     });
-    [pineCard, broadleafCard].forEach(t => {
-      t.flipY = true; t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true;
-    });
-    const foliage = canopyMaterial();
-    foliage.map = pineFoliage;
-    foliage.alphaTest = 0.46;
-    foliage.side = THREE.DoubleSide;
-    foliage.needsUpdate = true;
     return {
-      pine_trunk: new THREE.MeshStandardMaterial({ map: pineTrunk, roughness: 0.95 }),
-      pine_bark: new THREE.MeshStandardMaterial({ map: pineBark, roughness: 0.95 }),
-      pine_foliage: foliage,
-      shrub_foliage: new THREE.MeshStandardMaterial({
-        map: shrubTex, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.98,
-      }),
-      grass_blades: new THREE.MeshStandardMaterial({
-        map: grassTex, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.98,
-      }),
+      shrub: new THREE.MeshStandardMaterial({ map: shrubTex, alphaTest: .4, side: THREE.DoubleSide, roughness: 1 }),
+      grass: new THREE.MeshStandardMaterial({ map: grassTex, alphaTest: .4, side: THREE.DoubleSide, roughness: 1 }),
     };
-  }, [pineTrunk, pineBark, pineFoliage, pineCard, broadleafCard, shrubTex, grassTex]);
-  useEffect(() => () => Object.values(plantMaterials).forEach(m => m.dispose()), [plantMaterials]);
-
-  const objects = useMemo(() => {
+  }, [shrubTex, grassTex]);
+  useEffect(() => () => Object.values(mats).forEach(m => m.dispose()), [mats]);
+  const meshes = useMemo(() => {
     const collect = (obj: THREE.Object3D) => {
-      const meshes: THREE.Mesh[] = [];
-      obj.traverse(child => { if ((child as THREE.Mesh).isMesh) meshes.push(child as THREE.Mesh); });
-      return meshes;
+      const out: THREE.Mesh[] = [];
+      obj.traverse(child => { if ((child as THREE.Mesh).isMesh) out.push(child as THREE.Mesh); });
+      return out;
     };
-    return {
-      pine: collect(pineObj),
-      shrub: collect(shrubObj),
-      grass: collect(grassObj),
-      fern: collect(fernGltf.scene),
-    };
-  }, [pineObj, shrubObj, grassObj, fernGltf.scene]);
-
-  const batchOBJ = (meshes: THREE.Mesh[], plants: Placement[], prefix: string, shadows: boolean) =>
-    meshes.map((mesh, i) => {
-      const sources = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      const mats = sources.map(m =>
-        plantMaterials[m.name as keyof typeof plantMaterials] ?? plantMaterials.pine_trunk);
-      return <Instances key={`${prefix}-${i}`} geometry={mesh.geometry}
-        material={mats.length === 1 ? mats[0] : mats}
-        plants={plants} shadow={shadows} />;
-    });
-
-  const fernLimit = highQuality ? 90 : 30;
-  const shrubLimit = highQuality ? 55 : 16;
-  const grassLimit = highQuality ? 200 : 70;
-  const ferns = layout.fern.slice(0, fernLimit);
-  const shrubs = layout.shrub.slice(0, shrubLimit);
-  const grass = layout.grass.slice(0, grassLimit);
-
-  return <group>
-    {/* Crossed texture cards keep even faraway woodland continuous. */}
-    <ForestCards plants={pineCards} texture={pineCard} />
-    <ForestCards plants={layout.broadleaf} texture={broadleafCard} />
-    {batchOBJ(objects.pine, detail, 'pine', highQuality)}
-    {batchOBJ(objects.shrub, shrubs, 'shrub', false)}
-    {batchOBJ(objects.grass, grass, 'grass', false)}
-    {/* Poly Haven fern pack has four variants; place one variant per fern. */}
-    {objects.fern.map((mesh, i) => <Instances key={`fern-${i}`}
+    return { shrub: collect(shrubObj), grass: collect(grassObj), fern: collect(fernGltf.scene) };
+  }, [shrubObj, grassObj, fernGltf.scene]);
+  const shrubs = layout.shrub.slice(0, highQuality ? 55 : 16);
+  const grasses = layout.grass.slice(0, highQuality ? 200 : 70);
+  const ferns = layout.fern.slice(0, highQuality ? 90 : 30);
+  const draw = (name: 'shrub' | 'grass', plants: TreePlacement[]) => meshes[name].map((mesh, i) => (
+    <Instances key={`${name}-${i}`} geometry={mesh.geometry} material={mats[name]} plants={plants} />
+  ));
+  return <group name="3d-forest-understory">
+    {draw('shrub', shrubs)}
+    {draw('grass', grasses)}
+    {meshes.fern.map((mesh, i) => <Instances key={`fern-${i}`}
       geometry={mesh.geometry} material={mesh.material}
-      plants={ferns.filter((_, k) => k % Math.max(1, objects.fern.length) === i)} />)}
+      plants={ferns.filter((_, k) => k % Math.max(1, meshes.fern.length) === i)} />)}
   </group>;
 }
-
-class NatureFallback extends React.Component<
-  { children: React.ReactNode; fallback: React.ReactNode },
-  { failed: boolean }
-> {
+class NatureBoundary extends React.Component<{ children: React.ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
-  render() { return this.state.failed ? this.props.fallback : this.props.children; }
+  componentDidCatch(error: Error) { console.warn('Optional forest understory unavailable', error.message); }
+  render() { return this.state.failed ? null : this.props.children; }
 }
-
 export function RealisticVegetation({ terrain, section, highQuality }: {
   terrain: TerrainCell[][]; section: MapSection; highQuality: boolean;
 }) {
-  const fallback = <Woodland terrain={terrain} section={section} />;
-  return <NatureFallback fallback={fallback}>
-    <Suspense fallback={fallback}>
-      <ImportedNature terrain={terrain} section={section} highQuality={highQuality} />
-    </Suspense>
-  </NatureFallback>;
+  const layout = useMemo(() => scatter(terrain, section), [terrain, section]);
+  return <group>
+    {/* 3D trees are always present: no 2D cards during asset loading or at distance. */}
+    <VolumetricTrees pine={layout.pine} broadleaf={layout.broadleaf} highQuality={highQuality} />
+    <NatureBoundary><Suspense fallback={null}>
+      <ImportedUnderstory layout={layout} highQuality={highQuality} />
+    </Suspense></NatureBoundary>
+  </group>;
 }
