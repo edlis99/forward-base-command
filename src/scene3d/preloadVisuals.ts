@@ -25,6 +25,11 @@ const imagePaths = [
   'assets/nature/trees/oak_bark.svg',
   'assets/nature/trees/alder_foliage.svg',
   'assets/nature/trees/alder_bark.svg',
+  'assets/nature/trees/pine_sprig.svg',
+  'assets/nature/trees/spruce_sprig.svg',
+  'assets/nature/trees/birch_sprig.svg',
+  'assets/nature/trees/oak_sprig.svg',
+  'assets/nature/trees/alder_sprig.svg',
 ];
 const modelPaths = [
   'assets/nature/shrub/shrub.obj',
