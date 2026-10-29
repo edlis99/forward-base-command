@@ -3,6 +3,7 @@ import { useFrame, useLoader, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { canopyMaterial } from './canopyReveal';
 import { forestGeometry, type ForestSpecies, type ForestDetail } from './ForestMeshes';
+import { ImportedPines } from './ImportedPines';
 
 export interface TreePlacement {
   x: number; y: number; z: number; size: number; width: number; yaw: number; rank: number;
@@ -164,10 +165,22 @@ function LoadedForest({ pine, broadleaf, highQuality }: {
     }
     return results;
   }, [groups, nearKeys]);
+  const nearPines = batches.filter(batch => batch.species === 'pine' && batch.detail === 'near');
+  const naturalPines = nearPines.flatMap(batch => batch.trees);
+  const pineFallback = <group name="imported-pine-fallback">
+    {nearPines.filter(batch => batch.trees.length).map(batch =>
+      <MeshBatch key={`pine-fallback-${batch.variant}`} {...batch} materials={materials.pine} />)}
+  </group>;
   return <group name="botanical-3d-forest-with-branch-meshes">
-    {batches.filter(batch => batch.trees.length > 0).map(batch =>
-      <MeshBatch key={`${batch.species}-${batch.detail}-${batch.variant}`}
-        {...batch} materials={materials[batch.species]} />)}
+    {batches.filter(batch => batch.trees.length > 0 && !(batch.species === 'pine' && batch.detail === 'near'))
+      .map(batch =>
+        <MeshBatch key={`${batch.species}-${batch.detail}-${batch.variant}`}
+          {...batch} materials={materials[batch.species]} />)}
+    {/* Only the nearest pines use the actual licensed 3D OBJ; the rest of the
+        forest uses lighter branching 3D LODs, never full-tree billboards. */}
+    {highQuality && naturalPines.length > 0
+      ? <ImportedPines trees={naturalPines} materials={materials.pine} fallback={pineFallback} />
+      : pineFallback}
   </group>;
 }
 
