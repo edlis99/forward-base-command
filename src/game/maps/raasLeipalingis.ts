@@ -17,8 +17,8 @@ const RADIUS = { centre: 5.5, town: 7, village: 6, hamlet: 5 } as const; // cell
 
 /** Sectors of the two large towns, offset (cells) to where their buildings stand. */
 const SECTORS = {
-  leipalingis: { west: [-10, 0], centre: [0, 0], east: [11, -1] },
-  seirijai: { west: [-16, 0], centre: [-6, -1], east: [4, -3] },
+  leipalingis: { west: [-12, 0], centre: [-3, 0], east: [11, 0] },
+  seirijai: { west: [-12, 0], centre: [1, 1], east: [12, 0] },
 } as const;
 type Big = keyof typeof SECTORS;
 type ObjectiveId = SettlementId | `${Big}_${'west' | 'centre' | 'east'}`;
@@ -36,20 +36,16 @@ function objective(id: ObjectiveId): RaasObjectiveDef {
 
 /** West main -> ... -> east main. Measured-balanced (see the comment above). */
 export const RAAS_LANES: ObjectiveId[][] = [
-  ['sadziunai', 'smarliunai', 'seirijai_centre', 'barzdziunai', 'versiai'],
-  ['smarliunai', 'jovaisiai', 'seirijai_centre', 'mazonys', 'barzdziunai'],
-  ['sadziunai', 'smarliunai', 'seirijai_centre', 'barzdziunai', 'straciunai'],
-  ['sadziunai', 'smarliunai', 'leipalingis_centre', 'vilkanastrai', 'didziasalis'],
-  ['sadziunai', 'smarliunai', 'seirijai_west', 'barzdziunai', 'versiai'],
-  ['sadziunai', 'smarliunai', 'leipalingis_centre', 'vilkanastrai', 'versiai'],
   ['smarliunai', 'jovaisiai', 'seirijai_west', 'mazonys', 'barzdziunai'],
-  ['sadziunai', 'smarliunai', 'seirijai_west', 'barzdziunai', 'straciunai'],
-  ['smarliunai', 'jovaisiai', 'seirijai_centre', 'mazonys', 'vilkanastrai'],
-  ['senkonys', 'sadziunai', 'leipalingis_centre', 'didziasalis', 'versiai'],
+  ['smarliunai', 'jovaisiai', 'seirijai_centre', 'mazonys', 'barzdziunai'],
   ['smarliunai', 'jovaisiai', 'seirijai_west', 'mazonys', 'vilkanastrai'],
+  ['sadziunai', 'smarliunai', 'seirijai_west', 'barzdziunai', 'versiai'],
+  ['smarliunai', 'jovaisiai', 'seirijai_centre', 'mazonys', 'vilkanastrai'],
+  ['sadziunai', 'smarliunai', 'seirijai_centre', 'barzdziunai', 'versiai'],
+  ['varnenai', 'smarliunai', 'seirijai_west', 'barzdziunai', 'versiai'],
+  ['varnenai', 'smarliunai', 'seirijai_centre', 'barzdziunai', 'versiai'],
+  ['sadziunai', 'smarliunai', 'leipalingis_centre', 'vilkanastrai', 'versiai'],
   ['varnenai', 'smarliunai', 'leipalingis_centre', 'vilkanastrai', 'versiai'],
-  ['senkonys', 'sadziunai', 'leipalingis_east', 'didziasalis', 'versiai'],
-  ['varnenai', 'sadziunai', 'leipalingis_east', 'didziasalis', 'versiai'],
 ];
 
 export const RAAS_CHAINS: RaasChain[] = RAAS_LANES.map(ids => {

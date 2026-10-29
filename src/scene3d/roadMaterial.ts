@@ -71,7 +71,9 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
       // Second, rotated sample breaks up visible tile repetition.
       vec2 uvB = mat2(0.8, -0.6, 0.6, 0.8) * gUv * 0.37 + 0.31;
       #define GS(t) (texture2D(t, gUv).rgb * 0.65 + texture2D(t, uvB).rgb * 0.35)
-      vec3 tex = GS(gDiff0) * vSplatA.x + GS(gDiff1) * vSplatA.y + GS(gDiff2) * vSplatA.z
+      // The installed grass texture is dry, yellow-brown grass; tint it to
+      // Lithuanian summer green (crops golden-green, forest floor a touch greener).
+      vec3 tex = GS(gDiff0) * vec3(0.74, 1.02, 0.60) * vSplatA.x + GS(gDiff1) * vec3(0.92, 1.0, 0.72) * vSplatA.y + GS(gDiff2) * vec3(0.86, 0.98, 0.78) * vSplatA.z
                + GS(gDiff3) * vSplatB.x + GS(gDiff4) * vSplatB.y + GS(gDiff5) * vSplatB.z;
       float wsum = dot(vSplatA, vec3(1.0)) + dot(vSplatB, vec3(1.0));
       tex = wsum > 0.001 ? tex / wsum : GS(gDiff0);
@@ -91,6 +93,6 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
       diffuseColor.rgb *= 1.0 - smoothstep(0.52, 0.74, cloud) * 0.26;
     `);
   };
-  material.customProgramCacheKey = () => `polyhaven-landscape-v3-${roads ? 'r' : 'n'}`;
+  material.customProgramCacheKey = () => `polyhaven-landscape-v4-${roads ? 'r' : 'n'}`;
   return material;
 }

@@ -534,7 +534,9 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
           ref={(el) => { if (el) unitRefs.current.set(u.id, el); else unitRefs.current.delete(u.id); }}
           position={[u.pos.x / S, surfaceY(u.pos.x / S, u.pos.y / S), u.pos.y / S]}
         >
-          <FactionUnitModel faction={factionFor(gameStateRef.current, u.team).id} type={u.type} unit={u} />
+          <group scale={UNIT_SCALE[u.type]}>
+            <FactionUnitModel faction={factionFor(gameStateRef.current, u.team).id} type={u.type} unit={u} />
+          </group>
 
           {/* hover ring (under selection/preview) */}
           <mesh
@@ -1373,15 +1375,60 @@ function OuterGround() {
 }
 
 // ---------- Camera rig ----------
+// ---------- World scale ----------
+/**
+ * Units, houses and trees are scaled together so proportions are real: a tank
+ * is about the size of a village house, a soldier about a quarter of its
+ * height, a pine about three times it (BUILDING_SCALE in Environment.tsx,
+ * TREE_SCALE in RealisticVegetation.tsx). Gameplay distances are unchanged.
+ */
+const UNIT_SCALE: Record<string, number> = { infantry: 0.55, tank: 0.6, apc: 0.6, helicopter: 0.7 };
+
+// ---------- Horizon ----------
+/** A ring of hazy hills far beyond the board, so the horizon reads as distant countryside. */
+function DistantHills() {
+  const geometry = useMemo(() => {
+    const N = 192, radii = [620, 720, 860, 1050, 1300], pos: number[] = [], col: number[] = [], idx: number[] = [];
+    const base = new THREE.Color('#71848c'), top = new THREE.Color('#9eb1bb'), far = new THREE.Color('#b9c7cf');
+    for (let r = 0; r < radii.length; r++) for (let i = 0; i < N; i++) {
+      const a = i / N * Math.PI * 2;
+      const ridge = Math.sin(a * 3 + r) * .5 + Math.sin(a * 7.3 + r * 2.1) * .3 + Math.sin(a * 17.1 + r) * .2;
+      const h = r === 0 ? 0 : (14 + 30 * (ridge * .5 + .5)) * (r === radii.length - 1 ? .6 : 1) * (1 + r * .25);
+      pos.push(W / 2 + Math.cos(a) * radii[r], h, H / 2 + Math.sin(a) * radii[r]);
+      const c = (r >= 3 ? far : base).clone().lerp(top, Math.min(1, h / 50));
+      col.push(c.r, c.g, c.b);
+    }
+    for (let r = 0; r < radii.length - 1; r++) for (let i = 0; i < N; i++) {
+      const a = r * N + i, b = r * N + (i + 1) % N, c = (r + 1) * N + i, d = (r + 1) * N + (i + 1) % N;
+      idx.push(a, c, b, b, c, d);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setIndex(idx);
+    return g;
+  }, []);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return <mesh geometry={geometry} raycast={() => null}>
+    <meshBasicMaterial vertexColors fog={false} side={THREE.DoubleSide} />
+  </mesh>;
+}
+
+/** The original fixed camera angle (about 57° down), kept at the player's request. */
+const CAMERA_HEIGHT = 0.85, CAMERA_BACK = 0.55;
+
 function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObject<InputState>; gameStateRef: React.MutableRefObject<GameState> }) {
   const { camera, scene } = useThree();
   const players = gameStateRef.current.units.filter(u => u.team === 'player' && u.alive);
   const targetRef = useRef({ x: players.reduce((n, u) => n + u.pos.x / S, 0) / (players.length || 1), z: players.reduce((n, u) => n + u.pos.y / S, 0) / (players.length || 1) });
   const distRef = useRef(32);
+  const yawRef = useRef(0);
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
       if (!(e.target instanceof HTMLCanvasElement)) return;
-      distRef.current = Math.max(16, Math.min(400, distRef.current + (e.deltaY > 0 ? 10 : -10)));
+      // Proportional zoom: fine steps close up, big steps far out.
+      const step = Math.max(2, distRef.current * .14);
+      distRef.current = Math.max(8, Math.min(400, distRef.current + (e.deltaY > 0 ? step : -step)));
     };
     window.addEventListener('wheel', onWheel);
     return () => window.removeEventListener('wheel', onWheel);
@@ -1399,19 +1446,28 @@ function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObjec
         targetRef.current.z = focus.reduce((n, u) => n + u.pos.y / S, 0) / focus.length;
       }
     }
-    if (keys.has('w') || keys.has('arrowup')) targetRef.current.z -= sp;
-    if (keys.has('s') || keys.has('arrowdown')) targetRef.current.z += sp;
-    if (keys.has('a') || keys.has('arrowleft')) targetRef.current.x -= sp;
-    if (keys.has('d') || keys.has('arrowright')) targetRef.current.x += sp;
+    // Q / E rotate the view; WASD pans relative to where the camera looks.
+    if (keys.has('q')) yawRef.current += 1.4 * Math.min(dt, .1);
+    if (keys.has('e')) yawRef.current -= 1.4 * Math.min(dt, .1);
+    const yaw = yawRef.current, fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
+    if (keys.has('w') || keys.has('arrowup')) { targetRef.current.x += fx * sp; targetRef.current.z += fz * sp; }
+    if (keys.has('s') || keys.has('arrowdown')) { targetRef.current.x -= fx * sp; targetRef.current.z -= fz * sp; }
+    if (keys.has('a') || keys.has('arrowleft')) { targetRef.current.x -= rx * sp; targetRef.current.z -= rz * sp; }
+    if (keys.has('d') || keys.has('arrowright')) { targetRef.current.x += rx * sp; targetRef.current.z += rz * sp; }
     // Keep the view over the playable area; the scenery border fills the rest.
     targetRef.current.x = Math.max(PLAYABLE_CELLS[0], Math.min(PLAYABLE_CELLS[2], targetRef.current.x));
     targetRef.current.z = Math.max(PLAYABLE_CELLS[1], Math.min(PLAYABLE_CELLS[3], targetRef.current.z));
     const d = distRef.current;
     // Distance haze scales with zoom: close up the far countryside fades out,
     // zoomed out the whole board stays clear.
+    // Distance haze scales with zoom (original distances, for the original camera angle).
     if (scene.fog instanceof THREE.Fog) { scene.fog.near = d * 2.2 + 30; scene.fog.far = d * 5 + 140; }
-    camera.position.set(targetRef.current.x, d * 0.85, targetRef.current.z + d * 0.55);
-    camera.lookAt(targetRef.current.x, surfaceY(targetRef.current.x, targetRef.current.z), targetRef.current.z);
+    const back = d * CAMERA_BACK;
+    const ty = surfaceY(targetRef.current.x, targetRef.current.z);
+    const camX = targetRef.current.x + Math.sin(yawRef.current) * back, camZ = targetRef.current.z + Math.cos(yawRef.current) * back;
+    // Never inside a hill: stay above the ground under the camera.
+    camera.position.set(camX, Math.max(ty + d * CAMERA_HEIGHT, surfaceY(camX, camZ) + 1.5), camZ);
+    camera.lookAt(targetRef.current.x, ty, targetRef.current.z);
   }, -2);
   return null;
 }
@@ -1491,15 +1547,15 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
       <Canvas
         shadows="soft"
         dpr={highQuality ? [1, 2] : [1, 1]}
-        camera={{ position: [W / 2, 35, H / 2 + 20], fov: 50, far: 3000 }}
+        camera={{ position: [W / 2, 35, H / 2 + 20], fov: 50, far: 4500 }}
         onContextMenu={(e) => e.preventDefault()}
         gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.0 }}
-        style={{ background: '#c9d3d6' }}
+        style={{ background: '#b6c5cf' }}
       >
-        <fog attach="fog" args={['#c9d3d6', 320, 760]} />
+        <fog attach="fog" args={['#b6c5cf', 320, 760]} />
         {/* Atmospheric sky; the haze colour above matches its horizon. */}
         <group position={[W / 2, 0, H / 2]}>
-          <Sky distance={1600} sunPosition={[SUN_DIR[0], SUN_DIR[1], SUN_DIR[2]]} turbidity={7} rayleigh={1.1} mieCoefficient={0.006} mieDirectionalG={0.86} />
+          <Sky distance={3600} sunPosition={[SUN_DIR[0], SUN_DIR[1], SUN_DIR[2]]} turbidity={7} rayleigh={1.1} mieCoefficient={0.006} mieDirectionalG={0.86} />
         </group>
         {/* Sky/bounce fill: enough to keep shade readable, low enough that shapes have form */}
         <hemisphereLight args={['#d4e2ea', '#4f5a3b', 0.55]} />
@@ -1514,6 +1570,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <SettlementLabelPositions elements={settlementLabels} />
         <CameraRig inputRef={inputRef} gameStateRef={gameStateRef} />
         <OuterGround />
+        <DistantHills />
         <TerrainMesh terrain={terrain} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} highQuality={highQuality} />
         <TerrainDebugLayer gameStateRef={gameStateRef} />
         <CapturePoints gameStateRef={gameStateRef} />

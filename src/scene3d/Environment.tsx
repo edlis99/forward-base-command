@@ -7,6 +7,9 @@ import { SETTLEMENTS } from '../game/maps/settlements';
 import { groundHeightAt, hash2, fbm } from './terrainHeight';
 import { canopyMaterial } from './canopyReveal';
 
+/** World scale for buildings (see Scene3D: units, trees and houses are scaled together). */
+export const BUILDING_SCALE = 0.68;
+
 type V3 = [number, number, number];
 type Finish = 'plain' | 'timber' | 'weathered' | 'brick' | 'plaster' | 'clay' | 'slate' | 'metal';
 interface Part { p: V3; s: V3; r?: V3; color: string; finish?: Finish; }
@@ -176,7 +179,8 @@ export function RuralBuildingsAndProps({ terrain, section }: { terrain: TerrainC
       // Geometry sits on the rear/side of a cell; its centre is a usable
       // firing slot. Clicking uses the same cell in the simulation.
       const add = (shape: Shape, ox: number, oy: number, oz: number, sx: number, sy: number, sz: number, color: string, rx = 0, rz = 0, finish: Finish = 'plain') => {
-        const propScale = cell.type === 'urban' || cell.yard ? 1 : .58;
+        // World scale: a village house was ~33 m across (0.72 cell); about 22 m now, with garden round it.
+        const propScale = cell.type === 'urban' ? BUILDING_SCALE : cell.yard ? 1 : .58;
         ox *= propScale; oy *= propScale; oz *= propScale; sx *= propScale; sy *= propScale; sz *= propScale;
         parts[shape].push({ p: [cx + Math.cos(angle) * ox - Math.sin(angle) * oz, y + oy, cz + Math.sin(angle) * ox + Math.cos(angle) * oz],
           s: [sx, sy, sz], r: [rx, -angle, rz], color, finish });

@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { ambienceUniforms } from './ambienceUniforms';
 
 /**
  * See-through canopy, Broken Arrow style: leaves within REVEAL_RADIUS cells
@@ -19,18 +18,7 @@ export function canopyMaterial(): THREE.MeshStandardMaterial {
   m.onBeforeCompile = shader => {
     shader.uniforms.revealPts = revealUniforms.revealPts;
     shader.uniforms.revealCount = revealUniforms.revealCount;
-    shader.uniforms.uTime = ambienceUniforms.uTime;
-    // Wind: crowns sway gently, more at the top than at the base, each tree out of step.
-    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
-      #ifdef USE_INSTANCING
-        float swayPhase = instanceMatrix[3].x * 0.37 + instanceMatrix[3].z * 0.23;
-      #else
-        float swayPhase = 0.0;
-      #endif
-      float sway = (transformed.y + 0.5) * 0.045;
-      transformed.x += sin(uTime * 1.3 + swayPhase) * sway;
-      transformed.z += cos(uTime * 1.1 + swayPhase * 1.3) * sway * 0.6;`);
-    shader.vertexShader = 'uniform float uTime;\nvarying vec3 vRevealPos;\n' + shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+    shader.vertexShader = 'varying vec3 vRevealPos;\n' + shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
       #ifdef USE_INSTANCING
         vRevealPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
       #else
@@ -47,6 +35,6 @@ export function canopyMaterial(): THREE.MeshStandardMaterial {
         }
       }`);
   };
-  m.customProgramCacheKey = () => 'canopy-reveal-wind-v2';
+  m.customProgramCacheKey = () => 'canopy-reveal-v1';
   return m;
 }
