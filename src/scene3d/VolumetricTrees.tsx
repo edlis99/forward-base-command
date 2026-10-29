@@ -103,7 +103,7 @@ function InstanceGeometry({ trees, geometry, material, wood }: {
   }, [trees]);
   if (!trees.length) return null;
   return <instancedMesh ref={mesh} args={[geometry, material, trees.length]}
-    castShadow={wood} receiveShadow={false} frustumCulled raycast={() => null} />;
+    castShadow={wood} receiveShadow={false} frustumCulled raycast={() => null} dispose={null} />;
 }
 
 function MeshBatch({ species, detail, variant, trees, materials }: {
