@@ -1,0 +1,26 @@
+name: Forest rendering checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  forest-checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: TypeScript
+        run: npx tsc -p tsconfig.app.json --noEmit
+      - name: Forest mesh and biome tests
+        run: npx vitest run src/test/forest-textures.test.ts src/test/forest-biomes.test.ts
+      - name: Production build
+        run: npm run build
