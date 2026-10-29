@@ -51,7 +51,9 @@ class MeshWriter {
     }
     for (let i = 0; i < sides; i++) {
       const a = base + i * 2, b = a + 1, c = a + 2, d = a + 3;
-      this.indices.push(a, b, c, c, b, d);
+      // Counter-clockwise from outside the tube; reversed winding makes every
+      // trunk disappear with FrontSide culling enabled.
+      this.indices.push(a, c, b, c, d, b);
     }
   }
   sprig(center: THREE.Vector3, width: number, height: number, roll: number, tilt: number, shade: number) {
@@ -89,10 +91,8 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
   const isPine = species === 'pine';
   const isSpruce = species === 'spruce';
   const isOak = species === 'oak';
-  const broad = species === 'oak' || species === 'alder';
   const trunkRadius = isOak ? .063 : isPine ? .034 : isSpruce ? .035 : .030;
   const trunkLean = (rand() - .5) * .08;
-  const base = v(0, 0, 0);
 
   // Multi-segment, tapered trunk instead of a straight unbroken cylinder.
   const trunk = Array.from({ length: 9 }, (_, i) => {
