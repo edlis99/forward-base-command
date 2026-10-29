@@ -13,6 +13,18 @@ const imagePaths = [
   'assets/buildings/roof_corrugated.jpg',
   'assets/nature/shrub/Textures/shrub_foliage.png',
   'assets/nature/grass/Textures/grass_blades.png',
+  // These species-specific leaf and bark maps are also consumed by useLoader
+  // in VolumetricTrees. Decode them before entering combat.
+  'assets/nature/pine/Textures/pine_bark.png',
+  'assets/nature/trees/pine_foliage.svg',
+  'assets/nature/trees/spruce_foliage.svg',
+  'assets/nature/trees/spruce_bark.svg',
+  'assets/nature/trees/birch_foliage.svg',
+  'assets/nature/trees/birch_bark.svg',
+  'assets/nature/trees/oak_foliage.svg',
+  'assets/nature/trees/oak_bark.svg',
+  'assets/nature/trees/alder_foliage.svg',
+  'assets/nature/trees/alder_bark.svg',
 ];
 const modelPaths = [
   'assets/nature/shrub/shrub.obj',
