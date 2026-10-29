@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import { canopyMaterial } from './canopyReveal';
 
@@ -20,16 +21,58 @@ const geometry: Record<Part['shape'], THREE.BufferGeometry> = {
   crown: new THREE.IcosahedronGeometry(.5, 1),
   conifer: new THREE.ConeGeometry(.5, 1, 9),
 };
-const foliage: Record<TreeSpecies, string[]> = {
-  pine: ['#41683f', '#355837', '#537348', '#597548', '#294e33'],
-  spruce: ['#274c3d', '#315541', '#3a5a46', '#42654b', '#2b5042'],
-  birch: ['#7d9856', '#8faa62', '#779755', '#91a967', '#68894a'],
-  oak: ['#52733c', '#5b8047', '#456b3a', '#62844b', '#729251'],
-  alder: ['#557c49', '#456e43', '#63834f', '#5f7b43', '#75965c'],
+/** Source images are stored locally, including the real pine bark PNG. The
+ * other species use the 512px forest material maps bundled in /nature/trees. */
+const ROOT = `${import.meta.env.BASE_URL}assets/nature`;
+const TEXTURES = [
+  'pine/Textures/pine_bark.png', 'trees/pine_foliage.svg',
+  'trees/spruce_bark.svg', 'trees/spruce_foliage.svg',
+  'trees/birch_bark.svg', 'trees/birch_foliage.svg',
+  'trees/oak_bark.svg', 'trees/oak_foliage.svg',
+  'trees/alder_bark.svg', 'trees/alder_foliage.svg',
+].map(path => `${ROOT}/${path}`);
+const MATERIAL_SLOTS: Record<TreeSpecies, [number, number]> = {
+  pine: [0, 1], spruce: [2, 3], birch: [4, 5], oak: [6, 7], alder: [8, 9],
 };
-const wood: Record<TreeSpecies, string> = {
-  pine: '#9d6c46', spruce: '#63503d', birch: '#d8d5c7', oak: '#6e5841', alder: '#77766b',
-};
+type TexturedMaterials = Record<TreeSpecies, { bark: THREE.MeshStandardMaterial; leaves: THREE.MeshStandardMaterial }>;
+
+function useTreeMaterials(): TexturedMaterials {
+  // useLoader caches texture objects by URL; all visible map sections reuse them.
+  const images = useLoader(THREE.TextureLoader, TEXTURES);
+  const materials = useMemo(() => {
+    images.forEach(image => {
+      image.colorSpace = THREE.SRGBColorSpace;
+      image.wrapS = image.wrapT = THREE.RepeatWrapping;
+      image.anisotropy = 8;
+      image.needsUpdate = true;
+    });
+    const result = {} as TexturedMaterials;
+    (Object.keys(MATERIAL_SLOTS) as TreeSpecies[]).forEach(species => {
+      const [barkIndex, foliageIndex] = MATERIAL_SLOTS[species];
+      const bark = images[barkIndex], leaves = images[foliageIndex];
+      const barkMaterial = new THREE.MeshStandardMaterial({
+        map: bark, bumpMap: bark, bumpScale: .012,
+        roughness: .97, metalness: 0,
+      });
+      const foliageMaterial = canopyMaterial();
+      foliageMaterial.map = leaves;
+      foliageMaterial.bumpMap = leaves;
+      foliageMaterial.bumpScale = .016;
+      foliageMaterial.roughness = .98;
+      foliageMaterial.side = THREE.FrontSide;
+      foliageMaterial.needsUpdate = true;
+      result[species] = { bark: barkMaterial, leaves: foliageMaterial };
+    });
+    return result;
+  }, [images]);
+  useEffect(() => () => {
+    Object.values(materials).forEach(({ bark, leaves }) => {
+      bark.dispose(); leaves.dispose();
+    });
+  }, [materials]);
+  return materials;
+}
+
 const branch = (offset: V3, scale: V3): Part => ({ shape: 'crown', offset, scale, foliage: true });
 const tiers = (offset: V3, scale: V3): Part => ({ shape: 'conifer', offset, scale, foliage: true });
 const parts: Record<TreeSpecies, Part[]> = {
@@ -71,17 +114,11 @@ const parts: Record<TreeSpecies, Part[]> = {
     branch([0, .93, .06], [.58, .29, .56]),
   ],
 };
-function TreeBatch({ trees, species, part, index }: {
+function TreeBatch({ trees, species, part, index, material }: {
   trees: TreePlacement[]; species: TreeSpecies; part: Part; index: number;
+  material: THREE.MeshStandardMaterial;
 }) {
   const mesh = useRef<THREE.InstancedMesh>(null);
-  const material = useMemo(() => {
-    const mat = part.foliage ? canopyMaterial() : new THREE.MeshStandardMaterial({ roughness: .95 });
-    mat.flatShading = !!part.foliage;
-    mat.side = THREE.FrontSide;
-    return mat;
-  }, [part.foliage]);
-  useEffect(() => () => material.dispose(), [material]);
   useEffect(() => {
     const target = mesh.current;
     if (!target) return;
@@ -99,10 +136,10 @@ function TreeBatch({ trees, species, part, index }: {
       dummy.scale.set(p.width * part.scale[0], p.size * part.scale[1], p.width * part.scale[2]);
       dummy.updateMatrix();
       target.setMatrixAt(i, dummy.matrix);
-      const palette = foliage[species];
-      const shade = palette[Math.floor((p.rank * 13.9 + index * 1.7) % palette.length)];
-      color.set(part.foliage ? shade : wood[species]);
-      color.multiplyScalar(.91 + .17 * (1 - p.rank));
+      // Texture supplies the actual bark/needle/leaf colour. Instance colour
+      // adjusts brightness subtly without multiplying the image by dark greens.
+      const brightness = .84 + .25 * ((p.rank * 13.9 + index * 1.7) % 1);
+      color.setRGB(brightness, brightness, brightness);
       target.setColorAt(i, color);
     }
     target.instanceMatrix.needsUpdate = true;
@@ -116,6 +153,7 @@ function TreeBatch({ trees, species, part, index }: {
 export function VolumetricTrees({ pine, broadleaf, highQuality }: {
   pine: TreePlacement[]; broadleaf: TreePlacement[]; highQuality: boolean;
 }) {
+  const materials = useTreeMaterials();
   const groups = useMemo((): Record<TreeSpecies, TreePlacement[]> => {
     const result: Record<TreeSpecies, TreePlacement[]> = { pine: [], spruce: [], birch: [], oak: [], alder: [] };
     pine.forEach(p => result[p.rank < .19 ? 'spruce' : 'pine'].push(p));
@@ -126,7 +164,8 @@ export function VolumetricTrees({ pine, broadleaf, highQuality }: {
     {(Object.keys(groups) as TreeSpecies[]).map(species =>
       <group key={species} name={species}>
         {parts[species].filter((part, index) => highQuality || index < 4).map((part, index) =>
-          <TreeBatch key={index} species={species} trees={groups[species]} part={part} index={index} />)}
+          <TreeBatch key={index} species={species} trees={groups[species]} part={part} index={index}
+            material={part.foliage ? materials[species].leaves : materials[species].bark} />)}
       </group>)}
   </group>;
 }
