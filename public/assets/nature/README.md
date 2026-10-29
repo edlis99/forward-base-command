@@ -1,59 +1,57 @@
-# Leipalingis forest visuals and asset credits
+# Leipalingis forest renderer: 3D model upgrade
 
-## Current rendering (October 2026)
-The previous visual defect was caused by crossed alpha-textured planes, not a lack
-of tree data. Under the old renderer, all broadleaf trees and nearly every pine
-were 2D texture cards; only up to 10 actual pine OBJ meshes per nearby section
-appeared on High quality, and the OBJ's foliage image was incomplete.
+## Why the earlier upgrade still looked like a PS1 game
+The old trees in `VolumetricTrees.tsx` used **literal cones and icosahedron
+blobs** for crowns. The subsequently uploaded opaque SVG foliage maps were
+only painted across those primitive shapes. That cannot reproduce branching,
+needle structure or real leaf silhouettes; it was a geometry problem.
 
-**The active forest renderer is now fully three-dimensional at all distances.**
-`src/scene3d/VolumetricTrees.tsx` batches five separate tree species using
-instanced, irregular 3D crown/trunk geometry:
-- Scots pine: a straight reddish trunk with raised, broken needle clusters
-- Spruce: a darker, tapered canopy with layered branches
-- Birch: a light trunk and pale-green oval deciduous canopy
-- Oak: a broader, irregularly lobed crown
-- Alder: a narrower deciduous crown
+## Active replacement
+The new forest renderer is organized in three levels of visual fidelity:
 
-There are no crossed planes or flat textured tree cards in the normal forest
-renderer. Every forest cell receives 1–2 deterministic, spatially offset trees,
-with occasional natural gaps. Shadows from crowns have been disabled to avoid
-very dark, flat-looking canopy silhouettes, while trunks can cast shadows.
+1. **Real imported Scots pine close to camera (High graphics).**
+   `ImportedPines.tsx` instances the locally retained CC0 Poly Haven
+   `pine/pine.obj`, 25,146 source triangles, with source bark texture and a
+   transparent needle-sprig substitute. The source's original detailed foliage
+   atlas remains missing, so its foliage is not an exact reproduction.
+2. **Branching botanical meshes (all five species).**
+   `ForestMeshes.ts` builds tapered multi-segment trunks, real secondary
+   branches and many independent twigs. Twig tips carry transparent alpha-tested
+   needle-sprig / leaf SVGs rather than one 2D card for a whole tree.
+   Birch, oak, alder and spruce have their own growing patterns.
+3. **Performance LOD.**
+   `VolumetricTrees.tsx` shares buffers by species/variant, instances trees
+   by section, and switches the closest trees into higher-detail meshes.
+   Far trees still retain branches and botanical leaves. Foliage casts no
+   overly dark whole-tree shadow; wood can cast shadows.
 
-The map's documented Gailiūnai and Didžiasalis settlements influence a
-pine-dominated forest belt. Away from these centres the probability of deciduous
-trees increases substantially. This is an **art-direction approximation**, not
-a verified stand-by-stand forest inventory or an assertion of exact local species.
-Individual tree types and placement do not change gameplay cover or LOS.
+The **woodland location rules are unchanged**: pine probability is higher in
+the Gailiūnai / Didžiasalis area, and broadleaf woodland is common elsewhere.
+This is an artistic approximation based on named settlements, not surveyed
+stand-by-stand forestry data. Forest cover and unit LOS are unchanged.
 
-The existing CC0 3D fern (glTF), shrub (OBJ), and grass (OBJ) remain in use as
-understory. Scene loading now waits for all six ground texture sets and prefetches
-building/nature models before revealing the game, rather than switching from
-placeholder soil after combat begins.
+## Files and licensing
+- `pine/pine.obj`, `pine/Textures/pine_bark.png`: existing Poly Haven Scots
+  pine, CC0; see `pine/LICENSE.md`.
+- `trees/{pine,spruce,birch,oak,alder}_sprig.svg`: original, transparent
+  botanical texture cutouts (needles and species-specific leaves).
+- `trees/{spruce,birch,oak,alder}_bark.svg`: previously generated bark texture.
+- The older `*_foliage.svg` files are retained as unused intermediate
+  textures and no longer determine the tree silhouette.
+- Original OBJ/GLTF shrub, fern and grass assets remain instanced in the
+  undergrowth renderer.
 
-## Locally retained imported assets
+## Visual quality and remaining limitations
+This change replaces primitive geometry with real branching meshes, but it is
+**not equivalent to photorealistic production foliage packs**. Only the
+Scots pine has an imported detailed source mesh at close range. Broadleaf
+species still use procedural branching geometry and vector leaf cutouts,
+not purchased photogrammetric or scanned birch/oak assets. The pine's original
+high-resolution foliage atlas has not been imported. For full Broken Arrow
+quality, add correctly licensed optimized 3D birch/oak/spruce models with
+production foliage atlases, plus shadow and lighting calibration.
 
-| Asset | Source | Format | Active use |
-| --- | --- | --- | --- |
-| Scots pine 01 | [Poly Haven](https://polyhaven.com/a/pine_tree_01), via [OloEngineBase](https://github.com/drsnuggles8/OloEngineBase/tree/master/OloEditor/SandboxProject/Assets/Models/Vegetation/pine) | OBJ + PNG, ~25k tris | Retained as source/reference, **not rendered** until foliage atlas is corrected |
-| Island tree 01 broadleaf card | [Poly Haven](https://polyhaven.com/a/island_tree_01) | PNG | Retained as reference, **not rendered** |
-| Fern 02 | [Poly Haven](https://polyhaven.com/a/fern_02), mirrored in [godotmark](https://github.com/Joshkaki00/godotmark) | glTF + BIN + JPEG | Instanced 3D undergrowth |
-| Shrub 02 | [Poly Haven](https://polyhaven.com/a/shrub_02), via OloEngineBase | OBJ + PNG | Instanced 3D undergrowth |
-| Grass Medium 01 | [Poly Haven](https://polyhaven.com/a/grass_medium_01), via OloEngineBase | OBJ + PNG | Instanced 3D undergrowth |
-
-All these imported models/textures were sourced as CC0. See their bundled license
-notes and upstream pages. The procedural tree crowns are original project code.
-
-## Next realism step
-These replacement trees are actual volumetric meshes, but are intentionally
-simplified/low-poly, not photorealistic imported species. For a more natural
-Broken Arrow-like zoomed-in look, import optimised mesh LODs of licensed Scots
-pine, birch and mixed broadleaf species with correct leaf opacity, trunk bark,
-and atlases. Do not instanciate the original Poly Haven high-resolution
-trees across the map: native models may contain millions of triangles.
-
-## Visual/performance verification
-The new code has not been measured in a running production browser here.
-Check FPS, GPU memory, canopy reveal near units, scale, and browser startup
-after Lovable rebuilds. Instancing greatly reduces draw calls but does not
-eliminate the triangle cost of geometry.
+Browser screenshot checks, FPS benchmarks and successful Lovable deployment
+have **not been verified** in this environment. Tests guard model paths, mesh
+geometry and LOD construction; loading and visual appearance still require
+testing in the actual game.
