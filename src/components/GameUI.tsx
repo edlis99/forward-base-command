@@ -14,12 +14,14 @@ import MissionSelect from './MissionSelect';
 import DeploymentScreen from './DeploymentScreen';
 import MissionSummary from './MissionSummary';
 import { applyCommand, CommandResult } from '../game/commands';
+import { FactionId } from '../game/factions';
 
 type Phase = 'briefing' | 'deployment' | 'combat';
 
 const GameUI: React.FC = () => {
   const [phase, setPhase] = useState<Phase>('briefing');
   const [mission, setMission] = useState<MissionDef | null>(null);
+  const [playerFaction, setPlayerFaction] = useState<FactionId>('aster');
   const gameStateRef = useRef<GameState | null>(null);
   const inputRef = useRef<InputState>(createInputState());
   const [hudVersion, setHudVersion] = useState(0);
@@ -28,12 +30,13 @@ const GameUI: React.FC = () => {
 
   const triggerHudUpdate = useCallback(() => setHudVersion(v => v + 1), []);
 
-  const openBriefing = useCallback((m: MissionDef) => {
+  const openBriefing = useCallback((m: MissionDef, faction: FactionId) => {
+    setPlayerFaction(faction);
     setMission(m);
     if (m.id === 'raas') {
       // RAAS has fixed mains on both sides: no campaign deployment screen.
       inputRef.current = createInputState();
-      gameStateRef.current = createInitialState(m, undefined, { seed: Math.floor(Math.random() * 0x7fffffff) });
+      gameStateRef.current = createInitialState(m, undefined, { seed: Math.floor(Math.random() * 0x7fffffff), playerFaction: faction });
       setPhase('combat');
       triggerHudUpdate();
       return;
@@ -45,10 +48,10 @@ const GameUI: React.FC = () => {
     if (!mission) return;
     inputRef.current = createInputState();
     // Single-player: a fresh seed per game so battles differ; matches on a server pass an agreed seed instead.
-    gameStateRef.current = createInitialState(mission, ctx, { seed: Math.floor(Math.random() * 0x7fffffff) });
+    gameStateRef.current = createInitialState(mission, ctx, { seed: Math.floor(Math.random() * 0x7fffffff), playerFaction });
     setPhase('combat');
     triggerHudUpdate();
-  }, [mission, triggerHudUpdate]);
+  }, [mission, playerFaction, triggerHudUpdate]);
 
   const exitMission = useCallback(() => {
     cancelAnimationFrame(animRef.current);
@@ -157,7 +160,7 @@ const GameUI: React.FC = () => {
   if (phase === 'briefing' || !mission) {
     return (
       <div className="relative w-full h-screen overflow-hidden">
-        <MissionSelect onStart={openBriefing} />
+        <MissionSelect onStart={openBriefing} faction={playerFaction} onFactionChange={setPlayerFaction} />
       </div>
     );
   }

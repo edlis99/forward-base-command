@@ -1,0 +1,47 @@
+[
+  {
+    "id": "XT8jgwSesV",
+    "source": "https://poly.pizza/m/XT8jgwSesV",
+    "url": "https://static.poly.pizza/42b9173f-a91c-4abf-b6f5-b21a3965f61a.glb.br",
+    "license": [
+      "CC-BY 3.0"
+    ],
+    "licenseUrls": [
+      "https://creativecommons.org/licenses/by/3.0/"
+    ],
+    "file": "coalition-rifleman.glb",
+    "author": "KolosStudios",
+    "title": "Soldier",
+    "sha256": "db98b9a386a599fcbf1783aba0244eb2c6aa1dbe131d9e1c0e3f528d518cd9f4"
+  },
+  {
+    "id": "egcLMSGiuA",
+    "source": "https://poly.pizza/m/egcLMSGiuA",
+    "url": "https://static.poly.pizza/ba4513d6-e5c6-4a4b-a027-2eb7097d6516.glb.br",
+    "license": [
+      "CC-BY 3.0"
+    ],
+    "licenseUrls": [
+      "https://creativecommons.org/licenses/by/3.0/"
+    ],
+    "file": "tank-hull.glb",
+    "author": "KolosStudios",
+    "title": "Tank",
+    "sha256": "e6050023af3c703a912418adf2f6564b3e0068ba9cfdbc11dba18e047a50e653"
+  },
+  {
+    "id": "Btfn3G5Xv4",
+    "source": "https://poly.pizza/m/Btfn3G5Xv4",
+    "url": "https://static.poly.pizza/713f6535-f4f3-4367-a4c6-ced126ae0936.glb.br",
+    "license": [
+      "CC0 1.0"
+    ],
+    "licenseUrls": [
+      "https://creativecommons.org/publicdomain/zero/1.0/"
+    ],
+    "file": "union-rifleman.glb",
+    "author": "Quaternius",
+    "title": "SWAT",
+    "sha256": "a835107bac833eb916c494e10997ae1709e85957ea6f6c59ace3c9a66f6d1fec"
+  }
+]

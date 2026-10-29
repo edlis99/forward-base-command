@@ -1,13 +1,19 @@
 import React, { useState } from 'react';
 import { MissionDef } from '../game/types';
 import { makeLeipalingisRaas } from '../game/maps/raasLeipalingis';
+import { FACTIONS, FACTION_IDS, FactionId, opposingFaction } from '../game/factions';
+import { FactionPreview } from '../scene3d/FactionModels';
 
-interface Props { onStart: (m: MissionDef) => void; }
+interface Props {
+  onStart: (m: MissionDef, faction: FactionId) => void;
+  faction: FactionId;
+  onFactionChange: (id: FactionId) => void;
+}
 
-const MissionSelect: React.FC<Props> = ({ onStart }) => {
+const MissionSelect: React.FC<Props> = ({ onStart, faction, onFactionChange }) => {
   const [hovered, setHovered] = useState<string | null>(null);
 
-  const startRaas = () => onStart(makeLeipalingisRaas(Math.floor(Math.random() * 0x7fffffff)));
+  const startRaas = () => onStart(makeLeipalingisRaas(Math.floor(Math.random() * 0x7fffffff)), faction);
 
   const menuItem = (id: string, label: string, sub: string, onClick: () => void, accent = false) => (
     <button
@@ -30,7 +36,7 @@ const MissionSelect: React.FC<Props> = ({ onStart }) => {
   );
 
   return (
-    <div className="absolute inset-0 font-mono overflow-hidden" style={{ color: '#c0d0b0' }}>
+    <div className="absolute inset-0 font-mono overflow-auto" style={{ color: '#c0d0b0' }}>
       {/* backdrop: tactical grid + vignette */}
       <div className="absolute inset-0" style={{
         background: 'radial-gradient(ellipse at 30% 20%, #1c2618 0%, #0d1110 55%, #070a07 100%)',
@@ -43,54 +49,69 @@ const MissionSelect: React.FC<Props> = ({ onStart }) => {
         background: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0px, rgba(0,0,0,0.18) 1px, transparent 1px, transparent 4px)',
       }} />
 
-      <div className="relative h-full flex flex-col p-10 max-w-5xl mx-auto">
+      <div className="relative min-h-full flex flex-col p-5 sm:p-10 max-w-6xl mx-auto">
         {/* header */}
         <div>
           <div className="text-[11px] tracking-[0.4em] mb-2" style={{ color: '#6a7a5a' }}>
             TACTICAL OPERATIONS COMMAND · BUILD 0.9
           </div>
-          <h1 className="text-6xl tracking-[0.12em] leading-none" style={{ color: '#a5cf6f', textShadow: '0 0 24px rgba(165,207,111,0.25)' }}>
+          <h1 className="text-3xl sm:text-5xl tracking-[0.12em] leading-none" style={{ color: '#a5cf6f', textShadow: '0 0 24px rgba(165,207,111,0.25)' }}>
             FIELD COMMAND
           </h1>
           <div className="mt-2 h-px w-2/3" style={{ background: 'linear-gradient(90deg, #a5cf6f 0%, transparent 100%)' }} />
         </div>
 
+        <fieldset className="mt-7">
+          <legend className="text-[11px] tracking-[0.3em] text-[#a5cf6f] mb-3">CHOOSE YOUR FACTION</legend>
+          <div className="grid sm:grid-cols-2 gap-4">
+            {FACTION_IDS.map(id => {
+              const f = FACTIONS[id], selected = id === faction;
+              return <label key={id} className={`relative cursor-pointer border p-4 transition-colors ${selected ? 'border-[#87cef0] bg-[#1c302b]' : 'border-[#3a4a3a] bg-[#101a16] hover:border-[#738775]'}`}>
+                <div className="flex items-center gap-2">
+                  <input type="radio" name="faction" value={id} checked={selected} onChange={() => onFactionChange(id)} className="accent-[#87cef0]" />
+                  <span className="text-xl text-[#c9d6b0]" aria-hidden="true">{f.emblem}</span>
+                  <strong className="text-sm sm:text-base text-[#e2ecd5]">{f.name}</strong>
+                  <span className="ml-auto text-[9px] text-[#87cef0]">{selected ? 'SELECTED' : ''}</span>
+                </div>
+                <div className="h-[135px] my-2 pointer-events-none" aria-hidden="true"><FactionPreview faction={id} /></div>
+                <div className="text-[10px] tracking-widest text-[#a5cf6f] mb-1">{f.inspiration.toUpperCase()}</div>
+                <p className="text-[11px] leading-relaxed text-[#a7b69f]">{f.description}</p>
+                <div className="text-[10px] mt-3 text-[#d1d6b4]">{f.units.tank} · {f.units.apc} · {f.units.helicopter}</div>
+              </label>;
+            })}
+          </div>
+          <p className="text-[10px] mt-3 text-[#93a58e]">Fictional factions · Equal combat stats, costs and reinforcements · AI opponent: {FACTIONS[opposingFaction(faction)].name}</p>
+        </fieldset>
+
         {/* menu + side panel */}
-        <div className="flex gap-8 items-start mt-14">
-          <div className="w-[420px] flex flex-col gap-2">
+        <div className="flex flex-col sm:flex-row gap-5 items-start mt-5">
+          <div className="w-full sm:w-[380px] shrink-0 flex flex-col gap-2">
             <div className="text-[10px] tracking-[0.35em] mb-1 px-1" style={{ color: '#6a7a5a' }}>— MAIN MENU —</div>
             {menuItem('deploy', 'DEPLOY', 'RAAS · LEIPALINGIS', startRaas, true)}
             {menuItem('settings', 'SETTINGS', 'SOON', () => {})}
             {menuItem('quit', 'QUIT', 'SOON', () => {})}
           </div>
 
-          {hovered === 'deploy' && (
+          {(hovered === 'deploy' || hovered === null) && (
             <div className="flex-1 p-5 border" style={{ background: 'rgba(16,24,16,0.85)', borderColor: '#3a4a3a' }}>
               <div className="text-sm tracking-[0.25em] mb-3" style={{ color: '#a5cf6f' }}>OPERATION: RAAS · LEIPALINGIS</div>
               <div className="text-[12px] leading-relaxed space-y-3" style={{ color: '#b0c0a0' }}>
-                <p>
-                  The real Leipalingis area against the AI: lakes, woods, a river and two towns, Leipalingis and
-                  Seirijai. A random lane of five objectives is drawn and revealed as you advance — capture them in
-                  order with infantry, hold your line, and bleed the enemy's tickets dry.
-                </p>
-                <p>
-                  You stage in the west, the enemy in the east. APCs can deploy radios (R) and infantry can
-                  raise forward spawn points (B) near a radio — keep your reinforcements close to the front.
-                </p>
-                <p style={{ color: '#8a9a7a' }}>
-                  Victory: reduce enemy tickets to zero. Losses, lost objectives and losing ground all cost tickets;
-                  holding every objective drains the enemy fast.
-                </p>
+                <p>Lead {FACTIONS[faction].name} against {FACTIONS[opposingFaction(faction)].name}. A random lane of five objectives is revealed as you advance through Leipalingis. Capture in order with infantry and exhaust the enemy's tickets.</p>
+                <p style={{ color: '#8a9a7a' }}>APCs deploy radios [R]. Infantry build forward spawn points [B]. Your faction choice changes equipment and uniforms; both sides have equal capabilities.</p>
               </div>
             </div>
           )}
         </div>
 
         {/* footer */}
-        <div className="mt-auto flex justify-between items-end text-[10px] tracking-widest" style={{ color: '#5a6a4a' }}>
+        <div className="mt-auto pt-5 flex justify-between items-end text-[10px] tracking-widest" style={{ color: '#5a6a4a' }}>
           <div>COMBAT PROTOTYPE · SQUAD MOVEMENT BUILD</div>
           <div>CLICK DEPLOY TO BEGIN</div>
         </div>
+        <details className="mt-3 text-[10px] text-[#91a18a]">
+          <summary className="cursor-pointer">Model credits</summary>
+          <p className="mt-2">“Soldier” and “Tank” by KolosStudios, via <a className="underline" href="https://poly.pizza/m/XT8jgwSesV" target="_blank" rel="noreferrer">Poly Pizza (Soldier)</a> / <a className="underline" href="https://poly.pizza/m/egcLMSGiuA" target="_blank" rel="noreferrer">Poly Pizza (Tank)</a>, <a className="underline" href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noreferrer">CC BY 3.0</a>. Scale, colours and armour adapted for fictional factions. “SWAT” by Quaternius, <a className="underline" href="https://poly.pizza/m/Btfn3G5Xv4" target="_blank" rel="noreferrer">CC0</a>, recoloured with an original rifle. APCs and helicopters are original game geometry.</p>
+        </details>
       </div>
     </div>
   );

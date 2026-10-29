@@ -2,6 +2,7 @@ import React from 'react';
 import { GameState, UnitType, Stance, FormationType, DebugFlags } from '../game/types';
 import { SelectedForcePanel } from './SelectedForcePanel';
 import { Position } from '../game/types';
+import { factionFor } from '../game/factions';
 
 interface Props {
   gameState: GameState;
@@ -29,6 +30,11 @@ const GameHUD: React.FC<Props> = ({ gameState, onChange, onFocus, onSpawn, onSta
         style={{ background: 'rgba(15,20,15,0.88)', borderBottom: '1px solid #2a3a2a' }}>
         <div className="flex items-center gap-5">
           <span style={{ color: '#a5cf6f' }}>● {gameState.mission.name}</span>
+          <span aria-label="Faction matchup" className="hidden xl:inline text-[10px]">
+            <span style={{ color: '#87cef0' }}>{factionFor(gameState, 'player').shortName}</span>
+            {' vs '}
+            <span style={{ color: '#e49678' }}>{factionFor(gameState, 'enemy').shortName}</span>
+          </span>
           <span style={{ color: gameState.paused ? '#f0a030' : '#8a9a7a' }}>
             {gameState.paused ? '⏸ PAUSED' : '▶ Active'}
           </span>

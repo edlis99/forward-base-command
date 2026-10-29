@@ -1,4 +1,5 @@
 import { shuffled } from './rng';
+import { factionPair, FactionId } from './factions';
 import { applyCommand, pushMarker } from './commands';
 import { defaultControllers, isHumanTeam } from './controllers';
 import { selectUnits } from './selection';
@@ -16,6 +17,7 @@ import { refreshUnitGrid } from './spatialGrid';
 import { occupyCover, coverLabel } from './cover';
 
 export interface StateOptions {
+  playerFaction?: FactionId;
   /** Seeds the deterministic RNG. Same seed + same commands = same match. */
   seed?: number;
   /** Who controls each side (default: human player vs AI enemy). */
@@ -29,6 +31,7 @@ export function createInitialState(mission: MissionDef, deployment?: import('./t
   const nextUnitId = peekUnitId();
 
   const state: GameState = {
+    factions: factionPair(options.playerFaction),
     units: [],
     terrain,
     mapWidth: MAP_COLS * CELL_SIZE,

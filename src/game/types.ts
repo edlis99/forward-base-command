@@ -245,6 +245,8 @@ export interface FireSupportState {
 }
 
 export interface GameState {
+  /** Equipment identity is independent of which side the player controls. */
+  factions: Record<Team, import('./factions').FactionId>;
   units: Unit[];
   terrain: TerrainCell[][];
   mapWidth: number; mapHeight: number; cellSize: number;

@@ -4,6 +4,7 @@ import { GameState, Unit, UnitType, Stance, FormationType, Position } from '../g
 import { UNIT_STATS } from '../game/constants';
 import { adjustSelectedCount, controllable, selectedUnits, selectionRoster, selectRosterType, selectUnits } from '../game/selection';
 import { coverState, takeCoverForSelected, unitStatus } from '../game/cover';
+import { factionFor } from '../game/factions';
 
 const TYPES: { type: UnitType; label: string; icon: typeof Users }[] = [
   { type: 'infantry', label: 'Infantry', icon: Footprints },
@@ -42,7 +43,7 @@ export function SelectedForcePanel({ state, onChange, onFocus, onSpawn, onStance
       <details className="relative">
         <summary className={`${button} cursor-pointer list-none`}>Reinforcements · {Math.floor(pool)} CP</summary>
         <div className="absolute bottom-8 right-0 flex gap-2 p-3 bg-[#14241f] border border-[#637461] rounded shadow-xl">
-          {TYPES.map(({ type, label }) => <button key={type} className={button} disabled={pool < UNIT_STATS[type].cost || state.gameOver} onClick={() => onSpawn(type)}>{label} · {UNIT_STATS[type].cost}</button>)}
+          {TYPES.map(({ type, label }) => <button key={type} className={button} title={label} disabled={pool < UNIT_STATS[type].cost || state.gameOver} onClick={() => onSpawn(type)}>{factionFor(state, 'player').units[type]} · {UNIT_STATS[type].cost}</button>)}
         </div>
       </details>
     </div>
@@ -74,7 +75,7 @@ export function SelectedForcePanel({ state, onChange, onFocus, onSpawn, onStance
             title={`${u.id} · ${Math.ceil(u.health)}/${u.maxHealth} HP · Ammo ${u.ammo}/${u.maxAmmo} · ${u.stance.replace('_', ' ')}\n${u.type === 'apc' ? `Passengers ${u.passengers.length}/4 · ` : ''}Click: select only · Shift: toggle · Double-click: focus`}
             className={`shrink-0 w-[116px] h-[86px] rounded border p-2 text-left transition-colors ${u.selected ? 'border-[#87cef0] bg-[#29403e] shadow-[inset_0_2px_0_#87cef0]' : 'border-[#3a4b42] bg-[#1b2923] opacity-60 hover:opacity-100'}`}>
             <div className="flex items-center justify-between"><Icon size={18} className={u.selected ? 'text-[#a4dffd]' : ''} /><span className="text-[#9eafa3]">{index + 1 < 10 ? '0' : ''}{index + 1}</span></div>
-            <div className="mt-1 capitalize text-[#e2f0e7]">{u.type === 'helicopter' ? 'Helicopter' : u.type === 'apc' ? `APC · ${u.passengers.length}/4` : u.type}</div>
+            <div className="mt-1 text-[#e2f0e7] truncate" title={factionFor(state, u.team).units[u.type]}>{factionFor(state, u.team).units[u.type]}</div>
             <div className="h-[3px] bg-[#0c1712] my-1"><div className={u.health / u.maxHealth > .4 ? 'bg-[#a3cb8f] h-full' : 'bg-[#e49668] h-full'} style={{ width: `${u.health / u.maxHealth * 100}%` }} /></div>
             <div className={`flex items-center gap-1 text-[10px] truncate ${covered === 'covered' ? 'text-[#b7e8a2]' : covered === 'moving' || u.waiting ? 'text-[#edce8c]' : 'text-[#9eafa3]'}`}>
               {covered !== 'none' && <Shield size={10} className="shrink-0" />}{status}

@@ -21,6 +21,8 @@ import { SettlementLabelPositions } from './SettlementLabels';
 import { RuralBuildingsAndProps } from './Environment';
 import { RealisticVegetation } from './RealisticVegetation';
 import { getTerrainAt } from '../game/terrain';
+import { factionFor } from '../game/factions';
+import { FactionUnitModel } from './FactionModels';
 import { coverLabel, isOccupyableCover, coverState, unitStatus } from '../game/cover';
 import { controllable, selectUnits } from '../game/selection';
 import { Shield, Footprints, Truck, Crosshair } from 'lucide-react';
@@ -432,98 +434,6 @@ function HedgerowInstances({ terrain, section }: { terrain: TerrainCell[][]; sec
   );
 }
 
-function InfantryModel({ team }: { team: 'player' | 'enemy' }) {
-  const uniform = team === 'player' ? '#465b43' : '#5b5438';
-  const kit = team === 'player' ? '#2f3f30' : '#3f3a27';
-  const accent = team === 'player' ? '#4e86b8' : '#b64c3b';
-  return (
-    <group scale={0.18}>
-      <mesh position={[0, 0.62, 0]} castShadow><boxGeometry args={[0.32, 0.48, 0.22]} /><meshStandardMaterial color={uniform} flatShading roughness={0.95} /></mesh>
-      <mesh position={[-0.02, 0.34, 0]} castShadow><boxGeometry args={[0.28, 0.18, 0.2]} /><meshStandardMaterial color={kit} flatShading roughness={0.95} /></mesh>
-      <mesh position={[0, 1.0, 0]} castShadow><sphereGeometry args={[0.18, 10, 7]} /><meshStandardMaterial color="#b79a75" flatShading roughness={0.9} /></mesh>
-      <mesh position={[0, 1.09, 0]} scale={[1.05, 0.55, 1.05]} castShadow><sphereGeometry args={[0.2, 10, 6]} /><meshStandardMaterial color={kit} flatShading roughness={0.95} /></mesh>
-      <mesh position={[-0.03, 0.67, -0.17]} castShadow><boxGeometry args={[0.32, 0.38, 0.12]} /><meshStandardMaterial color="#2a3328" flatShading roughness={1} /></mesh>
-      <mesh position={[0.18, 0.65, 0.03]} rotation={[0, 0, -0.38]} castShadow><boxGeometry args={[0.12, 0.4, 0.1]} /><meshStandardMaterial color={uniform} flatShading roughness={1} /></mesh>
-      <mesh position={[0.33, 0.64, 0.02]} rotation={[0, 0.05, -0.12]} castShadow><boxGeometry args={[0.62, 0.055, 0.07]} /><meshStandardMaterial color="#2c2821" roughness={0.8} /></mesh>
-      <mesh position={[-0.1, 0.18, 0.06]} rotation={[0.12, 0, 0.12]} castShadow><boxGeometry args={[0.1, 0.34, 0.09]} /><meshStandardMaterial color={uniform} flatShading roughness={1} /></mesh>
-      <mesh position={[0.12, 0.18, -0.04]} rotation={[-0.12, 0, -0.1]} castShadow><boxGeometry args={[0.1, 0.34, 0.09]} /><meshStandardMaterial color={uniform} flatShading roughness={1} /></mesh>
-      <mesh position={[0, 0.9, 0.125]} castShadow><boxGeometry args={[0.24, 0.045, 0.025]} /><meshStandardMaterial color={accent} /></mesh>
-    </group>
-  );
-}
-function TankModel({ team }: { team: 'player' | 'enemy' }) {
-  const hull = team === 'player' ? '#4b5b45' : '#5f563a';
-  const dark = '#25271f';
-  const accent = team === 'player' ? '#4e86b8' : '#b64c3b';
-  return (
-    <group scale={0.34}>
-      <mesh position={[0, 0.26, 0]} castShadow><boxGeometry args={[1.65, 0.36, 0.98]} /><meshStandardMaterial color={hull} flatShading roughness={0.9} /></mesh>
-      <mesh position={[0.1, 0.48, 0]} castShadow><boxGeometry args={[1.05, 0.26, 0.78]} /><meshStandardMaterial color={hull} flatShading roughness={0.9} /></mesh>
-      <mesh position={[0.04, 0.66, 0]} rotation={[0, 0, -0.04]} castShadow><boxGeometry args={[0.74, 0.28, 0.62]} /><meshStandardMaterial color="#55654c" flatShading roughness={0.9} /></mesh>
-      <mesh position={[0.72, 0.66, 0]} castShadow><boxGeometry args={[1.05, 0.085, 0.11]} /><meshStandardMaterial color={dark} roughness={0.75} /></mesh>
-      <mesh position={[1.28, 0.66, 0]} castShadow><cylinderGeometry args={[0.07, 0.07, 0.18, 8]} /><meshStandardMaterial color={dark} roughness={0.75} /></mesh>
-      <mesh position={[0, 0.13, 0.58]} castShadow><boxGeometry args={[1.78, 0.22, 0.18]} /><meshStandardMaterial color={dark} flatShading roughness={1} /></mesh>
-      <mesh position={[0, 0.13, -0.58]} castShadow><boxGeometry args={[1.78, 0.22, 0.18]} /><meshStandardMaterial color={dark} flatShading roughness={1} /></mesh>
-      <mesh position={[-0.22, 0.74, 0.01]} castShadow><cylinderGeometry args={[0.12, 0.12, 0.08, 8]} /><meshStandardMaterial color="#30362c" flatShading roughness={1} /></mesh>
-      <mesh position={[-0.48, 0.58, 0.42]} rotation={[0, 0.2, 0]} castShadow><boxGeometry args={[0.08, 0.32, 0.04]} /><meshStandardMaterial color="#181a15" /></mesh>
-      <mesh position={[-0.15, 0.82, 0]} castShadow><boxGeometry args={[0.34, 0.035, 0.18]} /><meshStandardMaterial color={accent} /></mesh>
-    </group>
-  );
-}
-function ApcModel({ team }: { team: 'player' | 'enemy' }) {
-  const hull = team === 'player' ? '#4d604d' : '#655b3d';
-  const dark = '#24261f';
-  const accent = team === 'player' ? '#4e86b8' : '#b64c3b';
-  return (
-    <group scale={0.33}>
-      <mesh position={[0, 0.36, 0]} castShadow><boxGeometry args={[1.52, 0.5, 0.86]} /><meshStandardMaterial color={hull} flatShading roughness={0.92} /></mesh>
-      <mesh position={[0.44, 0.56, 0]} rotation={[0, 0, -0.12]} castShadow><boxGeometry args={[0.54, 0.22, 0.78]} /><meshStandardMaterial color="#5f7158" flatShading roughness={0.92} /></mesh>
-      <mesh position={[0, 0.72, 0]} castShadow><boxGeometry args={[0.42, 0.18, 0.38]} /><meshStandardMaterial color={hull} flatShading roughness={0.9} /></mesh>
-      <mesh position={[0.35, 0.78, 0]} castShadow><boxGeometry args={[0.58, 0.055, 0.07]} /><meshStandardMaterial color={dark} /></mesh>
-      {[-0.52, -0.16, 0.2, 0.56].map((x) => (
-        <React.Fragment key={x}>
-          <mesh position={[x, 0.14, 0.48]} rotation={[Math.PI / 2, 0, 0]} castShadow><cylinderGeometry args={[0.13, 0.13, 0.1, 10]} /><meshStandardMaterial color={dark} roughness={1} /></mesh>
-          <mesh position={[x, 0.14, -0.48]} rotation={[Math.PI / 2, 0, 0]} castShadow><cylinderGeometry args={[0.13, 0.13, 0.1, 10]} /><meshStandardMaterial color={dark} roughness={1} /></mesh>
-        </React.Fragment>
-      ))}
-      <mesh position={[-0.22, 0.64, 0.42]} rotation={[0, 0.22, 0]} castShadow><boxGeometry args={[0.07, 0.28, 0.04]} /><meshStandardMaterial color="#181a15" /></mesh>
-      <mesh position={[-0.12, 0.84, 0]} castShadow><boxGeometry args={[0.3, 0.035, 0.16]} /><meshStandardMaterial color={accent} /></mesh>
-    </group>
-  );
-}
-function HeliModel({ team }: { team: 'player' | 'enemy' }) {
-  const c = team === 'player' ? '#4d5c48' : '#625637';
-  const accent = team === 'player' ? '#4e86b8' : '#b64c3b';
-  const rotorRef = useRef<THREE.Mesh>(null);
-  const tailRotorRef = useRef<THREE.Mesh>(null);
-  useFrame((_, dt) => {
-    if (rotorRef.current) rotorRef.current.rotation.y += dt * 34;
-    if (tailRotorRef.current) tailRotorRef.current.rotation.x += dt * 48;
-  });
-  return (
-    <group scale={0.4} position={[0, 1.5, 0]}>
-      <mesh position={[0.15, 0, 0]} castShadow><boxGeometry args={[1.2, 0.36, 0.46]} /><meshStandardMaterial color={c} flatShading roughness={0.85} /></mesh>
-      <mesh position={[0.58, 0.02, 0]} castShadow><sphereGeometry args={[0.28, 10, 7]} /><meshStandardMaterial color="#2c3430" flatShading roughness={0.75} /></mesh>
-      <mesh ref={rotorRef} position={[0, 0.34, 0]}><boxGeometry args={[2.5, 0.035, 0.12]} /><meshStandardMaterial color="#1b1d18" transparent opacity={0.82} /></mesh>
-      <mesh position={[-0.95, 0.05, 0]} castShadow><boxGeometry args={[1.05, 0.11, 0.11]} /><meshStandardMaterial color={c} flatShading roughness={0.9} /></mesh>
-      <mesh position={[-1.5, 0.08, 0]} castShadow><boxGeometry args={[0.18, 0.34, 0.06]} /><meshStandardMaterial color={c} flatShading roughness={0.9} /></mesh>
-      <mesh ref={tailRotorRef} position={[-1.6, 0.08, 0.04]}><boxGeometry args={[0.04, 0.5, 0.08]} /><meshStandardMaterial color="#1b1d18" transparent opacity={0.82} /></mesh>
-      <mesh position={[0.12, -0.28, 0.34]} castShadow><boxGeometry args={[1.0, 0.05, 0.08]} /><meshStandardMaterial color="#22241e" /></mesh>
-      <mesh position={[0.12, -0.28, -0.34]} castShadow><boxGeometry args={[1.0, 0.05, 0.08]} /><meshStandardMaterial color="#22241e" /></mesh>
-      <mesh position={[0.24, 0.24, 0]} castShadow><boxGeometry args={[0.3, 0.035, 0.16]} /><meshStandardMaterial color={accent} /></mesh>
-    </group>
-  );
-}
-
-function unitModel(u: Unit) {
-  switch (u.type) {
-    case 'infantry': return <InfantryModel team={u.team} />;
-    case 'tank': return <TankModel team={u.team} />;
-    case 'apc': return <ApcModel team={u.team} />;
-    case 'helicopter': return <HeliModel team={u.team} />;
-  }
-}
-
 // ---------- Units layer (with selection/preview/hover rings) ----------
 function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRefObject<GameState>; inputRef: React.MutableRefObject<InputState> }) {
   const { camera, size } = useThree();
@@ -624,7 +534,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
           ref={(el) => { if (el) unitRefs.current.set(u.id, el); else unitRefs.current.delete(u.id); }}
           position={[u.pos.x / S, surfaceY(u.pos.x / S, u.pos.y / S), u.pos.y / S]}
         >
-          {unitModel(u)}
+          <FactionUnitModel faction={factionFor(gameStateRef.current, u.team).id} type={u.type} unit={u} />
 
           {/* hover ring (under selection/preview) */}
           <mesh
