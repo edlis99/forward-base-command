@@ -15,6 +15,7 @@ import DeploymentScreen from './DeploymentScreen';
 import MissionSummary from './MissionSummary';
 import { applyCommand, CommandResult } from '../game/commands';
 import { FactionId } from '../game/factions';
+import { preloadFirstBattleVisuals } from '../scene3d/preloadVisuals';
 
 type Phase = 'briefing' | 'deployment' | 'combat';
 
@@ -22,6 +23,7 @@ const GameUI: React.FC = () => {
   const [phase, setPhase] = useState<Phase>('briefing');
   const [mission, setMission] = useState<MissionDef | null>(null);
   const [playerFaction, setPlayerFaction] = useState<FactionId>('aster');
+  const [loadingBattle, setLoadingBattle] = useState(false);
   const gameStateRef = useRef<GameState | null>(null);
   const inputRef = useRef<InputState>(createInputState());
   const [hudVersion, setHudVersion] = useState(0);
@@ -30,7 +32,12 @@ const GameUI: React.FC = () => {
 
   const triggerHudUpdate = useCallback(() => setHudVersion(v => v + 1), []);
 
-  const openBriefing = useCallback((m: MissionDef, faction: FactionId) => {
+  const openBriefing = useCallback(async (m: MissionDef, faction: FactionId) => {
+    // Show a deliberate loading screen instead of rendering the old flat-colour
+    // map and swapping in textures after combat has already started.
+    setLoadingBattle(true);
+    try { await preloadFirstBattleVisuals(); }
+    finally { setLoadingBattle(false); }
     setPlayerFaction(faction);
     setMission(m);
     if (m.id === 'raas') {
@@ -161,6 +168,12 @@ const GameUI: React.FC = () => {
     return (
       <div className="relative w-full h-screen overflow-hidden">
         <MissionSelect onStart={openBriefing} faction={playerFaction} onFactionChange={setPlayerFaction} />
+        {loadingBattle && <div role="status" aria-live="polite"
+          className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#0b1511] text-[#c7ddb5] font-mono">
+          <div className="text-lg tracking-[0.2em]">PREPARING THE BATTLEFIELD</div>
+          <div className="mt-3 text-xs tracking-widest text-[#829779]">Loading forest models and ground textures…</div>
+          <div className="mt-6 h-1 w-48 overflow-hidden bg-[#27372a]"><div className="h-full w-2/5 bg-[#97be76] animate-pulse" /></div>
+        </div>}
       </div>
     );
   }
