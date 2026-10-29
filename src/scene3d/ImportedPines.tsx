@@ -24,6 +24,13 @@ function prepared(source: THREE.Group) {
     const g = node.geometry.clone();
     g.applyMatrix4(node.matrixWorld);
     g.translate(-center.x, -bounds.min.y, -center.z);
+    // The procedural and imported pine leaves share one vertex-coloured
+    // material. OBJ meshes normally have no vertex colour attribute: provide
+    // neutral white so the WebGL shader does not multiply foliage to black.
+    if (!g.getAttribute('color')) {
+      const count = g.getAttribute('position').count;
+      g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(count * 3).fill(1), 3));
+    }
     g.computeBoundingSphere();
     const mats = Array.isArray(node.material) ? node.material : [node.material];
     const names = mats.map(m => m?.name ?? '').join(' ').toLowerCase() + ' ' + node.name.toLowerCase();
