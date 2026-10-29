@@ -65,7 +65,7 @@ const MissionSelect: React.FC<Props> = ({ onStart, faction, onFactionChange }) =
             {selected && <span className="w-2 h-2 rounded-full" style={{ background: '#a5cf6f' }} />}
           </span>
         </div>
-        <div className="text-[10px] tracking-[0.3em] mb-3" style={{ color: '#6a7a5a' }}>{f.instruction ?? f.inspiration}</div>
+        <div className="text-[10px] tracking-[0.3em] mb-3" style={{ color: '#6a7a5a' }}>{f.inspiration}</div>
         <div className="h-28 mb-3 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.25)' }}>
           <FactionPreview faction={id} />
         </div>
