@@ -33,6 +33,7 @@ const imagePaths = [
 ];
 const modelPaths = [
   'assets/nature/shrub/shrub.obj',
+  'assets/nature/pine/pine.obj',
   'assets/nature/grass/grass.obj',
   'assets/nature/fern_02/fern_02_1k.gltf',
   'assets/nature/fern_02/fern_02.bin',
