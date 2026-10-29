@@ -43,5 +43,48 @@
     "author": "Quaternius",
     "title": "SWAT",
     "sha256": "a835107bac833eb916c494e10997ae1709e85957ea6f6c59ace3c9a66f6d1fec"
+  },
+  {
+    "id": "bamen-military-soldier",
+    "source": "https://sketchfab.com/3d-models/free-military-soldier-rigged-e9c56308a67d4a3db62e914fafa4d198",
+    "mirror": "https://github.com/AetherRadar/operation-steel-tide/blob/main/assets/models/bamen_military_soldier/LICENSE.md",
+    "license": [
+      "CC-BY 4.0"
+    ],
+    "licenseUrls": [
+      "https://creativecommons.org/licenses/by/4.0/"
+    ],
+    "file": "aster-rifleman-detailed.glb",
+    "author": "BAMEN",
+    "title": "FREE [Military Soldier] RIGGED",
+    "modifications": "Converted to GLB and retinted by mirror repository; procedural animation added at runtime."
+  },
+  {
+    "id": "quaternius-scarl",
+    "source": "https://poly.pizza/bundle/Ultimate-Guns-Pack-cpgUfI4t2F",
+    "mirror": "https://github.com/AetherRadar/operation-steel-tide/blob/main/assets/models/quaternius_ultimate_guns/LICENSE.md",
+    "license": [
+      "CC0 1.0"
+    ],
+    "licenseUrls": [
+      "https://creativecommons.org/publicdomain/zero/1.0/"
+    ],
+    "file": "scarl.glb",
+    "author": "Quaternius",
+    "title": "Ultimate Guns Pack - SCAR-style assault rifle"
+  },
+  {
+    "id": "quaternius-ak74",
+    "source": "https://poly.pizza/bundle/Ultimate-Guns-Pack-cpgUfI4t2F",
+    "mirror": "https://github.com/AetherRadar/operation-steel-tide/blob/main/assets/models/quaternius_ultimate_guns/LICENSE.md",
+    "license": [
+      "CC0 1.0"
+    ],
+    "licenseUrls": [
+      "https://creativecommons.org/publicdomain/zero/1.0/"
+    ],
+    "file": "ak74.glb",
+    "author": "Quaternius",
+    "title": "Ultimate Guns Pack - AK-style assault rifle"
   }
 ]
