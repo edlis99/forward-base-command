@@ -396,6 +396,31 @@ export function holdPositionForSelected(state: GameState) {
   applyCommand(state, 'player', { type: 'hold', unitIds: selectedIds(state) });
 }
 
+/**
+ * U key. With APCs and infantry selected: the infantry board the nearest
+ * selected APC that still has room (4 seats). With only APCs selected: unload.
+ */
+export function loadOrUnloadSelected(state: GameState) {
+  const selected = state.units.filter(u => u.alive && u.selected && u.team === 'player' && !u.insideOf);
+  const apcs = selected.filter(u => u.type === 'apc');
+  const infantry = selected.filter(u => u.type === 'infantry');
+  if (!apcs.length) return;
+  if (!infantry.length) { disembarkSelected(state); return; }
+  const seats = new Map(apcs.map(a => [a.id,
+    4 - a.passengers.length - state.units.filter(u => u.alive && !u.insideOf && u.boardTarget === a.id).length]));
+  const nearestApc = (s: Unit) => Math.min(...apcs.map(a => distance(s.pos, a.pos)));
+  let boarding = 0, noRoom = 0;
+  for (const soldier of [...infantry].sort((a, b) => nearestApc(a) - nearestApc(b))) {
+    if (soldier.boardTarget && seats.has(soldier.boardTarget)) { boarding++; continue; }
+    const apc = apcs.filter(a => (seats.get(a.id) ?? 0) > 0).sort((a, b) => distance(soldier.pos, a.pos) - distance(soldier.pos, b.pos))[0];
+    if (!apc) { noRoom++; continue; }
+    if (applyCommand(state, 'player', { type: 'board', unitIds: [soldier.id], apcId: apc.id }).ok) {
+      seats.set(apc.id, (seats.get(apc.id) ?? 0) - 1); boarding++;
+    }
+  }
+  state.eventLog.unshift({ message: `${boarding} infantry boarding${noRoom ? ` · ${noRoom} left behind: no free seats` : ''}`, time: state.time, type: 'info' });
+}
+
 /** Unload selected APCs into separate, passable cells near the carrier. */
 export function disembarkSelected(state: GameState) {
   applyCommand(state, 'player', { type: 'disembark', unitIds: selectedIds(state) });

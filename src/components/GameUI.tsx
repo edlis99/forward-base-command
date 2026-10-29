@@ -4,7 +4,7 @@ import {
   createInitialState, createInputState, update,
   spawnReinforcement, setStanceForSelected, holdPositionForSelected, togglePause,
   digInForSelected, setFormation, toggleDebugLayer, digTrenchLineForSelected,
-  setTimeScale, disembarkSelected,
+  setTimeScale, disembarkSelected, loadOrUnloadSelected,
 } from '../game/engine';
 import { selectUnits, controllable } from '../game/selection';
 import { takeCoverForSelected } from '../game/cover';
@@ -111,7 +111,7 @@ const GameUI: React.FC = () => {
       }
       if (k === ' ') { e.preventDefault(); togglePause(state); triggerHudUpdate(); }
       if (k === 'h') { holdPositionForSelected(state); triggerHudUpdate(); }
-      if (k === 'u') { disembarkSelected(state); triggerHudUpdate(); }
+      if (k === 'u') { loadOrUnloadSelected(state); triggerHudUpdate(); }
       if (k === 'f') { setStanceForSelected(state, 'hold_fire'); triggerHudUpdate(); }
       if (k === 'x') { setStanceForSelected(state, 'tight'); triggerHudUpdate(); }
       if (k === 'g') { setStanceForSelected(state, 'defend'); triggerHudUpdate(); }

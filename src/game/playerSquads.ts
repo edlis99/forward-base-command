@@ -28,8 +28,59 @@ export function spacingRadius(u: Unit): number {
   return u.type === 'tank' ? 12 : u.type === 'apc' ? 11 : u.type === 'helicopter' ? 20 : 6;
 }
 
+/** Interval between formation slots (px). Vehicles keep 2-3 hull lengths apart, infantry spread out. */
 function slotSpacing(u: Unit): number {
-  return u.type === 'tank' ? 34 : u.type === 'apc' ? 32 : u.type === 'helicopter' ? 56 : 20;
+  return u.type === 'tank' ? 52 : u.type === 'apc' ? 48 : u.type === 'helicopter' ? 56 : 26;
+}
+
+// ---- Road march (movement rule M10) ----
+const CELL = 32;
+/** A move this long (cells) that is mostly on roads is driven as a column. */
+export const ROAD_MARCH_MIN_CELLS = 25;
+export const ROAD_MARCH_ROAD_SHARE = .55;
+/** Interval kept behind the unit ahead in a column (px). */
+export function convoyGap(unit: Unit, ahead: Unit): number {
+  const veh = (u: Unit) => u.type === 'tank' || u.type === 'apc';
+  return veh(unit) && veh(ahead) ? 2.2 * CELL : veh(unit) || veh(ahead) ? 1.6 * CELL : 1.0 * CELL;
+}
+/** Within this distance of its slot a unit leaves the column and deploys. */
+export const CONVOY_RELEASE = 6 * CELL;
+
+function roadShare(state: GameState, from: Position, path: Position[]): number {
+  let on = 0, all = 0, prev = from;
+  for (const q of path) {
+    const n = Math.max(1, Math.ceil(Math.hypot(q.x - prev.x, q.y - prev.y) / (CELL / 2)));
+    for (let k = 1; k <= n; k++) {
+      const x = prev.x + (q.x - prev.x) * k / n, y = prev.y + (q.y - prev.y) * k / n;
+      const c = state.terrain[Math.floor(y / CELL)]?.[Math.floor(x / CELL)];
+      all++; if (c && (c.type === 'road' || c.type === 'gravel')) on++;
+    }
+    prev = q;
+  }
+  return all ? on / all : 0;
+}
+
+/**
+ * A long move that mostly follows roads becomes a single column: vehicles
+ * lead, infantry follow, each unit keeps its interval behind the one ahead,
+ * and everyone fans out into formation near the destination.
+ */
+function setupRoadMarch(state: GameState, squads: PlayerSquad[], dest: Position) {
+  const members = squads.flatMap(sq => sq.memberIds).map(id => state.units.find(u => u.id === id)!).filter(u => u && u.targetPos && u.type !== 'helicopter');
+  if (members.length < 2) return;
+  const c = centroid(members);
+  if (Math.hypot(dest.x - c.x, dest.y - c.y) < ROAD_MARCH_MIN_CELLS * CELL) return;
+  const veh = (u: Unit) => u.type === 'tank' || u.type === 'apc';
+  const probe = members.find(veh) ?? members[0];
+  if (roadShare(state, probe.pos, [probe.targetPos!, ...probe.path]) < ROAD_MARCH_ROAD_SHARE) return;
+  const toGo = (u: Unit) => Math.hypot(dest.x - u.pos.x, dest.y - u.pos.y);
+  const column = [...members.filter(veh).sort((a, b) => toGo(a) - toGo(b)), ...members.filter(u => !veh(u)).sort((a, b) => toGo(a) - toGo(b))];
+  column.forEach((u, i) => {
+    u.convoyAhead = i ? column[i - 1].id : undefined;
+    u.convoyGap = i ? convoyGap(u, column[i - 1]) : undefined;
+  });
+  squads.forEach(sq => { sq.convoy = true; });
+  state.eventLog.unshift({ message: `Road march: ${column.length} units in column`, time: state.time, type: 'info' });
 }
 
 function isVehicle(u: Unit) { return u.type === 'tank' || u.type === 'apc'; }
@@ -334,10 +385,21 @@ export function issueSquadMove(
       u.groupSpeedCap = state.coordinatedMovement ? travelSpeed : null;
       u.moveGroupId = id;
       setDestination(u, state, block.slots[u.id]);
+      if (!u.targetPos && u.type !== 'helicopter') {
+        // Slot on ground this unit cannot reach (a vehicle slot in a wood or a
+        // hedge): use the nearest reachable spot rather than standing still.
+        const veh = u.type === 'tank' || u.type === 'apc';
+        const near = findNearestPassableWorld(state.terrain, block.slots[u.id].x, block.slots[u.id].y, veh, false, 8);
+        block.slots[u.id] = near;
+        setDestination(u, state, near);
+        if (!u.targetPos) setDestination(u, state, findNearestPassableWorld(state.terrain, block.dest.x, block.dest.y, veh, false, 8));
+      }
       u.arrivalFacing = block.facing;
       u.order = u.targetPos ? opts.attackMove ? 'attack_move' : 'move' : 'idle';
     }
   }
+
+  if (!opts.attackMove) setupRoadMarch(state, squads, dest);
 
   // Drop squads whose members were all re-tasked into the new squads.
   const live = new Map(state.units.map(u => [u.id, u]));
@@ -439,6 +501,9 @@ export function updatePlayerSquads(state: GameState, dt: number) {
 /** Stop a runaway leader; laggards catch up at their own attainable speed. */
 export function cohesionSpeedFactor(unit: Unit, squad: PlayerSquad): number {
   if (!squad.coordinated || squad.state === 'arrived') return 1;
+  // A column is meant to be long: its intervals, not the tail, set the pace.
+  if (squad.convoy && unit.convoyAhead !== undefined) return 1;
+  if (squad.convoy && unit.convoyAhead === undefined && unit.convoyGap === undefined) return 1;
   const progress = Math.max(0, Math.min(1, 1 - routeRemaining(unit) / Math.max(1, unit.routeLength ?? 1)));
   const routeLead = (progress - squad.progressFloor) * squad.commandLength;
   const to = unit.targetPos ?? squad.dest;

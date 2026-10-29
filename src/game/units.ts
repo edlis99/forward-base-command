@@ -3,6 +3,7 @@ import { Unit, UnitType, Team, Position, GameState, Stance } from './types';
 import { random } from './rng';
 import { HIGH_GROUND } from './terrain';
 import { isHumanTeam } from './controllers';
+import { CONVOY_RELEASE } from './playerSquads';
 import {
   UNIT_STATS, CELL_SIZE, VETERANCY_THRESHOLDS, VETERANCY_BONUSES, MOVING_ACC_PENALTY, STATIONARY_ACC_BONUS,
   RETARGET_INTERVAL, RETARGET_HYSTERESIS, MAX_ENGAGE_TIME, DISENGAGE_GRACE, CHASE_STANDOFF, TARGET_LOST_TIMEOUT,
@@ -113,7 +114,8 @@ export function clearUnitOrders(unit: Unit) {
   unit.squadId = null;
   unit.settled = false;
   unit.vel = { x: 0, y: 0 };
-  unit.engaging = false; unit.aiming = false; unit.engageTime = 0;
+  unit.engaging = false; unit.aiming = false; unit.engageTime = 0; unit.reversing = false;
+  unit.convoyAhead = undefined; unit.convoyGap = undefined;
   unit.chaseGoal = null; unit.targetLostTimer = 0;
   unit.order = 'idle';
 }
@@ -122,7 +124,7 @@ export function clearUnitOrders(unit: Unit) {
 export function setDestination(unit: Unit, state: GameState, dest: Position, repath = false) {
   // A recovery path must not reset formation progress and strand the leaders.
   const fractionLeft = repath ? Math.min(1, routeRemaining(unit) / Math.max(1, unit.routeLength ?? 1)) : 1;
-  if (!repath) { unit.coverTarget = undefined; unit.holdOnArrive = false; }
+  if (!repath) { unit.coverTarget = undefined; unit.holdOnArrive = false; unit.reversing = false; }
   const vehicle = isVehicle(unit);
   const helicopter = unit.type === 'helicopter';
   const reachableDest = findNearestPassableWorld(state.terrain, dest.x, dest.y, vehicle, helicopter, 12);
@@ -259,6 +261,8 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       unit.lastProgressDist = distance(unit.pos, unit.targetPos);
       unit.lastProgressTime = state.time;
     } else {
+      // Rule M3: a vehicle that backed into place keeps its front where it was.
+      if (unit.reversing) { unit.arrivalFacing = unit.facing; unit.reversing = false; }
       unit.targetPos = null;
       unit.finalDest = null;
       unit.homePos = { ...unit.pos };
@@ -285,7 +289,17 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const finalDist = unit.finalDest ? distance(unit.pos, unit.finalDest) : 999;
   const sepWeight = finalDist < CELL_SIZE * 1.2 ? 0.12 : 0.8;
 
-  const desiredAngle = Math.atan2(dirY + sep.y * sepWeight, dirX + sep.x * sepWeight);
+  const travelAngle = Math.atan2(dirY + sep.y * sepWeight, dirX + sep.x * sepWeight);
+  // Rule M3: a vehicle whose destination is a short, straight hop behind it
+  // backs up instead of turning round on the spot.
+  const goal = unit.finalDest ?? unit.targetPos;
+  const goalDist = distance(unit.pos, goal);
+  if (veh && !heli) {
+    const behind = Math.abs(normalizeAngle(travelAngle - unit.facing)) > REVERSE_BEHIND;
+    if (!unit.reversing && behind && goalDist < REVERSE_MAX_DIST && unit.path.length <= 1 && unit.waypoints.length === 0) unit.reversing = true;
+    else if (unit.reversing && (goalDist >= REVERSE_MAX_DIST * 1.3 || unit.path.length > 1)) unit.reversing = false;
+  } else unit.reversing = false;
+  const desiredAngle = unit.reversing ? normalizeAngle(travelAngle + Math.PI) : travelAngle;
 
   const facingDelta = normalizeAngle(desiredAngle - unit.facing);
   const maxTurn = unit.turnRate * dt;
@@ -312,15 +326,33 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const arrivalFactor = unit.path.length === 0 && remaining < ARRIVE_TOLERANCE * 3
     ? Math.max(0.35, remaining / (ARRIVE_TOLERANCE * 3))
     : 1;
-  const speed = pacedSpeed * alignFactor * cohesionFactor * arrivalFactor;
+  // Rule M10, road march: keep the interval behind the unit ahead in the column.
+  let convoyFactor = 1;
+  if (unit.convoyAhead) {
+    const ahead = state.units.find(o => o.id === unit.convoyAhead);
+    const deploying = remaining < CONVOY_RELEASE;
+    if (!ahead || !ahead.alive || ahead.insideOf || !ahead.targetPos || deploying) { unit.convoyAhead = undefined; unit.convoyGap = undefined; }
+    else {
+      const gap = unit.convoyGap ?? CELL_SIZE * 1.5, d = distance(unit.pos, ahead.pos);
+      convoyFactor = Math.max(0, Math.min(1, (d - gap * .6) / (gap * .4)));
+      if (convoyFactor < .05) {
+        // Holding the interval is waiting, not being stuck.
+        unit.vel.x *= .6; unit.vel.y *= .6; unit.waiting = 'formation'; unit.lastProgressTime = state.time; return;
+      }
+    }
+  }
+  const speed = pacedSpeed * alignFactor * cohesionFactor * arrivalFactor * convoyFactor * (unit.reversing ? REVERSE_SPEED : 1);
 
 
   // Infantry can sidestep and should track the route directly. Driving them by
   // facing caused wide arcs that clipped obstacles and repeatedly rebuilt A*.
   const steerX = dirX + sep.x * sepWeight, steerY = dirY + sep.y * sepWeight;
   const steerLength = Math.hypot(steerX, steerY) || 1;
-  const travelX = veh ? Math.cos(unit.facing) : steerX / steerLength;
-  const travelY = veh ? Math.sin(unit.facing) : steerY / steerLength;
+  // Rule M1: hulls only ever move along their heading (forwards, or backwards
+  // when reversing); they never slide sideways.
+  const hullDir = unit.reversing ? -1 : 1;
+  const travelX = veh ? Math.cos(unit.facing) * hullDir : steerX / steerLength;
+  const travelY = veh ? Math.sin(unit.facing) * hullDir : steerY / steerLength;
   const targetVx = travelX * speed;
   const targetVy = travelY * speed;
   const accel = veh ? 5 : 11;
@@ -340,6 +372,47 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     const before = distance(unit.pos, other.pos), after = Math.hypot(x - other.pos.x, y - other.pos.y);
     return after < limit && after < before - .001;
   });
+  // Rule M12: soldiers give way to vehicles. A stationary friendly soldier in
+  // a vehicle's way steps aside (a short, passable sidestep), instead of the
+  // vehicle waiting for him or stopping short of its slot.
+  if (veh && trafficAt(nextX, nextY)) {
+    const fx = Math.cos(unit.facing), fy = Math.sin(unit.facing);
+    for (const other of neighbors) {
+      if (other.type !== 'infantry' || other.targetPos || other.insideOf || other.team !== unit.team) continue;
+      const limit = (spacingRadius(unit) + spacingRadius(other)) * .6;
+      if (Math.hypot(nextX - other.pos.x, nextY - other.pos.y) >= limit) continue;
+      const side = (other.pos.x - unit.pos.x) * -fy + (other.pos.y - unit.pos.y) * fx >= 0 ? 1 : -1;
+      const step = Math.min(limit, 40 * dt);
+      const x = other.pos.x - fy * side * step, y = other.pos.y + fx * side * step;
+      if (isPassable(getTerrainAt(state.terrain, x, y), false, false)) {
+        other.pos = { x, y };
+        if (other.homePos) other.homePos = { ...other.pos };
+      }
+    }
+  }
+  // Rule M13: a vehicle blocked by a parked friendly vehicle drives round it:
+  // a short detour point beside the blocker, on the side towards the goal.
+  if (veh && trafficAt(nextX, nextY) && state.time >= (unit.detourAt ?? 0)) {
+    const blocker = neighbors.find(o => (o.type === 'tank' || o.type === 'apc') && !o.targetPos && o.team === unit.team &&
+      Math.hypot(nextX - o.pos.x, nextY - o.pos.y) < (spacingRadius(unit) + spacingRadius(o)) * .6);
+    if (blocker && unit.targetPos) {
+      const goalPos = unit.finalDest ?? unit.targetPos;
+      const bx = blocker.pos.x - unit.pos.x, by = blocker.pos.y - unit.pos.y, bl = Math.hypot(bx, by) || 1;
+      const px = -by / bl, py = bx / bl;
+      const side = (goalPos.x - blocker.pos.x) * px + (goalPos.y - blocker.pos.y) * py >= 0 ? 1 : -1;
+      const clear = (spacingRadius(unit) + spacingRadius(blocker)) * 1.6;
+      for (const sgn of [side, -side]) {
+        const d = { x: blocker.pos.x + px * sgn * clear + bx / bl * clear * .5, y: blocker.pos.y + py * sgn * clear + by / bl * clear * .5 };
+        if (isWorldFootprintPassable(state.terrain, d.x, d.y, true)) {
+          unit.path.unshift({ ...unit.targetPos });
+          unit.targetPos = d;
+          unit.detourAt = state.time + 2;
+          unit.lastProgressDist = distance(unit.pos, d); unit.lastProgressTime = state.time;
+          break;
+        }
+      }
+    }
+  }
   if (trafficAt(nextX, nextY)) {
     // Sidestep / reverse out of a bottleneck while keeping the same route.
     // Vehicles use a slow reverse; infantry may sidestep freely. This is a
@@ -360,7 +433,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     unit.trafficWait = (unit.trafficWait ?? 0) + dt;
     const toGo = unit.finalDest ? distance(unit.pos, unit.finalDest) : Infinity;
     const lastLeg = unit.waypoints.length === 0;
-    if (lastLeg && ((unit.path.length <= 1 && toGo < CELL_SIZE * 2.2 && unit.trafficWait > 2.5) ||
+    if (lastLeg && ((unit.path.length <= 1 && toGo < CELL_SIZE * 1.3 && unit.trafficWait > 2.5) ||
         (toGo < CELL_SIZE * 4 && unit.trafficWait > 6))) {
       // Close enough in a jammed square: stop here instead of yielding forever.
       unit.trafficWait = 0; unit.waiting = undefined;
@@ -444,8 +517,15 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
 
 function speedMagnitude(unit: Unit) { return Math.hypot(unit.vel.x, unit.vel.y); }
 
+/** Movement rule M3: reverse when the goal is behind (over 110° off the hull) and closer than this. */
+export const REVERSE_BEHIND = 110 * Math.PI / 180;
+export const REVERSE_MAX_DIST = 6 * CELL_SIZE;
+/** Vehicles back up at this share of their speed. */
+export const REVERSE_SPEED = 0.45;
+
 /** Treat the current spot as the end of the move (used when the exact slot cannot be reached). */
 function arriveHere(unit: Unit) {
+  unit.reversing = false;
   unit.targetPos = null; unit.path = []; unit.finalDest = null; unit.homePos = { ...unit.pos };
   unit.vel = { x: 0, y: 0 };
   if (unit.waypoints.length === 0 && unit.order !== 'hold_position' && unit.order !== 'patrol' && unit.order !== 'attack') {

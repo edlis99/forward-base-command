@@ -77,6 +77,13 @@ export interface Unit {
   arrivalFacing?: number;
   routeLength?: number;
   waiting?: 'formation' | 'traffic';
+  /** Earliest time for the next drive-round detour (movement rule M13). */
+  detourAt?: number;
+  /** Road march (movement rule M10): the unit ahead in the column, and the interval to keep (px). */
+  convoyAhead?: string;
+  convoyGap?: number;
+  /** Vehicle is backing up to a destination close behind it (movement rule M3). */
+  reversing?: boolean;
   /** Seconds spent continuously yielding to friendly traffic. */
   trafficWait?: number;
   /** Consecutive re-paths that made no progress. */
@@ -205,6 +212,8 @@ export interface PlayerSquad {
   cohesionRadius: number;
   slots: Record<string, Position>;
   localOffsets: Record<string, Position>;
+  /** Moving as a road column: keeps intervals instead of holding leaders back for the tail. */
+  convoy?: boolean;
   compression: number;
   state: 'moving' | 'arrived';
   lastReslot: number;
