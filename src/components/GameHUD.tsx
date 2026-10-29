@@ -130,7 +130,7 @@ const GameHUD: React.FC<Props> = ({ gameState, onChange, onFocus, onSpawn, onSta
       {/* Hotkey legend */}
       <div className="pointer-events-none absolute top-12 right-3 text-[10px] font-mono px-2 py-1"
         style={{ background: 'rgba(15,20,15,0.85)', border: '1px solid #2a3a2a', color: '#8a9a7a' }}>
-        <div>Space: pause · 1/2/3/4: time ¼×/½×/1×/2× · WASD: pan · Wheel: zoom</div>
+        <div>Space: pause · 1/2/3/4: time ¼×/½×/1×/2× · WASD: pan · Q/E: rotate · Wheel: zoom</div>
         <div>Click: select · Drag: box · Shift: toggle/add · Ctrl+A: all</div>
         <div>RClick: move/attack/occupy cover · Shift: queue · Ctrl: attack-move</div>
         <div>H: hold · F: hold-fire · X: tight · G: defend · Y: aggressive</div>

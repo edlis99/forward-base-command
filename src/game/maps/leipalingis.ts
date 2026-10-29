@@ -219,6 +219,21 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
   const building = (x: number, y: number, angle: number, offset?: [number, number]) => {
     const town = settlementAt(x + .5, y + .5);
     if (!free(x, y)) return false;
+    if (designed) {
+      const at = (dx: number, dy: number) => grid[y + dy]?.[x + dx];
+      const ring = [-1, 0, 1].flatMap(dy => [-1, 0, 1].map(dx => [dx, dy])).filter(([dx, dy]) => dx || dy);
+      // No houses on the shore: a cell of bank between any building and water.
+      if (ring.some(([dx, dy]) => at(dx, dy)?.type === 'water')) return false;
+      // Spacing: villages and farms keep a garden cell between houses; towns
+      // may touch only at the corners; only big-town centres are built solid.
+      const q = town ? ((x + .5 - town.x) / town.rx) ** 2 + ((y + .5 - town.y) / town.ry) ** 2 : 1;
+      const solid = town?.size === 'centre' && q < .3;
+      if (!solid) {
+        const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => at(dx, dy)?.type === 'urban');
+        const any = ring.some(([dx, dy]) => at(dx, dy)?.type === 'urban');
+        if (town?.size === 'centre' || town?.size === 'town' ? side : any) return false;
+      }
+    }
     if (town && (count[town.id] ?? 0) >= (town.size === 'centre' ? 320 : town.size === 'town' ? 160 : 110)) return false;
     set(grid, x, y, 'urban');
     const c = grid[y][x]; c.settlementId = town?.id;

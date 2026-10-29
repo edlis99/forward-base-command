@@ -148,6 +148,26 @@ describe('Leipalingis map: terrain that changes the fight', () => {
   });
 });
 
+describe('Leipalingis map: house placement', () => {
+  const urban = terrain.flat().filter(c => c.type === 'urban');
+  const at = (c: TerrainCell, dx: number, dy: number) => terrain[Math.floor(c.y / CELL_SIZE) + dy]?.[Math.floor(c.x / CELL_SIZE) + dx];
+  const ring = [-1, 0, 1].flatMap(dy => [-1, 0, 1].map(dx => [dx, dy])).filter(([dx, dy]) => dx || dy);
+  const size = (c: TerrainCell) => SETTLEMENTS.find(s => s.id === c.settlementId)?.size;
+  it('never puts a house on the shore', () => {
+    expect(urban.filter(c => ring.some(([dx, dy]) => at(c, dx, dy)?.type === 'water')).length).toBe(0);
+  });
+  it('keeps a garden cell between houses in villages, hamlets and farmsteads', () => {
+    const spaced = urban.filter(c => !size(c) || size(c) === 'village' || size(c) === 'hamlet');
+    // A farm at the edge of a town may touch the town's last house at a corner; nothing else.
+    const townHouse = (n?: TerrainCell) => !!n && n.type === 'urban' && (size(n) === 'town' || size(n) === 'centre');
+    expect(spaced.filter(c => ring.some(([dx, dy]) => at(c, dx, dy)?.type === 'urban' && !(townHouse(at(c, dx, dy)) && dx && dy))).length).toBe(0);
+  });
+  it('lets town houses touch only at the corners', () => {
+    const towns = urban.filter(c => size(c) === 'town');
+    expect(towns.filter(c => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => at(c, dx, dy)?.type === 'urban')).length).toBe(0);
+  });
+});
+
 describe('Leipalingis map: board edge and settlements', () => {
   it('keeps units inside the playable area and the mains inside it', () => {
     const [x0, y0, x1, y1] = PLAYABLE_CELLS;

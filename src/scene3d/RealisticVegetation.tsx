@@ -9,6 +9,10 @@ import { Woodland } from './Environment';
 import { canopyMaterial } from './canopyReveal';
 import { fbm, groundHeightAt, hash2 } from './terrainHeight';
 
+/** World scale: trees were 2.5-4.6 cells tall (6-9x a house); real pines are ~3x house height. */
+export const TREE_SCALE = 0.42;
+const UNDERGROWTH_SCALE = 0.6;
+
 /**
  * Whole-map forest replacement. Every forest cell receives pack-derived
  * pine/broadleaf silhouettes; nearby sections also show the actual optimized
@@ -61,15 +65,16 @@ function scatter(terrain: TerrainCell[][], section: MapSection): NatureLayout {
         if (hash2(x + n * 101, z + n * 173) < 0.07) continue;
         const salt = 19 + n * 31;
         const pine = hash2(x + salt, z + salt * 2) < (stand ? 0.85 : 0.56);
-        const size = (pine ? 3.15 : 2.50) + hash2(x + n * 47, z + n * 63) * (pine ? 1.50 : 1.15);
+        // Real proportions: pines about three times house height (see WORLD_SCALE in Scene3D notes).
+        const size = ((pine ? 3.15 : 2.50) + hash2(x + n * 47, z + n * 63) * (pine ? 1.50 : 1.15)) * TREE_SCALE;
         push(pine ? 'pine' : 'broadleaf', x, z, salt, size, size * (pine ? 0.62 : 0.84));
       }
       if (hash2(x + 427, z + 213) < (edge ? 0.65 : 0.30))
-        push('fern', x, z, 79, 1.0 + hash2(x + 51, z + 33) * 0.7, 1);
+        push('fern', x, z, 79, (1.0 + hash2(x + 51, z + 33) * 0.7) * UNDERGROWTH_SCALE, 1);
       if (hash2(x + 277, z + 33) < (edge ? 0.54 : 0.18))
-        push('shrub', x, z, 37, 0.65 + hash2(x + 57, z + 25) * 0.45, 1);
+        push('shrub', x, z, 37, (0.65 + hash2(x + 57, z + 25) * 0.45) * UNDERGROWTH_SCALE, 1);
       if (hash2(x + 13, z + 239) < 0.68)
-        push('grass', x, z, 67, 0.7 + hash2(x + 9, z + 203) * 0.75, 1);
+        push('grass', x, z, 67, (0.7 + hash2(x + 9, z + 203) * 0.75) * UNDERGROWTH_SCALE, 1);
     }
   }
   return result;

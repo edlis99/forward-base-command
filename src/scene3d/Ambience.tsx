@@ -28,7 +28,7 @@ export function ChimneySmoke({ terrain }: { terrain: TerrainCell[][] }) {
     for (let z = 0; z < MAP_ROWS && emitters < 420; z++) for (let x = 0; x < MAP_COLS && emitters < 420; x++) {
       const c = terrain[z][x];
       if (c.type !== 'urban' || !c.settlementId || !(c.buildingKind === 'house' || c.buildingKind === 'brick')) continue;
-      if (hash2(x + 61, z + 17) > .2) continue; // one house in five has the stove lit
+      if (hash2(x + 61, z + 17) > .07) continue; // about one house in fourteen has the stove lit
       const off = c.buildingOffset ?? [0, 0], a = c.propAngle ?? 0;
       // chimney sits at local (-.18, roof, -.24): rotate into the world like the house
       const cx = x + .5 + off[0] + Math.cos(a) * -.18 - Math.sin(a) * -.24;
@@ -55,8 +55,8 @@ export function ChimneySmoke({ terrain }: { terrain: TerrainCell[][] }) {
         vec3 p = position + vec3((t * 1.4 + sin(uTime * 0.3 + aSeed * 6.28) * 0.12), t * 2.4, t * 0.5);
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        gl_PointSize = (0.22 + t * 1.0) * uScale / max(1.0, -mv.z);
-        vAlpha = (1.0 - t) * smoothstep(0.0, 0.1, t) * 0.3;
+        gl_PointSize = (0.14 + t * 0.6) * uScale / max(1.0, -mv.z);
+        vAlpha = (1.0 - t) * smoothstep(0.0, 0.1, t) * 0.2;
       }`,
     fragmentShader: `
       varying float vAlpha;
@@ -77,9 +77,9 @@ interface Flock { x: number; z: number; r: number; h: number; speed: number; sca
 const BIRDS_PER = 9;
 export function Birds({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
   const ref = useRef<THREE.InstancedMesh>(null);
-  const flocks = useMemo<Flock[]>(() => SETTLEMENTS.slice(0, 12).map((s, i) => ({
+  const flocks = useMemo<Flock[]>(() => SETTLEMENTS.slice(0, 7).map((s, i) => ({
     x: s.x + (hash2(i, 3) - .5) * 40, z: s.y + (hash2(i, 7) - .5) * 30,
-    r: 5 + hash2(i, 11) * 7, h: 9 + hash2(i, 13) * 5, speed: .25 + hash2(i, 17) * .2, scare: 0,
+    r: 5 + hash2(i, 11) * 7, h: 14 + hash2(i, 13) * 5, speed: .25 + hash2(i, 17) * .2, scare: 0,
   })), []);
   const geometry = useMemo(() => {
     // a small dark "v": two wing triangles
@@ -109,7 +109,7 @@ export function Birds({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
         dummy.position.set(x, y, z);
         dummy.rotation.set(0, -a, 0);
         const flap = .55 + .45 * Math.abs(Math.sin(t * (6 + f.scare * 6) + b));
-        dummy.scale.set(.9, flap, .9);
+        dummy.scale.set(.18, flap * .2, .18); // small birds: about a fifth of a cell across
         dummy.updateMatrix();
         mesh.setMatrixAt(i, dummy.matrix);
       }
