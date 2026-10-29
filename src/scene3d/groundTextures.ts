@@ -13,6 +13,7 @@ export type Surface = typeof SURFACES[number];
 export const TILE_CELLS = 3.5;
 
 const cache = new Map<string, THREE.Texture>();
+const pending = new Map<string, Promise<void>>();
 const loader = new THREE.TextureLoader();
 
 const FALLBACK_COLORS: Record<Surface, string> = {
@@ -34,13 +35,18 @@ export function groundTex(surface: Surface, kind: 'diffuse' | 'normal' | 'roughn
   const key = `${surface}/${kind}`;
   let t = cache.get(key);
   if (!t) {
+    let finish!: () => void;
+    const ready = new Promise<void>(resolve => { finish = resolve; });
+    pending.set(key, ready);
     t = loader.load(`${import.meta.env.BASE_URL}assets/textures/${key}.jpg`, loaded => {
-      // WebGL2 texture storage is immutable: release the 1px placeholder before
-      // uploading the full-sized image into the same shared Texture object.
+      // Upload the decoded full-resolution image before displaying the battlefield.
       loaded.dispose();
       loaded.needsUpdate = true;
-    }, undefined,
-      () => console.warn(`Ground texture unavailable: ${key}; using its fallback.`));
+      finish();
+    }, undefined, () => {
+      console.warn(`Ground texture unavailable: ${key}; using its fallback.`);
+      finish(); // Failed optional textures must never trap the player on loading.
+    });
     t.image = fallbackImage(surface, kind);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.anisotropy = 8;
@@ -49,6 +55,16 @@ export function groundTex(surface: Surface, kind: 'diffuse' | 'normal' | 'roughn
     cache.set(key, t);
   }
   return t;
+}
+
+/** Start every ground map request and resolve only after real images decode.
+ * Called before combat so players never see flat-colour placeholders switch to PBR.
+ */
+export async function preloadGroundTextures(): Promise<void> {
+  for (const surface of SURFACES)
+    for (const kind of ['diffuse', 'normal', 'roughness'] as const)
+      groundTex(surface, kind);
+  await Promise.all(pending.values());
 }
 
 /** Which texture a cell's soil uses (visual only — no gameplay effect). */
