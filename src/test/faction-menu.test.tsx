@@ -14,6 +14,8 @@ describe('faction deployment menu', () => {
       return <MissionSelect onStart={onStart} faction={faction} onFactionChange={setFaction} />;
     }
     render(<Menu />);
+    // DEPLOY on the main menu opens the faction selection screen.
+    fireEvent.click(screen.getByRole('button', { name: /DEPLOY/ }));
     fireEvent.click(screen.getByRole('radio', { name: choice === 'aster' ? /Aster Defence Coalition/ : /Vostran Union/ }));
     expect(screen.getByRole('radio', { name: choice === 'aster' ? /Aster Defence Coalition/ : /Vostran Union/ })).toBeChecked();
     expect(screen.getByText(new RegExp(`AI opponent: ${choice === 'aster' ? 'Vostran Union' : 'Aster Defence Coalition'}`))).toBeInTheDocument();
