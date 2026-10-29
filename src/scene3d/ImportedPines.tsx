@@ -67,7 +67,7 @@ function PinePart({ trees, geometry, material, width, height, foliage }: {
     ref.current.computeBoundingSphere();
   }, [trees, width, height]);
   return <instancedMesh ref={ref} args={[geometry, material, trees.length]}
-    castShadow={!foliage} receiveShadow={false} frustumCulled raycast={() => null} />;
+    castShadow={!foliage} receiveShadow={false} frustumCulled raycast={() => null} dispose={null} />;
 }
 function LoadedPines({ trees, materials }: {
   trees: TreePlacement[];
