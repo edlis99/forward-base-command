@@ -1,5 +1,7 @@
 import { geography as snapshot, GEOGRAPHIC_SCALE, PLAYABLE_CELLS, MAIN_CELLS, mapHeightAt } from './geography';
 export { PLAYABLE_CELLS, MAIN_CELLS };
+/** How far (elevation units) a water surface sits below its shore. */
+const WATER_BELOW_SHORE = .06;
 import { TerrainCell, TerrainType } from '../types';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../constants';
 import { SETTLEMENTS, settlementAt } from './settlements';
@@ -423,6 +425,53 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     for (let y = 0; y < MAP_ROWS; y++) for (let x = 0; x < MAP_COLS; x++) {
       const c = grid[y][x];
       if (c.type !== 'water') c.elevation = 1 + mapHeightAt(x + .5, y + .5);
+    }
+    // Water sits just below its shore, not at the bottom of a pit: one flat level
+    // per lake (a little under its lower banks); the river follows its banks.
+    const seen = new Uint8Array(MAP_COLS * MAP_ROWS);
+    const N4: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    for (let sy = 0; sy < MAP_ROWS; sy++) for (let sx = 0; sx < MAP_COLS; sx++) {
+      if (grid[sy][sx].type !== 'water' || seen[sy * MAP_COLS + sx]) continue;
+      const cells: [number, number][] = [], queue: [number, number][] = [[sx, sy]];
+      seen[sy * MAP_COLS + sx] = 1;
+      while (queue.length) {
+        const [x, y] = queue.pop()!; cells.push([x, y]);
+        for (const [dx, dy] of N4) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= MAP_COLS || ny >= MAP_ROWS || seen[ny * MAP_COLS + nx] || grid[ny][nx].type !== 'water') continue;
+          seen[ny * MAP_COLS + nx] = 1; queue.push([nx, ny]);
+        }
+      }
+      const isRiver = cells.some(([x, y]) => x <= 0 || y <= 0 || x >= MAP_COLS - 1 || y >= MAP_ROWS - 1);
+      if (!isRiver) {
+        const shore: number[] = [];
+        for (const [x, y] of cells) for (const [dx, dy] of N4) {
+          const n = grid[y + dy]?.[x + dx];
+          if (n && n.type !== 'water') shore.push(n.elevation);
+        }
+        shore.sort((a, b) => a - b);
+        const level = (shore.length ? shore[Math.floor(shore.length * .4)] : 1) - WATER_BELOW_SHORE;
+        for (const [x, y] of cells) grid[y][x].elevation = level;
+      } else {
+        const level = new Map<number, number>();
+        for (const [x, y] of cells) {
+          const banks: number[] = [];
+          for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+            const n = grid[y + dy]?.[x + dx];
+            if (n && n.type !== 'water' && !n.blocksMovement) banks.push(n.elevation);
+          }
+          banks.sort((a, b) => a - b);
+          if (banks.length) level.set(y * MAP_COLS + x, banks[Math.floor(banks.length * .35)] - WATER_BELOW_SHORE);
+        }
+        const known = [...level.values()], fallback = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+        for (const [x, y] of cells) if (!level.has(y * MAP_COLS + x)) level.set(y * MAP_COLS + x, fallback);
+        for (let pass = 0; pass < 3; pass++) for (const [x, y] of cells) {
+          let sum = level.get(y * MAP_COLS + x)!, n = 1;
+          for (const [dx, dy] of N4) { const v = level.get((y + dy) * MAP_COLS + x + dx); if (v !== undefined) { sum += v; n++; } }
+          level.set(y * MAP_COLS + x, sum / n);
+        }
+        for (const [x, y] of cells) grid[y][x].elevation = level.get(y * MAP_COLS + x)!;
+      }
     }
     // Wood edges are the best fighting positions: trunks for cover, undergrowth
     // for concealment, open ground in front. Deep woods hide well but slow you.
