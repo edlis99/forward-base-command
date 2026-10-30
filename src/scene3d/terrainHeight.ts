@@ -93,6 +93,30 @@ export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number,
 }
 
 /**
+ * Lake/river bed height using only the water cells around a point, so a
+ * shoreline sample does not climb the bank. Water surfaces sit a fixed depth
+ * above this: flat per lake (one elevation per lake), following the river.
+ * Returns undefined where no water cell touches the point.
+ */
+export function waterBedHeightAt(terrain: TerrainCell[][], gx: number, gz: number): number | undefined {
+  const u = gx - 0.5, v = gz - 0.5;
+  const ix = Math.floor(u), iz = Math.floor(v);
+  const fx = u - ix, fz = v - iz;
+  let elev = 0, total = 0;
+  for (const [cx, cy, w] of [[ix, iz, (1 - fx) * (1 - fz)], [ix + 1, iz, fx * (1 - fz)], [ix, iz + 1, (1 - fx) * fz], [ix + 1, iz + 1, fx * fz]]) {
+    const c = terrain[cy]?.[cx];
+    if (!c || c.type !== 'water') continue;
+    const wt = Math.max(w, 1e-3);
+    elev += ((c.elevation ?? 1) - 1) * wt;
+    total += wt;
+  }
+  if (!total) return undefined;
+  const hills = (fbm(gx * 0.03, gz * 0.03) - 0.5) * 2.4 * BUMP_SCALE;
+  const mid = (fbm(gx * 0.11, gz * 0.11) - 0.5) * 0.36;
+  return GROUND_LEVEL.water + (elev / total) * HILL_SCALE + (hills + mid) * RELIEF.water;
+}
+
+/**
  * Active terrain cache. Layers that only receive a `gameStateRef` (VFX,
  * markers, ghosts) can sample the surface without threading the terrain
  * array through every component. Set once per frame by the scene root.
