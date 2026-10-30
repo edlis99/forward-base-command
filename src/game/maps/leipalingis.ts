@@ -38,7 +38,10 @@ export const LEIPALINGIS_ROADS: MapRoad[] = snapshot.roads.flatMap(road => {
     current.push(segment[1]);
   }
   if (current.length > 1) sections.push(current);
-  const width = /primary|secondary/.test(road.class) ? 1.35 : road.class === 'track' ? .38 : .88;
+  // Designed map: real proportions next to the houses (a village street is narrower than a house).
+  const width = snapshot.designed
+    ? (/primary/.test(road.class) ? .7 : /secondary/.test(road.class) ? .6 : road.class === 'track' ? .26 : road.class === 'residential' ? .42 : .5)
+    : /primary|secondary/.test(road.class) ? 1.35 : road.class === 'track' ? .38 : .88;
   return sections.map(points => ({ ...road, width, points }));
 });
 
@@ -218,9 +221,40 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     }
     return choice;
   };
+  /** Direction of the road segment nearest to a point (cells), for lining houses up along curved streets. */
+  const roadBoxes = LEIPALINGIS_ROADS.map(r => {
+    const xs = r.points.map(p => p[0]), ys = r.points.map(p => p[1]);
+    return { r, x0: Math.min(...xs) - 3, x1: Math.max(...xs) + 3, y0: Math.min(...ys) - 3, y1: Math.max(...ys) + 3 };
+  });
+  const localRoadAngle = (px: number, py: number): number | null => {
+    let best = 3, angle: number | null = null;
+    for (const { r, x0, x1, y0, y1 } of roadBoxes) {
+      if (px < x0 || px > x1 || py < y0 || py > y1) continue;
+      for (let i = 1; i < r.points.length; i++) {
+        const [ax, ay] = r.points[i - 1], [bx, by] = r.points[i];
+        const vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy || 1;
+        const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / L2));
+        const d = Math.hypot(ax + vx * t - px, ay + vy * t - py);
+        if (d < best) { best = d; angle = Math.atan2(vy, vx); }
+      }
+    }
+    return angle;
+  };
   const building = (x: number, y: number, angle: number, offset?: [number, number]) => {
     const town = settlementAt(x + .5, y + .5);
     if (!free(x, y)) return false;
+    if (designed && town) {
+      // Houses stand on streets: no settlement house more than 2 cells from one.
+      let street = false;
+      for (let dy = -2; dy <= 2 && !street; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const n = grid[y + dy]?.[x + dx];
+        if (n && (n.type === 'road' || n.type === 'gravel')) { street = true; break; }
+      }
+      if (!street) return false;
+      // Houses line up with the street they stand on (rows follow curved roads).
+      const along = localRoadAngle(x + .5, y + .5);
+      if (along !== null) angle = along + (deterministic(x + 2, y + 7) - .5) * .06;
+    }
     if (designed) {
       const at = (dx: number, dy: number) => grid[y + dy]?.[x + dx];
       const ring = [-1, 0, 1].flatMap(dy => [-1, 0, 1].map(dx => [dx, dy])).filter(([dx, dy]) => dx || dy);
@@ -230,11 +264,10 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
       // may touch only at the corners; only big-town centres are built solid.
       const q = town ? ((x + .5 - town.x) / town.rx) ** 2 + ((y + .5 - town.y) / town.ry) ** 2 : 1;
       const solid = town?.size === 'centre' && q < .3;
-      if (!solid) {
-        const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => at(dx, dy)?.type === 'urban');
-        const any = ring.some(([dx, dy]) => at(dx, dy)?.type === 'urban');
-        if (town?.size === 'centre' || town?.size === 'town' ? side : any) return false;
-      }
+      // Houses are drawn at about half a cell (BUILDING_SCALE), so neighbouring
+      // cells in a street already leave a garden between them. Lone farmsteads
+      // keep a free cell round them so a farm reads as one yard.
+      if (!solid && !town && ring.some(([dx, dy]) => at(dx, dy)?.type === 'urban')) return false;
     }
     if (town && (count[town.id] ?? 0) >= (town.size === 'centre' ? 320 : town.size === 'town' ? 160 : 110)) return false;
     set(grid, x, y, 'urban');

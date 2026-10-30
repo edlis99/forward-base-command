@@ -1382,7 +1382,7 @@ function OuterGround() {
  * height, a pine about three times it (BUILDING_SCALE in Environment.tsx,
  * TREE_SCALE in RealisticVegetation.tsx). Gameplay distances are unchanged.
  */
-const UNIT_SCALE: Record<string, number> = { infantry: 0.55, tank: 0.6, apc: 0.6, helicopter: 0.7 };
+const UNIT_SCALE: Record<string, number> = { infantry: 0.8, tank: 0.6, apc: 0.6, helicopter: 0.7 };
 
 // ---------- Horizon ----------
 /** A ring of hazy hills far beyond the board, so the horizon reads as distant countryside. */

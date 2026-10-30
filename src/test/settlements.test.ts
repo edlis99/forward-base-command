@@ -15,7 +15,7 @@ describe('settlement identity and approach lanes', () => {
       const buildings = cells.filter(c => c.type === 'urban' && c.settlementId === town.id);
       // Real house counts, not every shed and barn as a house: villages keep a
       // garden cell between homes, so they hold a few dozen houses at most.
-      expect(buildings.length, town.name).toBeGreaterThanOrEqual({ centre: 180, town: 70, village: 14, hamlet: 10 }[town.size]);
+      expect(buildings.length, town.name).toBeGreaterThanOrEqual({ centre: 180, town: 50, village: 14, hamlet: 8 }[town.size]);
       expect(buildings.some(c => c.buildingKind === town.landmark), town.name).toBe(true);
       const builtDensity = buildings.length / (Math.PI * town.rx * town.ry);
       const rural = cells.filter(c => !settlementAt(c.x / CELL_SIZE, c.y / CELL_SIZE));

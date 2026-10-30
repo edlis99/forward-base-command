@@ -28,7 +28,7 @@ OUT = os.path.join(HERE, '..', 'src', 'game', 'maps', 'leipalingis-map.json')
 S = 2.0                      # source units -> gameplay cells
 W, H = 440, 320
 PLAYABLE = [14, 10, 426, 310]
-MAINS = {'west': [40, 203], 'east': [384, 212]}   # chosen by a travel-time balance search (see docs)
+MAINS = {'west': [34, 119], 'east': [392, 149]}   # chosen by a travel-time balance search (see docs)
 
 def h(*v):
     x = math.sin(sum(a * b for a, b in zip(v, (12.9898, 78.233, 37.719, 4.581, 9.17)))) * 43758.5453
