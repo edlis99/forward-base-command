@@ -7,6 +7,7 @@ import { createRoadTexture, landscapeMaterial } from './roadMaterial';
 import { makeGrainTexture } from './materials';
 import { buildGroundGeometry } from './groundGeometry';
 import { groundHeightAt, hash2 } from './terrainHeight';
+import { useLakeWaterMaterial } from './LakeWaterMaterial';
 
 const W = MAP_COLS;
 const H = MAP_ROWS;
@@ -36,18 +37,23 @@ export function GroundSurface({ terrain, section, regional = false }: { terrain:
   );
 }
 
-/**
- * Translucent water sheet over the dipped riverbed. Corner positions are
- * displaced by a corner-keyed hash so shorelines read as irregular banks
- * instead of stair-stepped squares.
- */
+/** Actual lake material with two seamless, animated normal textures. */
+function LakeSurface({ geometry }: { geometry: THREE.BufferGeometry }) {
+  const material = useLakeWaterMaterial();
+  return <mesh geometry={geometry} raycast={() => null} renderOrder={1}>
+    <primitive object={material} attach="material" />
+  </mesh>;
+}
+
+/** Connected inland water sheet: neighbouring quads share corner positions
+ * and subtle shoreline colour variation. No per-cell blue tiles. */
 export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; section: MapSection }) {
   const geometry = useMemo(() => {
     const positions: number[] = [];
     const indices: number[] = [];
+    const shores: number[] = [];
     const isWater = (x: number, y: number) =>
       x >= 0 && y >= 0 && x < W && y < H && terrain[y][x].type === 'water';
-    /** How enclosed a grid corner is by water (0..1) — drives organic bank taper. */
     const cornerWetness = (cx: number, cy: number) => {
       let n = 0;
       if (isWater(cx - 1, cy - 1)) n++;
@@ -57,32 +63,31 @@ export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; sec
       return n / 4;
     };
     const cornerOffset = (cx: number, cy: number) => ({
-      x: (hash2(cx * 5.3, cy * 7.1) - 0.5) * 0.7,
-      z: (hash2(cx * 9.7, cy * 3.9) - 0.5) * 0.7,
+      x: (hash2(cx * 5.3, cy * 7.1) - 0.5) * 0.32,
+      z: (hash2(cx * 9.7, cy * 3.9) - 0.5) * 0.32,
     });
     let base = 0;
-    for (let y = section.y; y < section.y + section.height; y++) for (let x = section.x; x < section.x + section.width; x++) {
-      if (terrain[y][x].type !== 'water') continue;
-      // Riverbed follows the displaced landscape, so the sheet must ride on the
-      // sampled bed height (flat per cell) rather than a fixed world Y.
-      const bed = groundHeightAt(terrain, x + 0.5, y + 0.5);
-      const corners: Array<[number, number]> = [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]];
-      for (const [cx, cy] of corners) {
-        const o = cornerOffset(cx, cy);
-        // Pull shoreline corners toward the cell centre so the bank curves in
-        // instead of leaving a hard 90-degree stair step.
-        const wet = cornerWetness(cx, cy);
-        const pull = wet === 0 ? 0.14 : 0;
-        const px = cx + (x + 0.5 - cx) * pull + o.x * (0.35 + wet * 0.65);
-        const pz = cy + (y + 0.5 - cy) * pull + o.z * (0.35 + wet * 0.65);
-        positions.push(px, bed + 0.41 - wet * 0.06, pz);
+    for (let y = section.y; y < section.y + section.height; y++)
+      for (let x = section.x; x < section.x + section.width; x++) {
+        if (terrain[y][x].type !== 'water') continue;
+        const corners: Array<[number, number]> = [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]];
+        for (const [cx, cy] of corners) {
+          // Shared keyed vertices prevent visible gaps between lake cells and
+          // along streaming section boundaries.
+          const offset = cornerOffset(cx, cy);
+          const wet = cornerWetness(cx, cy);
+          const px = cx + offset.x, pz = cy + offset.z;
+          const height = groundHeightAt(terrain, px, pz) + 0.40 - wet * 0.06;
+          positions.push(px, height, pz);
+          shores.push(1 - wet);
+        }
+        indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+        base += 4;
       }
-      indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
-      base += 4;
-    }
-    if (positions.length === 0) return null;
+    if (!positions.length) return null;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('lakeShore', new THREE.Float32BufferAttribute(shores, 1));
     geo.setIndex(indices);
     geo.computeVertexNormals();
     return geo;
@@ -90,14 +95,9 @@ export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; sec
 
   useEffect(() => () => geometry?.dispose(), [geometry]);
   if (!geometry) return null;
-  return (
-    <mesh geometry={geometry} raycast={() => null}>
-      <meshStandardMaterial
-        color="#2c5a74" transparent opacity={0.78}
-        roughness={0.18} metalness={0.35}
-      />
-    </mesh>
-  );
+  return <React.Suspense fallback={null}>
+    <LakeSurface geometry={geometry} />
+  </React.Suspense>;
 }
 
 /** Grass tufts for tall_grass cells — replaces the old raised green boxes. */
