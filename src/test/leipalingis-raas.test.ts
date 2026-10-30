@@ -183,15 +183,36 @@ describe('Leipalingis map: house placement', () => {
   it('never puts a house on the shore', () => {
     expect(urban.filter(c => ring.some(([dx, dy]) => at(c, dx, dy)?.type === 'water')).length).toBe(0);
   });
-  it('keeps a garden cell between houses in villages, hamlets and farmsteads', () => {
-    const spaced = urban.filter(c => !size(c) || size(c) === 'village' || size(c) === 'hamlet');
-    // A farm at the edge of a town may touch the town's last house at a corner; nothing else.
-    const townHouse = (n?: TerrainCell) => !!n && n.type === 'urban' && (size(n) === 'town' || size(n) === 'centre');
-    expect(spaced.filter(c => ring.some(([dx, dy]) => at(c, dx, dy)?.type === 'urban' && !(townHouse(at(c, dx, dy)) && dx && dy))).length).toBe(0);
+  it('keeps a free cell round lone farmsteads', () => {
+    const farms = urban.filter(c => !size(c));
+    const townHouse = (n?: TerrainCell) => !!n && n.type === 'urban' && !!size(n);
+    expect(farms.filter(c => ring.some(([dx, dy]) => at(c, dx, dy)?.type === 'urban' && !townHouse(at(c, dx, dy)))).length).toBe(0);
   });
-  it('lets town houses touch only at the corners', () => {
-    const towns = urban.filter(c => size(c) === 'town');
-    expect(towns.filter(c => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => at(c, dx, dy)?.type === 'urban')).length).toBe(0);
+  it('puts every village and town house on a street', () => {
+    const inTowns = urban.filter(c => size(c));
+    const onStreet = (c: TerrainCell) => [-2, -1, 0, 1, 2].some(dy => [-2, -1, 0, 1, 2].some(dx => ['road', 'gravel'].includes(at(c, dx, dy)?.type ?? '')));
+    expect(inTowns.filter(c => !onStreet(c)).length).toBe(0);
+  });
+  it('lines houses up with the street they stand on', () => {
+    // a house's walls are parallel or square to its nearest street (within a few degrees)
+    let checked = 0, off = 0;
+    for (const c of urban.filter(c => size(c) && size(c) !== 'centre').slice(0, 400)) {
+      const gx = c.x / CELL_SIZE + .5, gy = c.y / CELL_SIZE + .5;
+      let best = 3, dir = 0;
+      for (const r of LEIPALINGIS_ROADS) for (let i = 1; i < r.points.length; i++) {
+        const [ax, ay] = r.points[i - 1], [bx, by] = r.points[i];
+        if (Math.min(ax, bx) > gx + 3 || Math.max(ax, bx) < gx - 3 || Math.min(ay, by) > gy + 3 || Math.max(ay, by) < gy - 3) continue;
+        const vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy || 1, t = Math.max(0, Math.min(1, ((gx - ax) * vx + (gy - ay) * vy) / L2));
+        const d = Math.hypot(ax + vx * t - gx, ay + vy * t - gy);
+        if (d < best) { best = d; dir = Math.atan2(vy, vx); }
+      }
+      if (best >= 3) continue;
+      checked++;
+      const q = Math.PI / 2, rel = (((c.propAngle ?? 0) - dir) % q + q) % q;
+      if (Math.min(rel, q - rel) > .12) off++;
+    }
+    expect(checked).toBeGreaterThan(200);
+    expect(off / checked).toBeLessThan(.05);
   });
 });
 

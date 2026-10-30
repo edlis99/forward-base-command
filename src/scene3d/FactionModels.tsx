@@ -98,10 +98,21 @@ function ImportedModel({ faction, type, unit }: { faction: FactionId; type: 'inf
     if (type !== 'infantry' || !loaded.animations.length) return null;
     const mixer = new THREE.AnimationMixer(model);
     const idleClip = loaded.animations.find(a => /Idle_Gun_Pointing$/.test(a.name)) ?? loaded.animations[0];
-    const moveClip = loaded.animations.find(a => /Run$/.test(a.name)) ?? idleClip;
-    const idle = mixer.clipAction(idleClip), move = mixer.clipAction(moveClip);
+    // Walk at normal pace, run only when moving fast (retreating, sprinting).
+    const walkClip = loaded.animations.find(a => /\|Walk$/.test(a.name) || /^Walk$/.test(a.name));
+    const runClip = loaded.animations.find(a => /\|Run$/.test(a.name) || /^Run$/.test(a.name));
+    const idle = mixer.clipAction(idleClip);
+    const walk = walkClip ? mixer.clipAction(walkClip) : null, run = runClip ? mixer.clipAction(runClip) : null;
     idle.play(); mixer.update(0);
-    return { mixer, idle, move, moving: false };
+    // Models with no walking clip (the coalition rifleman only has a standing
+    // pose) get a walk cycle driven on their leg and arm bones instead.
+    const bone = (n: string) => model.getObjectByName(n) ?? null;
+    const rig = !walk && !run ? { ul: bone('upleg.L'), ur: bone('upleg.R'), ll: bone('leg.L'), lr: bone('leg.R'), al: bone('arm.L'), ar: bone('arm.R') } : null;
+    const proceduralWalk = !!rig && !!rig.ul && !!rig.ur;
+    // Resting pose of each driven bone; the swing is applied relative to it every frame (never accumulated).
+    const rest = new Map<THREE.Object3D, THREE.Quaternion>();
+    if (proceduralWalk) for (const b of Object.values(rig!)) if (b) rest.set(b, b.quaternion.clone());
+    return { mixer, idle, walk, run, current: idle as THREE.AnimationAction, rig: proceduralWalk ? rig : null, rest, phase: 0, stride: 0 };
   }, [model, loaded, type]);
   const rifleMount = useMemo(() => {
     if (type !== 'infantry' || faction !== 'vostran') return null;
@@ -115,15 +126,36 @@ function ImportedModel({ faction, type, unit }: { faction: FactionId; type: 'inf
     return mount;
   }, [model, type, faction]);
   useEffect(() => () => { animation?.mixer.stopAllAction(); animation?.mixer.uncacheRoot(model); }, [animation, model]);
+  const swing = useMemo(() => ({ q: new THREE.Quaternion(), x: new THREE.Vector3(1, 0, 0) }), []);
   useFrame((_, dt) => {
     if (!animation) return;
-    const moving = !!unit && Math.hypot(unit.vel.x, unit.vel.y) > 1;
-    if (moving !== animation.moving && animation.move !== animation.idle) {
-      (moving ? animation.idle : animation.move).fadeOut(0.18);
-      (moving ? animation.move : animation.idle).reset().fadeIn(0.18).play();
-      animation.moving = moving;
+    const step = Math.min(dt, 0.05);
+    const speed = unit ? Math.hypot(unit.vel.x, unit.vel.y) : 0;
+    const pace = unit ? speed / Math.max(1, unit.speed) : 0; // 1 = normal marching speed
+    const fast = !!unit && (unit.order === 'retreat' || pace > 1.15);
+    const want = speed <= 1 ? animation.idle : fast ? (animation.run ?? animation.walk ?? animation.idle) : (animation.walk ?? animation.run ?? animation.idle);
+    if (want !== animation.current) {
+      animation.current.fadeOut(0.2);
+      want.reset().fadeIn(0.2).play();
+      animation.current = want;
     }
-    animation.mixer.update(Math.min(dt, 0.05));
+    // Leg speed follows ground speed, so feet do not slide.
+    if (want !== animation.idle) want.timeScale = Math.max(.55, Math.min(1.6, pace * (fast ? .8 : 1)));
+    animation.mixer.update(step);
+    if (animation.rig) {
+      // Bone-driven walk: thighs swing, knees bend on the back swing, arms counter-swing.
+      const r = animation.rig;
+      animation.stride += ((speed > 1 ? 1 : 0) - animation.stride) * Math.min(1, step * 8);
+      animation.phase += step * (5.5 + pace * 3) * animation.stride;
+      const a = Math.sin(animation.phase) * .55 * animation.stride, k = animation.stride * .75;
+      const turn = (b: THREE.Object3D | null, angle: number) => {
+        const base = b && animation.rest.get(b);
+        if (b && base) b.quaternion.copy(base).multiply(swing.q.setFromAxisAngle(swing.x, angle));
+      };
+      turn(r.ul, a); turn(r.ur, -a);
+      turn(r.ll, Math.max(0, -Math.sin(animation.phase)) * k); turn(r.lr, Math.max(0, Math.sin(animation.phase)) * k);
+      turn(r.al, -a * .6); turn(r.ar, a * .6);
+    }
   });
   return <group name={`faction-model-${faction}-${type}`} userData={{ faction, unitType: type, imported: true }} dispose={null}>
     <primitive object={model} />
