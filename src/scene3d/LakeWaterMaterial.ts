@@ -26,7 +26,7 @@ export function useLakeWaterMaterial(): THREE.MeshPhysicalMaterial {
 
     const water = new THREE.MeshPhysicalMaterial({
       color: '#486b65',
-      roughness: 0.21,
+      roughness: 0.3,
       metalness: 0,
       clearcoat: 0.92,
       clearcoatRoughness: 0.095,
@@ -61,11 +61,11 @@ export function useLakeWaterMaterial(): THREE.MeshPhysicalMaterial {
         `#include <normal_fragment_maps>
         // Two slow, differently oriented ripples: fine wind ripples above
         // broad lake undulation, with stable world-space UVs across sections.
-        vec2 uvA = vLakeWorld * 0.66 + lakeTime * vec2(0.008, -0.004);
-        vec2 uvB = vLakeWorld * 1.37 + lakeTime * vec2(-0.005, 0.009);
+        vec2 uvA = vLakeWorld * 0.19 + lakeTime * vec2(0.006, -0.003);
+        vec2 uvB = vLakeWorld * 0.43 + lakeTime * vec2(-0.004, 0.007);
         vec3 nA = texture2D(lakeNormalA, uvA).xyz * 2.0 - 1.0;
         vec3 nB = texture2D(lakeNormalB, uvB).xyz * 2.0 - 1.0;
-        vec2 slope = (nA.xy * 0.62 + nB.xy * 0.38) * 0.31;
+        vec2 slope = (nA.xy * 0.62 + nB.xy * 0.38) * 0.17;
         normal = normalize(normal + mat3(viewMatrix) * vec3(slope.x, 0.0, slope.y));
         vec3 viewToEye = normalize(vViewPosition);
         float facing = clamp(dot(normal, viewToEye), 0.0, 1.0);
@@ -80,7 +80,7 @@ export function useLakeWaterMaterial(): THREE.MeshPhysicalMaterial {
         diffuseColor.rgb += vec3(0.55, 0.59, 0.50) * glint * 0.12;`,
       );
     };
-    water.customProgramCacheKey = () => 'inland-lake-water-v1';
+    water.customProgramCacheKey = () => 'inland-lake-water-v2';
     return water;
   }, [maps]);
   useEffect(() => () => material.dispose(), [material]);
