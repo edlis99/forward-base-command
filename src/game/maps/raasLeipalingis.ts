@@ -51,7 +51,7 @@ export const RAAS_LANES: ObjectiveId[][] = [
   ['varnenai', 'jovaisiai', 'seirijai_centre', 'versiai', 'kaziuliai'],
   ['varnenai', 'jovaisiai', 'seirijai_centre', 'versiai', 'barzdziunai'],
   ['barciai', 'varnenai', 'leipalingis_east', 'kaziuliai', 'gailiunai'],
-  ['sadziunai', 'varnenai', 'leipalingis_east', 'kaziuliai', 'ricieliai'],
+  ['smarliunai', 'varnenai', 'leipalingis_east', 'kaziuliai', 'ricieliai'],
 ];
 
 export const RAAS_CHAINS: RaasChain[] = RAAS_LANES.map(ids => {
