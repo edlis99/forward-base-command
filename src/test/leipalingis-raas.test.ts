@@ -148,6 +148,33 @@ describe('Leipalingis map: terrain that changes the fight', () => {
   });
 });
 
+describe('Leipalingis map: water', () => {
+  it('fills every lake to just below its shore instead of leaving a pit', () => {
+    const H = terrain.length, W = terrain[0].length, seen = new Set<number>();
+    let lakes = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (terrain[y][x].type !== 'water' || seen.has(y * W + x)) continue;
+      const cells: [number, number][] = [], queue: [number, number][] = [[x, y]]; seen.add(y * W + x);
+      while (queue.length) {
+        const [cx, cy] = queue.pop()!; cells.push([cx, cy]);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = cx + dx, ny = cy + dy;
+          if (terrain[ny]?.[nx]?.type === 'water' && !seen.has(ny * W + nx)) { seen.add(ny * W + nx); queue.push([nx, ny]); }
+        }
+      }
+      if (cells.length < 40 || cells.some(([cx, cy]) => cx <= 0 || cy <= 0 || cx >= W - 1 || cy >= H - 1)) continue; // lakes only
+      const shore = cells.flatMap(([cx, cy]) => [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => terrain[cy + dy]?.[cx + dx])
+        .filter(n => n && n.type !== 'water').map(n => n!.elevation)).sort((a, b) => a - b);
+      const median = shore[Math.floor(shore.length / 2)], level = terrain[cells[0][1]][cells[0][0]].elevation;
+      expect(cells.every(([cx, cy]) => terrain[cy][cx].elevation === level)).toBe(true); // one flat surface
+      expect(median - level).toBeLessThan(.5);   // was 1.1-1.8 below the shore before (deep pits)
+      expect(median - level).toBeGreaterThan(0);  // still below a typical bank
+      lakes++;
+    }
+    expect(lakes).toBeGreaterThan(5);
+  });
+});
+
 describe('Leipalingis map: house placement', () => {
   const urban = terrain.flat().filter(c => c.type === 'urban');
   const at = (c: TerrainCell, dx: number, dy: number) => terrain[Math.floor(c.y / CELL_SIZE) + dy]?.[Math.floor(c.x / CELL_SIZE) + dx];

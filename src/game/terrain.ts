@@ -1,6 +1,7 @@
 import { TerrainCell, TerrainType, MapLayoutId } from './types';
 import { MAP_COLS, MAP_ROWS, CELL_SIZE } from './constants';
 import { buildLeipalingis } from './maps/leipalingis';
+import { geography } from './maps/geography';
 export { LEIPALINGIS_ANCHORS } from './maps/leipalingis';
 
 function seededRandom(seed: number) {
@@ -45,7 +46,8 @@ export function generateTerrain(layout: MapLayoutId = 'farmhouse_complex', seed:
     case 'leipalingis_region': buildLeipalingis(grid, rand, setTerrain); break;
   }
 
-  applyWaterElevation(grid);
+  // The designed Leipalingis map sets its own lake and river levels (see buildLeipalingis).
+  if (!(layout === 'leipalingis_region' && geography.designed)) applyWaterElevation(grid);
   return grid;
 }
 
