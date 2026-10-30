@@ -6,11 +6,13 @@ import { MapSection } from './mapSections';
 import { createRoadTexture, landscapeMaterial } from './roadMaterial';
 import { makeGrainTexture } from './materials';
 import { buildGroundGeometry } from './groundGeometry';
-import { groundHeightAt, hash2 } from './terrainHeight';
+import { groundHeightAt, hash2, waterBedHeightAt } from './terrainHeight';
 import { useLakeWaterMaterial } from './LakeWaterMaterial';
 
 const W = MAP_COLS;
 const H = MAP_ROWS;
+/** Water surface above its bed: just under the lower banks of each lake. */
+const WATER_DEPTH = 0.42;
 
 /**
  * One continuous, vertex-coloured landscape mesh for the whole map.
@@ -45,8 +47,9 @@ function LakeSurface({ geometry }: { geometry: THREE.BufferGeometry }) {
   </mesh>;
 }
 
-/** Connected inland water sheet: neighbouring quads share corner positions
- * and subtle shoreline colour variation. No per-cell blue tiles. */
+/** Connected inland water sheet: one surface per lake (flat) or river
+ * (following its level), extended one cell under the banks so the shoreline is
+ * where the ground rises through the water, not the edge of square cells. */
 export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; section: MapSection }) {
   const geometry = useMemo(() => {
     const positions: number[] = [];
@@ -54,6 +57,10 @@ export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; sec
     const shores: number[] = [];
     const isWater = (x: number, y: number) =>
       x >= 0 && y >= 0 && x < W && y < H && terrain[y][x].type === 'water';
+    const nearWater = (x: number, y: number) => {
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (isWater(x + dx, y + dy)) return true;
+      return false;
+    };
     const cornerWetness = (cx: number, cy: number) => {
       let n = 0;
       if (isWater(cx - 1, cy - 1)) n++;
@@ -66,21 +73,41 @@ export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; sec
       x: (hash2(cx * 5.3, cy * 7.1) - 0.5) * 0.32,
       z: (hash2(cx * 9.7, cy * 3.9) - 0.5) * 0.32,
     });
+    // Surface level at a corner from the nearest water cells only; dry corners
+    // of the bank ring take the level of the water beside them.
+    const cornerLevel = (cx: number, cy: number, px: number, pz: number) => {
+      const bed = waterBedHeightAt(terrain, px, pz);
+      if (bed !== undefined) return bed + WATER_DEPTH;
+      let sum = 0, n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const b = waterBedHeightAt(terrain, cx + dx, cy + dy);
+        if (b !== undefined) { sum += b; n++; }
+      }
+      return n ? sum / n + WATER_DEPTH : undefined;
+    };
     let base = 0;
     for (let y = section.y; y < section.y + section.height; y++)
       for (let x = section.x; x < section.x + section.width; x++) {
-        if (terrain[y][x].type !== 'water') continue;
+        const water = terrain[y][x].type === 'water';
+        if (!water && !nearWater(x, y)) continue;
         const corners: Array<[number, number]> = [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]];
+        const verts: number[] = [], vertShores: number[] = [];
         for (const [cx, cy] of corners) {
-          // Shared keyed vertices prevent visible gaps between lake cells and
-          // along streaming section boundaries.
+          // Corners are computed from their grid key alone, so neighbouring
+          // quads and streaming section borders match exactly.
           const offset = cornerOffset(cx, cy);
           const wet = cornerWetness(cx, cy);
           const px = cx + offset.x, pz = cy + offset.z;
-          const height = groundHeightAt(terrain, px, pz) + 0.40 - wet * 0.06;
-          positions.push(px, height, pz);
-          shores.push(1 - wet);
+          const level = cornerLevel(cx, cy, px, pz);
+          if (level === undefined) break;
+          // On dry corners tuck the sheet under the bank: it never floats over grass.
+          const height = wet < 1 ? Math.min(level, groundHeightAt(terrain, px, pz) - 0.08 + wet * 0.3) : level;
+          verts.push(px, height, pz);
+          vertShores.push(1 - wet);
         }
+        if (verts.length < 12) continue;
+        positions.push(...verts);
+        shores.push(...vertShores);
         indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
         base += 4;
       }
@@ -88,8 +115,9 @@ export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; sec
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geo.setAttribute('lakeShore', new THREE.Float32BufferAttribute(shores, 1));
+    // Water lies level: per-quad computed normals made river slopes shine as facets.
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(positions.length).map((_, i) => i % 3 === 1 ? 1 : 0), 3));
     geo.setIndex(indices);
-    geo.computeVertexNormals();
     return geo;
   }, [terrain, section]);
 
