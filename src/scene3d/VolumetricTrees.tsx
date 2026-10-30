@@ -37,7 +37,7 @@ function useForestMaterials(): Materials {
       foliage.anisotropy = 8; foliage.needsUpdate = true;
       const wood = new THREE.MeshStandardMaterial({
         map: bark, bumpMap: bark, bumpScale: .014, roughness: .96, metalness: 0,
-        side: THREE.FrontSide,
+        side: THREE.FrontSide, vertexColors: true,
       });
       const leaves = canopyMaterial();
       leaves.map = foliage;
