@@ -30,6 +30,9 @@ const imagePaths = [
   'assets/nature/trees/birch_sprig.svg',
   'assets/nature/trees/oak_sprig.svg',
   'assets/nature/trees/alder_sprig.svg',
+  // Lake normal maps are decoded before the 3D map appears.
+  'assets/water/lake_ripples_a.png',
+  'assets/water/lake_ripples_b.png',
 ];
 const modelPaths = [
   'assets/nature/shrub/shrub.obj',
