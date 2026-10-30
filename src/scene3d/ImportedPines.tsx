@@ -11,6 +11,15 @@ import type { TreePlacement } from './VolumetricTrees';
  */
 const URL = `${import.meta.env.BASE_URL}assets/nature/pine/pine.obj`;
 const normalized = new WeakMap<THREE.Group, { meshes: { geometry: THREE.BufferGeometry; foliage: boolean }[]; width: number; height: number }>();
+/** Vertices [start, start + count) of a non-indexed geometry, as its own geometry. */
+function slice(source: THREE.BufferGeometry, start: number, count: number) {
+  const g = new THREE.BufferGeometry();
+  for (const [name, attr] of Object.entries(source.attributes)) {
+    const a = attr as THREE.BufferAttribute;
+    g.setAttribute(name, new THREE.BufferAttribute(a.array.slice(start * a.itemSize, (start + count) * a.itemSize), a.itemSize, a.normalized));
+  }
+  return g;
+}
 function prepared(source: THREE.Group) {
   const cached = normalized.get(source);
   if (cached) return cached;
@@ -21,20 +30,27 @@ function prepared(source: THREE.Group) {
   const meshes: { geometry: THREE.BufferGeometry; foliage: boolean }[] = [];
   source.traverse(node => {
     if (!(node instanceof THREE.Mesh)) return;
-    const g = node.geometry.clone();
-    g.applyMatrix4(node.matrixWorld);
-    g.translate(-center.x, -bounds.min.y, -center.z);
-    // The procedural and imported pine leaves share one vertex-coloured
-    // material. OBJ meshes normally have no vertex colour attribute: provide
-    // neutral white so the WebGL shader does not multiply foliage to black.
-    if (!g.getAttribute('color')) {
-      const count = g.getAttribute('position').count;
-      g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(count * 3).fill(1), 3));
+    const whole = node.geometry.clone();
+    whole.applyMatrix4(node.matrixWorld);
+    whole.translate(-center.x, -bounds.min.y, -center.z);
+    const mats: THREE.Material[] = Array.isArray(node.material) ? node.material : [node.material];
+    // The OBJ is one object with trunk, bark and foliage material groups.
+    // Split them, or the whole tree (bark included) is drawn as needles.
+    const parts = whole.groups.length > 1 && !whole.index
+      ? whole.groups.map(group => ({ geometry: slice(whole, group.start, group.count), material: mats[group.materialIndex ?? 0] }))
+      : [{ geometry: whole, material: mats[0] }];
+    for (const { geometry: g, material } of parts) {
+      // The procedural and imported pine leaves share one vertex-coloured
+      // material. OBJ meshes normally have no vertex colour attribute: provide
+      // neutral white so the WebGL shader does not multiply foliage to black.
+      if (!g.getAttribute('color')) {
+        const count = g.getAttribute('position').count;
+        g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(count * 3).fill(1), 3));
+      }
+      g.computeBoundingSphere();
+      const name = `${material?.name ?? ''} ${node.name}`.toLowerCase();
+      meshes.push({ geometry: g, foliage: /foliage|leaf|needle/.test(name) });
     }
-    g.computeBoundingSphere();
-    const mats = Array.isArray(node.material) ? node.material : [node.material];
-    const names = mats.map(m => m?.name ?? '').join(' ').toLowerCase() + ' ' + node.name.toLowerCase();
-    meshes.push({ geometry: g, foliage: /foliage|leaf|needle/.test(names) });
   });
   const result = { meshes, width: Math.max(size.x, size.z, .01), height: Math.max(size.y, .01) };
   normalized.set(source, result);

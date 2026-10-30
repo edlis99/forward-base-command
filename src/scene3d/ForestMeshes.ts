@@ -35,7 +35,7 @@ class MeshWriter {
     this.colors.push(light, light, light);
     return n;
   }
-  tube(start: THREE.Vector3, end: THREE.Vector3, r0: number, r1: number, sides = 7) {
+  tube(start: THREE.Vector3, end: THREE.Vector3, r0: number, r1: number, sides = 7, light = 1) {
     const axis = end.clone().sub(start);
     if (axis.lengthSq() < .000001) return;
     axis.normalize();
@@ -46,8 +46,8 @@ class MeshWriter {
     for (let i = 0; i <= sides; i++) {
       const theta = i / sides * Math.PI * 2;
       const radial = tangent.clone().multiplyScalar(Math.cos(theta)).addScaledVector(bitangent, Math.sin(theta));
-      this.addVertex(start.clone().addScaledVector(radial, r0), radial, i / sides, 0, 1);
-      this.addVertex(end.clone().addScaledVector(radial, r1), radial, i / sides, 1, 1);
+      this.addVertex(start.clone().addScaledVector(radial, r0), radial, i / sides, 0, light);
+      this.addVertex(end.clone().addScaledVector(radial, r1), radial, i / sides, 1, light);
     }
     for (let i = 0; i < sides; i++) {
       const a = base + i * 2, b = a + 1, c = a + 2, d = a + 3;
@@ -105,12 +105,16 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
   }
 
   const near = detail === 'near';
-  const branchCount = isSpruce ? (near ? 58 : 30)
-    : isPine ? (near ? 42 : 23)
-    : isOak ? (near ? 42 : 24) : (near ? 38 : 21);
-  const leafPerBranch = isSpruce ? (near ? 7 : 4)
-    : isPine ? (near ? 6 : 4)
-    : isOak ? (near ? 8 : 5) : (near ? 7 : 4);
+  // Far trees are most of a forest: fewer limbs, but each fully leafed, so the
+  // crown never reads as bare sticks from the tactical camera.
+  const branchCount = isSpruce ? (near ? 58 : 26)
+    : isPine ? (near ? 42 : 20)
+    : isOak ? (near ? 42 : 20) : (near ? 38 : 18);
+  const leafPerBranch = isSpruce ? (near ? 11 : 11)
+    : isPine ? (near ? 10 : 11)
+    : isOak ? (near ? 12 : 12) : (near ? 11 : 11);
+  // Branch bark is darker than the trunk (birch limbs are grey, not white).
+  const limbLight = species === 'birch' ? .5 : .78;
   const crownStart = isPine ? .57 : isSpruce ? .18 : isOak ? .44 : .42;
 
   for (let i = 0; i < branchCount; i++) {
@@ -127,9 +131,12 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
     const bend = isSpruce ? -.10 : isPine ? .035 : .14;
     const mid = start.clone().addScaledVector(direction, length * .50).add(v(0, bend * length * .5 + .04 * rand(), 0));
     const end = start.clone().addScaledVector(direction, length).add(v(0, bend * length + .09 * rand(), 0));
-    const radius = (isOak ? .024 : .012) * (.5 + taper) * (.78 + .4 * rand());
-    wood.tube(start, mid, radius, radius * .67, near ? 6 : 5);
-    wood.tube(mid, end, radius * .67, .003, near ? 6 : 5);
+    // Conifer limbs are slim: thick ones showed as dark stars from above.
+    const radius = (isOak ? .024 : conifer ? .0075 : .012) * (.5 + taper) * (.78 + .4 * rand());
+    // The limb's wood stops short of its foliage, so no bare tips stick out.
+    const woodEnd = start.clone().lerp(end, .86);
+    wood.tube(start, mid, radius, radius * .67, near ? 6 : 5, limbLight);
+    wood.tube(mid, woodEnd, radius * .67, .003, near ? 6 : 5, limbLight);
 
     // Forks with real woody secondary branches and terminal foliage sprays.
     const forkCount = near ? 3 : 2;
@@ -140,15 +147,20 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
       const forkDir = v(Math.cos(a + dev), 0, Math.sin(a + dev));
       const twigEnd = forkStart.clone().addScaledVector(forkDir, length * (.28 + rand() * .31))
         .add(v(0, (conifer ? -.02 : .05) + rand() * .06, 0));
-      wood.tube(forkStart, twigEnd, radius * .30, .0016, 4);
+      wood.tube(forkStart, twigEnd, radius * .30, .0016, 4, limbLight);
       const count = Math.max(1, Math.ceil(leafPerBranch / forkCount));
       for (let k = 0; k < count; k++) {
-        const at = twigEnd.clone().lerp(forkStart, rand() * .55);
+        // Foliage clothes the outer limb and its tip as well as the twigs:
+        // leaves only on twig ends left long stretches of bare wood showing.
+        const pick = rand();
+        const at = pick < .5 ? twigEnd.clone().lerp(forkStart, rand() * .7)
+          : pick < .75 ? start.clone().lerp(end, (conifer ? .18 : .4) + rand() * (conifer ? .82 : .6))
+          : end.clone();
         const jx = (rand() - .5) * (conifer ? .085 : .11);
         const jy = (rand() - .5) * (conifer ? .08 : .13);
         const jz = (rand() - .5) * (conifer ? .085 : .11);
         at.add(v(jx, jy, jz));
-        const size = isPine ? [.105, .17] : isSpruce ? [.115, .19] : isOak ? [.115, .19] : [.09, .16];
+        const size = isPine ? [.14, .22] : isSpruce ? [.15, .24] : isOak ? [.155, .25] : [.125, .21];
         const light = .80 + rand() * .24;
         const spin = a + rand() * Math.PI;
         leaf.sprig(at, size[0] * (.75 + rand() * .5), size[1] * (.8 + rand() * .5),
@@ -163,10 +175,12 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
       }
     }
   }
-  // Natural leader and small terminal top sprouts.
-  if (!isOak) for (let i = 0; i < (near ? 14 : 7); i++) {
-    const t = rand(), pt = v((rand() - .5) * .09, .93 + rand() * .06, (rand() - .5) * .09);
-    leaf.sprig(pt, conifer ? .07 : .09, .09 + t * .11, rand() * Math.PI * 2, (rand() - .5) * .8, .86 + t * .16);
+  // Leafy crown top over the trunk tip, where the highest limbs meet: without
+  // it the converging bare limbs showed as a dark star from the overhead camera.
+  for (let i = 0; i < (near ? 22 : 14); i++) {
+    const t = rand(), r = Math.sqrt(rand()) * (conifer ? .09 : .17), th = rand() * Math.PI * 2;
+    const pt = v(trunkLean + Math.cos(th) * r, .84 + rand() * .15, Math.sin(th) * r);
+    leaf.sprig(pt, conifer ? .11 : .15, (conifer ? .15 : .2) + t * .08, rand() * Math.PI * 2, (rand() - .5) * 1.2, .86 + t * .16);
   }
   const result = { wood: wood.build(), leaves: leaf.build() };
   result.wood.userData = { species, detail, role: 'real branching timber' };
