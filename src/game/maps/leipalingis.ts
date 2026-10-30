@@ -171,9 +171,13 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     }
   }
 
+  // Every settlement keeps an open square at its centre (where its objective
+  // sits): houses, yards and props there walled the point into a pocket.
+  const onSquare = (x: number, y: number) =>
+    designed && SETTLEMENTS.some(t => Math.hypot(x + .5 - t.x, y + .5 - t.y) < 1.6);
   const free = (x: number, y: number) => {
     const c = grid[y]?.[x];
-    return c && !c.yard && !c.roadName && (c.type === 'open' || c.type === 'tall_grass');
+    return c && !c.yard && !c.roadName && (c.type === 'open' || c.type === 'tall_grass') && !onSquare(x, y);
   };
   const placeProp = (x: number, y: number, prop: NonNullable<TerrainCell['prop']>, angle: number) => {
     if (!free(x, y)) return;
@@ -240,13 +244,18 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     }
     return angle;
   };
-  const building = (x: number, y: number, angle: number, offset?: [number, number]) => {
+  /** Big-town core (centre settlements only), where houses may share walls and fill back lots. */
+  const inCore = (town: ReturnType<typeof settlementAt>, x: number, y: number) =>
+    town?.size === 'centre' && ((x + .5 - town.x) / town.rx) ** 2 + ((y + .5 - town.y) / town.ry) ** 2 < .38;
+  /** `back`: a barn behind its farmhouse or a core back-lot building, not street frontage. */
+  const building = (x: number, y: number, angle: number, offset?: [number, number], back = false) => {
     const town = settlementAt(x + .5, y + .5);
     if (!free(x, y)) return false;
     if (designed && town) {
-      // Houses stand on streets: no settlement house more than 2 cells from one.
+      // Houses stand on streets: frontage right beside one, outbuildings at most 2 cells back.
+      const reach = back ? 2 : 1;
       let street = false;
-      for (let dy = -2; dy <= 2 && !street; dy++) for (let dx = -2; dx <= 2; dx++) {
+      for (let dy = -reach; dy <= reach && !street; dy++) for (let dx = -reach; dx <= reach; dx++) {
         const n = grid[y + dy]?.[x + dx];
         if (n && (n.type === 'road' || n.type === 'gravel')) { street = true; break; }
       }
@@ -262,18 +271,22 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
       if (ring.some(([dx, dy]) => at(dx, dy)?.type === 'water')) return false;
       // Spacing: villages and farms keep a garden cell between houses; towns
       // may touch only at the corners; only big-town centres are built solid.
-      const q = town ? ((x + .5 - town.x) / town.rx) ** 2 + ((y + .5 - town.y) / town.ry) ** 2 : 1;
-      const solid = town?.size === 'centre' && q < .3;
-      // Houses are drawn at about half a cell (BUILDING_SCALE), so neighbouring
-      // cells in a street already leave a garden between them. Lone farmsteads
-      // keep a free cell round them so a farm reads as one yard.
+      const solid = inCore(town, x, y);
+      // Outside the big-town cores every house keeps a garden on each side:
+      // side-by-side cells made solid strips and clumps. Lone farmsteads keep
+      // a free cell round them so a farm reads as one yard.
+      if (!solid && town && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => at(dx, dy)?.type === 'urban')) return false;
+      // Back-lot houses outside the cores stand clear on all sides: diagonal
+      // neighbours leave gaps a vehicle cannot pass and wall off pockets.
+      if (!solid && town && back && ring.some(([dx, dy]) => at(dx, dy)?.type === 'urban')) return false;
       if (!solid && !town && ring.some(([dx, dy]) => at(dx, dy)?.type === 'urban')) return false;
     }
     if (town && (count[town.id] ?? 0) >= (town.size === 'centre' ? 320 : town.size === 'town' ? 160 : 110)) return false;
     set(grid, x, y, 'urban');
     const c = grid[y][x]; c.settlementId = town?.id;
     c.propAngle = designed ? faceStreet(x, y, angle) : angle;
-    if (designed && offset) c.buildingOffset = [Math.max(-.28, Math.min(.28, offset[0])), Math.max(-.28, Math.min(.28, offset[1]))];
+    // Small jitter only: larger offsets pushed neighbouring houses into each other.
+    if (designed && offset) c.buildingOffset = [Math.max(-.14, Math.min(.14, offset[0])), Math.max(-.14, Math.min(.14, offset[1]))];
     c.buildingKind = designed ? designedKind(town, x, y) : town?.id === 'didziasalis' && deterministic(x, y) > .65 ? 'barn' : 'house';
     if (town) count[town.id] = (count[town.id] ?? 0) + 1;
     // Yard details are added after all buildings, so props cannot erase frontage.
@@ -306,26 +319,29 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     for (let y = Math.floor(town.y - town.ry); y <= town.y + town.ry; y++) {
       for (let x = Math.floor(town.x - town.rx); x <= town.x + town.rx; x++) {
         if (settlementAt(x + .5, y + .5)?.id !== town.id || !free(x, y)) continue;
-        if ((count[town.id] ?? 0) >= (town.size === 'centre' ? 180 : town.size === 'hamlet' ? 30 : 60)) continue;
-        const nearStreet = [-2, -1, 1, 2].some(d => grid[y]?.[x + d]?.type === 'road' || grid[y + d]?.[x]?.type === 'road');
+        if ((count[town.id] ?? 0) >= (town.size === 'centre' ? 180 : town.size === 'hamlet' ? 30 : town.size === 'town' ? 85 : 60)) continue;
+        // Village back lanes (gravel) get frontage too, not only the paved road.
+        const isStreet = (c?: TerrainCell) => c?.type === 'road' || (designed && c?.type === 'gravel');
+        const nearStreet = [-2, -1, 1, 2].some(d => isStreet(grid[y]?.[x + d]) || isStreet(grid[y + d]?.[x]));
         // Roadside houses in small villages are spaced by garden plots and
         // fenced yards; only the two town cores have continuous frontage.
-        const density = town.size === 'centre' ? .30 : town.size === 'town' ? .48 : town.size === 'village' ? .35 : .40;
+        const density = town.size === 'centre' ? .30 : town.size === 'town' ? .12 : town.size === 'village' ? .25 : .30;
         if (nearStreet && deterministic(x, y) > density) building(x, y,
           designed ? (deterministic(x + 5, y) - .5) * .14 : 0,
           designed ? [(deterministic(x, y + 8) - .5) * .28, (deterministic(x + 8, y) - .5) * .28] : undefined);
       }
     }
     if (designed && (town.size === 'centre' || town.size === 'town')) {
-      // Blocks behind the street frontage: big towns are built up, not one row deep.
-      const target = town.size === 'centre' ? 240 : 95;
+      // Back lots: built up in the two big-town cores; elsewhere in towns only
+      // behind a frontage garden (the garden rule keeps them off other houses),
+      // so a town is denser than a village without turning into solid clumps.
+      const target = town.size === 'centre' ? 240 : 60;
       for (let y = Math.floor(town.y - town.ry); y <= town.y + town.ry; y++) for (let x = Math.floor(town.x - town.rx); x <= town.x + town.rx; x++) {
         if ((count[town.id] ?? 0) >= target) break;
-        const q = ((x + .5 - town.x) / town.rx) ** 2 + ((y + .5 - town.y) / town.ry) ** 2;
-        if (q > .8 || settlementAt(x + .5, y + .5)?.id !== town.id || !free(x, y)) continue;
-        const lot = town.size === 'centre' ? x % 3 !== 0 : (x + y) % 2 === 0;
-        if (lot && deterministic(x + 3, y + 9) > .3) building(x, y, (deterministic(x, y) - .5) * .3,
-          [(deterministic(x, y + 4) - .5) * .4, (deterministic(x + 4, y) - .5) * .4]);
+        if (settlementAt(x + .5, y + .5)?.id !== town.id || !free(x, y)) continue;
+        const lot = inCore(town, x, y) ? x % 3 !== 0 : town.size === 'town';
+        if (lot && deterministic(x + 3, y + 9) > (town.size === 'town' ? .15 : .3)) building(x, y, (deterministic(x, y) - .5) * .3,
+          [(deterministic(x, y + 4) - .5) * .2, (deterministic(x + 4, y) - .5) * .2], true);
       }
     }
     const candidates = grid.flat().filter(c => c.type === 'urban' && c.settlementId === town.id)
@@ -360,7 +376,7 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
       ];
       for (const [xx, yy] of candidates) {
         if (!free(xx, yy) || settlementAt(xx + .5, yy + .5)?.id !== home.settlementId) continue;
-        if (building(xx, yy, a)) {
+        if (building(xx, yy, a, undefined, true)) {
           grid[yy][xx].buildingKind = 'barn';
           grid[yy][xx].propAngle = a;
           break;
