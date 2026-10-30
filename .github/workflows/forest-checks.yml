@@ -1,4 +1,4 @@
-name: Forest rendering checks
+name: Environment rendering checks
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  forest-checks:
+  environment-checks:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,7 +20,7 @@ jobs:
       - run: npm ci
       - name: TypeScript
         run: npx tsc -p tsconfig.app.json --noEmit
-      - name: Forest mesh and biome tests
-        run: npx vitest run src/test/forest-textures.test.ts src/test/forest-biomes.test.ts
+      - name: Forest and lake material tests
+        run: npx vitest run src/test/forest-textures.test.ts src/test/forest-biomes.test.ts src/test/lake-water.test.ts
       - name: Production build
         run: npm run build
