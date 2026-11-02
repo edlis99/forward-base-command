@@ -13,11 +13,11 @@ export type TreeSpecies = ForestSpecies;
 const speciesOrder: ForestSpecies[] = ['pine', 'spruce', 'birch', 'oak', 'alder'];
 const ROOT = `${import.meta.env.BASE_URL}assets/nature`;
 const texturePaths = [
-  'pine/Textures/pine_bark.png', 'trees/pine_sprig.svg',
-  'trees/spruce_bark.svg', 'trees/spruce_sprig.svg',
-  'trees/birch_bark.svg', 'trees/birch_sprig.svg',
-  'trees/oak_bark.svg', 'trees/oak_sprig.svg',
-  'trees/alder_bark.svg', 'trees/alder_sprig.svg',
+  'pine/Textures/pine_bark.png', 'trees/pine_leaves.png',
+  'trees/spruce_bark.svg', 'trees/spruce_leaves.png',
+  'trees/birch_bark.svg', 'trees/birch_leaves.png',
+  'trees/oak_bark.svg', 'trees/oak_leaves.png',
+  'trees/alder_bark.svg', 'trees/alder_leaves.png',
 ].map(p => `${ROOT}/${p}`);
 
 interface TreeMaterials { wood: THREE.MeshStandardMaterial; foliage: THREE.MeshStandardMaterial; }
@@ -47,9 +47,10 @@ function useForestMaterials(): Materials {
       leaves.depthWrite = true;
       leaves.transparent = false;
       leaves.roughness = .94;
-      // Prevent almost-black needle mats under the strong tactical sun.
+      // A faint lift keeps needle mats from going black under the strong sun;
+      // more than this flattened the crown shading into one even green.
       leaves.emissive.set('#354b32');
-      leaves.emissiveIntensity = species === 'pine' || species === 'spruce' ? .10 : .14;
+      leaves.emissiveIntensity = .05;
       leaves.needsUpdate = true;
       materials[species] = { wood, foliage: leaves };
     });
@@ -94,7 +95,10 @@ function InstanceGeometry({ trees, geometry, material, wood }: {
       dummy.updateMatrix();
       mesh.current!.setMatrixAt(i, dummy.matrix);
       const shade = .85 + .18 * tree.rank;
-      tint.setRGB(shade, shade, shade);
+      // Foliage varies a little in hue from tree to tree (yellower / bluer),
+      // so a wood is not one flat green; bark only varies in brightness.
+      const hue = wood ? 0 : (((tree.rank * 7.31) % 1) - .5) * .16;
+      tint.setRGB(shade * (1 + hue), shade, shade * (1 - hue));
       mesh.current!.setColorAt(i, tint);
     });
     mesh.current.instanceMatrix.needsUpdate = true;
