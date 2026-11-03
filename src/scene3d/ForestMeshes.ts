@@ -97,25 +97,30 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
   const trunkRadius = isOak ? .063 : isPine ? .034 : isSpruce ? .035 : .030;
   const trunkLean = (rand() - .5) * .08;
 
+  const near = detail === 'near';
+  // Far trees are nearly every tree in a forest and are drawn twice (view and
+  // shadow), so they stay light: a short trunk, single limbs and a few large
+  // leaf-cluster cards (each card is a whole leafy twig). Around 300
+  // triangles instead of 2,000; only the few trees nearest the camera are
+  // built in full detail.
+  const trunkSegments = near ? 8 : 4;
   // Multi-segment, tapered trunk instead of a straight unbroken cylinder.
-  const trunk = Array.from({ length: 9 }, (_, i) => {
-    const t = i / 8;
+  const trunk = Array.from({ length: trunkSegments + 1 }, (_, i) => {
+    const t = i / trunkSegments;
     return v(trunkLean * t + Math.sin(t * 6 + seed) * .009 * t, t, (rand() - .5) * .016 * t);
   });
-  for (let i = 0; i < 8; i++) {
-    const t = i / 8;
-    wood.tube(trunk[i], trunk[i + 1], trunkRadius * (1 - .77 * t), trunkRadius * (1 - .77 * (i + 1) / 8), 9);
+  for (let i = 0; i < trunkSegments; i++) {
+    const t = i / trunkSegments;
+    wood.tube(trunk[i], trunk[i + 1], trunkRadius * (1 - .77 * t), trunkRadius * (1 - .77 * (i + 1) / trunkSegments), near ? 9 : 6);
   }
 
-  const near = detail === 'near';
-  // Far trees are most of a forest: fewer limbs, but each fully leafed, so the
-  // crown never reads as bare sticks from the tactical camera.
-  const branchCount = isSpruce ? (near ? 58 : 26)
-    : isPine ? (near ? 42 : 20)
-    : isOak ? (near ? 42 : 20) : (near ? 38 : 18);
-  const leafPerBranch = isSpruce ? (near ? 11 : 11)
-    : isPine ? (near ? 10 : 11)
-    : isOak ? (near ? 12 : 12) : (near ? 11 : 11);
+  const branchCount = isSpruce ? (near ? 58 : 14)
+    : isPine ? (near ? 42 : 11)
+    : isOak ? (near ? 42 : 11) : (near ? 38 : 10);
+  const leafPerBranch = isSpruce ? (near ? 11 : 5)
+    : isPine ? (near ? 10 : 5)
+    : isOak ? (near ? 12 : 6) : (near ? 11 : 5);
+  const cardScale = near ? 1 : 1.55;
   // Branch bark is darker than the trunk (birch limbs are grey, not white).
   const limbLight = species === 'birch' ? .5 : .78;
   const crownStart = isPine ? .57 : isSpruce ? .18 : isOak ? .44 : .42;
@@ -146,11 +151,13 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
     const radius = (isOak ? .024 : conifer ? .0075 : .012) * (.5 + taper) * (.78 + .4 * rand());
     // The limb's wood stops short of its foliage, so no bare tips stick out.
     const woodEnd = start.clone().lerp(end, .86);
-    wood.tube(start, mid, radius, radius * .67, near ? 6 : 5, limbLight);
-    wood.tube(mid, woodEnd, radius * .67, .003, near ? 6 : 5, limbLight);
+    if (near) {
+      wood.tube(start, mid, radius, radius * .67, 6, limbLight);
+      wood.tube(mid, woodEnd, radius * .67, .003, 6, limbLight);
+    } else wood.tube(start, woodEnd, radius, .003, 4, limbLight);
 
     // Forks with real woody secondary branches and terminal foliage sprays.
-    const forkCount = near ? 3 : 2;
+    const forkCount = near ? 3 : 1;
     for (let fork = 0; fork < forkCount; fork++) {
       const fraction = .54 + rand() * .40;
       const forkStart = start.clone().lerp(end, fraction);
@@ -158,7 +165,7 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
       const forkDir = v(Math.cos(a + dev), 0, Math.sin(a + dev));
       const twigEnd = forkStart.clone().addScaledVector(forkDir, length * (.28 + rand() * .31))
         .add(v(0, (conifer ? -.02 : .05) + rand() * .06, 0));
-      wood.tube(forkStart, twigEnd, radius * .30, .0016, 4, limbLight);
+      if (near) wood.tube(forkStart, twigEnd, radius * .30, .0016, 4, limbLight);
       const count = Math.max(1, Math.ceil(leafPerBranch / forkCount));
       for (let k = 0; k < count; k++) {
         // Foliage clothes the outer limb and its tip as well as the twigs:
@@ -175,11 +182,11 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
         const size = isPine ? [.2, .22] : isSpruce ? [.2, .24] : isOak ? [.22, .24] : [.19, .21];
         const light = .80 + rand() * .24;
         const spin = a + rand() * Math.PI;
-        leaf.sprig(at, size[0] * (.75 + rand() * .5), size[1] * (.8 + rand() * .5),
+        leaf.sprig(at, size[0] * cardScale * (.75 + rand() * .5), size[1] * cardScale * (.8 + rand() * .5),
           spin, (rand() - .5) * 1.7, light);
         // A second small leaf/needle sheet at a different angle provides
         // three-dimensional parallax from the overhead tactical camera.
-        if (near || k % 2 === 0) {
+        if (near) {
           const second = at.clone().add(v((rand() - .5) * .027, (rand() - .5) * .025, (rand() - .5) * .027));
           leaf.sprig(second, size[0] * (.65 + rand() * .35), size[1] * (.72 + rand() * .22),
             spin + Math.PI * .45, (rand() - .5) * 1.8, .81 + rand() * .22);
@@ -189,10 +196,10 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
   }
   // Leafy crown top over the trunk tip, where the highest limbs meet: without
   // it the converging bare limbs showed as a dark star from the overhead camera.
-  for (let i = 0; i < (near ? 22 : 14); i++) {
+  for (let i = 0; i < (near ? 22 : 6); i++) {
     const t = rand(), r = Math.sqrt(rand()) * (conifer ? .09 : .17), th = rand() * Math.PI * 2;
     const pt = v(trunkLean + Math.cos(th) * r, .84 + rand() * .15, Math.sin(th) * r);
-    leaf.sprig(pt, conifer ? .15 : .19, (conifer ? .16 : .2) + t * .06, rand() * Math.PI * 2, (rand() - .5) * 1.2, .86 + t * .16);
+    leaf.sprig(pt, (conifer ? .15 : .19) * cardScale, ((conifer ? .16 : .2) + t * .06) * cardScale, rand() * Math.PI * 2, (rand() - .5) * 1.2, .86 + t * .16);
   }
   const result = { wood: wood.build(), leaves: leaf.build() };
   result.wood.userData = { species, detail, role: 'real branching timber' };

@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useMemo, useRef } from 'react';
-import { useLoader } from '@react-three/fiber';
+import { useFrame, useLoader, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -119,9 +119,11 @@ function ImportedUnderstory({ layout, highQuality }: {
     };
     return { shrub: collect(shrubObj), grass: collect(grassObj), fern: collect(fernGltf.scene) };
   }, [shrubObj, grassObj, fernGltf.scene]);
-  const shrubs = layout.shrub.slice(0, highQuality ? 55 : 16);
-  const grasses = layout.grass.slice(0, highQuality ? 200 : 70);
-  const ferns = layout.fern.slice(0, highQuality ? 90 : 30);
+  // Forest-floor plants are mostly hidden under the canopy from the tactical
+  // camera, yet were ~680k triangles per section: keep a light scattering.
+  const shrubs = layout.shrub.slice(0, highQuality ? 18 : 6);
+  const grasses = layout.grass.slice(0, highQuality ? 70 : 24);
+  const ferns = layout.fern.slice(0, highQuality ? 32 : 10);
   const draw = (name: 'shrub' | 'grass', plants: TreePlacement[]) => meshes[name].map((mesh, i) => (
     <Instances key={`${name}-${i}`} geometry={mesh.geometry} material={mats[name]} plants={plants} />
   ));
@@ -139,15 +141,36 @@ class NatureBoundary extends React.Component<{ children: React.ReactNode }, { fa
   componentDidCatch(error: Error) { console.warn('Optional forest understory unavailable', error.message); }
   render() { return this.state.failed ? null : this.props.children; }
 }
+/** Whether a map section lies close to where the camera looks (checked twice a second). */
+function useSectionNearCamera(section: MapSection, range: number, maxHeight: number) {
+  const { camera } = useThree();
+  const [near, setNear] = React.useState(false);
+  const timer = useRef(1);
+  useFrame((_, delta) => {
+    timer.current += delta;
+    if (timer.current < .5) return;
+    timer.current = 0;
+    // Approximate ground look-at of the fixed tactical camera (as in VolumetricTrees).
+    const x = camera.position.x, z = camera.position.z - camera.position.y * .65;
+    const dx = Math.max(section.x - x, 0, x - (section.x + section.width));
+    const dz = Math.max(section.y - z, 0, z - (section.y + section.height));
+    const next = camera.position.y < maxHeight && Math.hypot(dx, dz) < range;
+    if (next !== near) setNear(next);
+  });
+  return near;
+}
+
 export function RealisticVegetation({ terrain, section, highQuality }: {
   terrain: TerrainCell[][]; section: MapSection; highQuality: boolean;
 }) {
   const layout = useMemo(() => scatter(terrain, section), [terrain, section]);
+  // Undergrowth only in sections near the view centre and when zoomed in.
+  const understory = useSectionNearCamera(section, highQuality ? 26 : 14, highQuality ? 70 : 45);
   return <group>
     {/* 3D trees are always present: no 2D cards during asset loading or at distance. */}
     <VolumetricTrees pine={layout.pine} broadleaf={layout.broadleaf} highQuality={highQuality} />
-    <NatureBoundary><Suspense fallback={null}>
+    {understory && <NatureBoundary><Suspense fallback={null}>
       <ImportedUnderstory layout={layout} highQuality={highQuality} />
-    </Suspense></NatureBoundary>
+    </Suspense></NatureBoundary>}
   </group>;
 }

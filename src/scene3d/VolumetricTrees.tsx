@@ -132,6 +132,9 @@ function LoadedForest({ pine, broadleaf, highQuality }: {
   const { camera } = useThree();
   const groups = useMemo(() => distribute(pine, broadleaf), [pine, broadleaf]);
   const [nearKeys, setNearKeys] = useState<string[]>([]);
+  // Nearest few pines that use the 25k-triangle imported model (per section).
+  const [importKeys, setImportKeys] = useState<string[]>([]);
+  const pineKeys = useMemo(() => new Set(groups.pine.map(item => item.key)), [groups]);
   const checkTimer = useRef(0);
   const lastKeys = useRef('');
   useFrame((_, delta) => {
@@ -145,14 +148,17 @@ function LoadedForest({ pine, broadleaf, highQuality }: {
     if (camera.position.y < (highQuality ? 95 : 55)) {
       speciesOrder.forEach(species => groups[species].forEach(({ tree, key }) => {
         const distance = Math.hypot(tree.x - x, tree.z - z);
-        if (distance < (highQuality ? 35 : 22))
+        if (distance < (highQuality ? 24 : 16))
           selected.push({ key, distance });
       }));
     }
-    const next = selected.sort((a, b) => a.distance - b.distance)
-      .slice(0, highQuality ? 36 : 12).map(item => item.key).sort();
-    const signature = next.join('/');
-    if (signature !== lastKeys.current) { lastKeys.current = signature; setNearKeys(next); }
+    // Detailed trees only right round the view centre; every section runs
+    // this, so generous limits multiplied into hundreds of heavy trees.
+    const nearest = selected.sort((a, b) => a.distance - b.distance).slice(0, highQuality ? 24 : 10);
+    const next = nearest.map(item => item.key).sort();
+    const imported = highQuality ? nearest.filter(item => pineKeys.has(item.key)).slice(0, 6).map(item => item.key).sort() : [];
+    const signature = next.join('/') + '|' + imported.join('/');
+    if (signature !== lastKeys.current) { lastKeys.current = signature; setNearKeys(next); setImportKeys(imported); }
   });
   const batches = useMemo(() => {
     const nearSet = new Set(nearKeys);
@@ -169,14 +175,20 @@ function LoadedForest({ pine, broadleaf, highQuality }: {
     }
     return results;
   }, [groups, nearKeys]);
-  const nearPines = batches.filter(batch => batch.species === 'pine' && batch.detail === 'near');
+  const importSet = useMemo(() => new Set(importKeys), [importKeys]);
+  const isImported = (tree: TreePlacement) => groups.pine.some(({ tree: t, key }) => t === tree && importSet.has(key));
+  const nearPines = batches.filter(batch => batch.species === 'pine' && batch.detail === 'near')
+    .map(batch => ({ ...batch, trees: batch.trees.filter(isImported) }));
   const naturalPines = nearPines.flatMap(batch => batch.trees);
   const pineFallback = <group name="imported-pine-fallback">
     {nearPines.filter(batch => batch.trees.length).map(batch =>
       <MeshBatch key={`pine-fallback-${batch.variant}`} {...batch} materials={materials.pine} />)}
   </group>;
+  // Near pines beyond the imported few use the procedural near mesh.
+  const drawn = batches.map(batch => batch.species === 'pine' && batch.detail === 'near'
+    ? { ...batch, trees: batch.trees.filter(tree => !isImported(tree)) } : batch);
   return <group name="botanical-3d-forest-with-branch-meshes">
-    {batches.filter(batch => batch.trees.length > 0 && !(batch.species === 'pine' && batch.detail === 'near'))
+    {drawn.filter(batch => batch.trees.length > 0)
       .map(batch =>
         <MeshBatch key={`${batch.species}-${batch.detail}-${batch.variant}`}
           {...batch} materials={materials[batch.species]} />)}
