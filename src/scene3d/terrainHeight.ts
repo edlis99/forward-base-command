@@ -60,16 +60,43 @@ export function fbm(x: number, y: number) {
   return sum;
 }
 
-/** Height of a bridge deck above the bank-level road it carries. */
-export const BRIDGE_DECK_LIFT = 0.12;
+/** Deck surface above the road it carries (keeps feet and markers on top). */
+export const BRIDGE_DECK_LIFT = 0.04;
+
+type HeightMode = 'bed' | 'deck' | 'road';
+type BridgeInfo = NonNullable<TerrainCell['bridge']>;
+const deckEnds = new WeakMap<BridgeInfo, [number, number]>();
+
+/** Road height at a span's two land ends; the deck slopes straight between them. */
+export function bridgeDeckEnds(terrain: TerrainCell[][], bridge: BridgeInfo): [number, number] {
+  let ends = deckEnds.get(bridge);
+  if (!ends) {
+    ends = [heightAt(terrain, bridge.a[0], bridge.a[1], 'road'), heightAt(terrain, bridge.b[0], bridge.b[1], 'road')];
+    deckEnds.set(bridge, ends);
+  }
+  return ends;
+}
+
+/** Deck surface height of a span at a point (projected onto the span line). */
+export function bridgeDeckAt(terrain: TerrainCell[][], bridge: BridgeInfo, gx: number, gz: number): number {
+  const [ha, hb] = bridgeDeckEnds(terrain, bridge);
+  const [ax, ay] = bridge.a, vx = bridge.b[0] - ax, vy = bridge.b[1] - ay;
+  const t = Math.max(0, Math.min(1, ((gx - ax) * vx + (gz - ay) * vy) / (vx * vx + vy * vy || 1)));
+  return ha + (hb - ha) * t + BRIDGE_DECK_LIFT;
+}
 
 /**
  * Surface height (world Y, in cell units) at continuous grid coordinates.
  * Must stay identical to the vertex displacement used by GroundSurface.
  * Under a bridge the ground is river bed (`deck` false); with `deck` true a
- * bridge cell is its road deck, which is what units and markers stand on.
+ * bridge cell is its sloped road deck, which is what units and markers stand on.
  */
 export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number, gz: number, deck = false): number {
+  return heightAt(terrain, gx, gz, deck ? 'deck' : 'bed');
+}
+
+/** `road` treats bridge cells as plain road (used only to find deck end heights). */
+function heightAt(terrain: TerrainCell[][] | undefined, gx: number, gz: number, mode: HeightMode): number {
   if (!terrain || terrain.length === 0) return 0;
   const cellAt = (cx: number, cy: number): TerrainCell => {
     const row = terrain[Math.max(0, Math.min(H - 1, cy))] ?? terrain[0];
@@ -84,11 +111,11 @@ export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number,
     [cellAt(ix, iz + 1), (1 - fx) * fz],
     [cellAt(ix + 1, iz + 1), fx * fz],
   ];
-  let level = 0, relief = 0, elev = 0, onDeck = 0;
+  let level = 0, relief = 0, elev = 0, deckSum = 0;
   for (const [c, w] of wts) {
     if (w <= 0 || !c) continue;
-    const bed = !!c.bridge && !deck;
-    if (c.bridge && deck) onDeck += w;
+    if (c.bridge && mode === 'deck') { deckSum += w * bridgeDeckAt(terrain, c.bridge, gx, gz); continue; }
+    const bed = !!c.bridge && mode === 'bed';
     level += (bed ? GROUND_LEVEL.water : c.roadName ? 0 : GROUND_LEVEL[c.type] ?? 0) * w;
     relief += (bed ? RELIEF.water : c.roadName ? 1 : RELIEF[c.type] ?? 1) * w;
     elev += ((c.elevation ?? 1) - 1) * w;
@@ -96,7 +123,8 @@ export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number,
   const hills = (fbm(gx * 0.03, gz * 0.03) - 0.5) * 2.4 * BUMP_SCALE;
   const mid = (fbm(gx * 0.11, gz * 0.11) - 0.5) * 0.36;
   const fine = (fbm(gx * 0.45, gz * 0.45) - 0.5) * 0.06;
-  return level + elev * HILL_SCALE + (hills + mid + fine) * relief + onDeck * BRIDGE_DECK_LIFT;
+  // Weighted parts are linear in the weights, so land and deck parts simply add.
+  return level + elev * HILL_SCALE + (hills + mid + fine) * relief + deckSum;
 }
 
 /**

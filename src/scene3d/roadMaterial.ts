@@ -15,28 +15,81 @@ const roadBounds = LEIPALINGIS_ROADS.map(road => ({ road,
 }));
 export const ROAD_GUTTER = 2;
 
+interface Driveway { from: [number, number]; to: [number, number]; paved: boolean }
+
+/** Road centre-line segments bucketed on a coarse grid, for nearest-street lookups. */
+const BUCKET = 4;
+const segmentBuckets = (() => {
+  const buckets = new Map<string, { a: number[]; b: number[]; road: typeof LEIPALINGIS_ROADS[number] }[]>();
+  for (const road of LEIPALINGIS_ROADS) for (let i = 1; i < road.points.length; i++) {
+    const a = road.points[i - 1], b = road.points[i];
+    for (let y = Math.floor(Math.min(a[1], b[1]) / BUCKET); y <= Math.floor(Math.max(a[1], b[1]) / BUCKET); y++)
+      for (let x = Math.floor(Math.min(a[0], b[0]) / BUCKET); x <= Math.floor(Math.max(a[0], b[0]) / BUCKET); x++) {
+        const key = `${x},${y}`, list = buckets.get(key) ?? [];
+        list.push({ a, b, road }); buckets.set(key, list);
+      }
+  }
+  return buckets;
+})();
+
+/** Nearest point on any road's centre line within `range` cells. */
+function nearestStreet(px: number, pz: number, range: number) {
+  let best: { x: number; z: number; d: number; width: number } | null = null;
+  for (let y = Math.floor((pz - range) / BUCKET); y <= Math.floor((pz + range) / BUCKET); y++)
+    for (let x = Math.floor((px - range) / BUCKET); x <= Math.floor((px + range) / BUCKET); x++) {
+      for (const { a, b, road } of segmentBuckets.get(`${x},${y}`) ?? []) {
+        const vx = b[0] - a[0], vz = b[1] - a[1], l2 = vx * vx + vz * vz || 1;
+        const t = Math.max(0, Math.min(1, ((px - a[0]) * vx + (pz - a[1]) * vz) / l2));
+        const qx = a[0] + vx * t, qz = a[1] + vz * t, d = Math.hypot(qx - px, qz - pz);
+        if (d <= range && (!best || d < best.d)) best = { x: qx, z: qz, d, width: road.width };
+      }
+    }
+  return best;
+}
+
+const drivewayCache = new WeakMap<TerrainCell[][], Driveway[]>();
 /**
- * Driveways: a short drive from each house's front door to the street it
- * faces. Visual only (the cells keep their gameplay type). The front is local
- * +z of the building, i.e. (-sin a, cos a) for its propAngle.
+ * Driveways: each village and town house that faces a street gets a short
+ * drive from its front door straight to that street, ending at the road's
+ * edge. A house that does not face a street (it stands at an angle to it, or
+ * the nearest street is beside or behind it) gets none: those drives used to
+ * run sideways into the fields. Visual only; cells keep their gameplay type.
+ * The front is local +z of the building, i.e. (-sin a, cos a) for its propAngle.
  */
-export function drivewaysIn(terrain: TerrainCell[][], x0: number, y0: number, x1: number, y1: number) {
-  const out: { from: [number, number]; to: [number, number]; paved: boolean }[] = [];
-  for (let y = Math.max(0, y0); y < Math.min(terrain.length, y1); y++) for (let x = Math.max(0, x0); x < Math.min(terrain[0].length, x1); x++) {
+function allDriveways(terrain: TerrainCell[][]) {
+  let drives = drivewayCache.get(terrain);
+  if (drives) return drives;
+  drives = [];
+  for (let y = 0; y < terrain.length; y++) for (let x = 0; x < terrain[0].length; x++) {
     const c = terrain[y][x];
     if (c.type !== 'urban' || !c.settlementId || c.buildingKind === 'barn' || c.buildingKind === 'church') continue;
     const a = c.propAngle ?? 0, fx = -Math.sin(a), fz = Math.cos(a);
-    const cx = x + .5 + (c.buildingOffset?.[0] ?? 0), cz = y + .5 + (c.buildingOffset?.[1] ?? 0);
-    for (let t = .3; t <= 2.6; t += .1) {
-      const px = cx + fx * t, pz = cz + fz * t, n = terrain[Math.floor(pz)]?.[Math.floor(px)];
-      if (!n || n.type === 'water' || (n.type === 'urban' && n !== c)) break;
-      if (n.roadName && (n.type === 'road' || n.type === 'gravel')) {
-        out.push({ from: [cx + fx * .22, cz + fz * .22], to: [px + fx * .12, pz + fz * .12], paved: c.buildingKind === 'brick' || c.buildingKind === 'block' });
-        break;
-      }
+    const sx = x + .5 + (c.buildingOffset?.[0] ?? 0) + fx * .2, sz = y + .5 + (c.buildingOffset?.[1] ?? 0) + fz * .2;
+    const street = nearestStreet(sx, sz, 2.4);
+    if (!street) continue;
+    const reach = street.d - street.width / 2;
+    if (reach < .12) continue;
+    const ux = (street.x - sx) / street.d, uz = (street.z - sz) / street.d;
+    // The street must be in front of the door, not beside or behind the house.
+    if (ux * fx + uz * fz < .72) continue;
+    const ex = sx + ux * (reach + .04), ez = sz + uz * (reach + .04);
+    // Never through or onto another building, nor across water.
+    let clear = true;
+    const steps = Math.max(1, Math.ceil((reach + .04) / .15));
+    for (let k = 1; k <= steps && clear; k++) {
+      const t = Math.min(reach + .04, k * .15), n = terrain[Math.floor(sz + uz * t)]?.[Math.floor(sx + ux * t)];
+      // Its own cell only on the way out: a road edge inside the house's own cell needs no drive.
+      if (!n || n.type === 'water' || (n.type === 'urban' && (n !== c || k === steps))) clear = false;
     }
+    if (clear) drives.push({ from: [sx, sz], to: [ex, ez], paved: c.buildingKind === 'brick' || c.buildingKind === 'block' });
   }
-  return out;
+  drivewayCache.set(terrain, drives);
+  return drives;
+}
+
+/** Driveways whose house front lies in the given cell rectangle. */
+export function drivewaysIn(terrain: TerrainCell[][], x0: number, y0: number, x1: number, y1: number) {
+  return allDriveways(terrain).filter(d => d.from[0] >= x0 && d.from[0] < x1 && d.from[1] >= y0 && d.from[1] < y1);
 }
 
 export function createRoadTexture(section: MapSection, terrain?: TerrainCell[][]) {
@@ -54,7 +107,7 @@ export function createRoadTexture(section: MapSection, terrain?: TerrainCell[][]
     for (const d of drivewaysIn(terrain, section.x - ROAD_GUTTER, section.y - ROAD_GUTTER,
       section.x + section.width + ROAD_GUTTER, section.y + section.height + ROAD_GUTTER)) {
       ctx.beginPath(); ctx.moveTo(...d.from); ctx.lineTo(...d.to);
-      ctx.strokeStyle = d.paved ? '#5d625f' : '#bdb497'; ctx.lineWidth = d.paved ? .21 : .2; ctx.stroke();
+      ctx.strokeStyle = d.paved ? '#5d625f' : '#b3a98c'; ctx.lineWidth = d.paved ? .2 : .18; ctx.stroke();
     }
     ctx.restore();
   }

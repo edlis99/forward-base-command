@@ -15,8 +15,10 @@ export function Bridges({ terrain, section }: { terrain: TerrainCell[][]; sectio
     const mesh = ref.current;
     if (!mesh) return;
     const dummy = new THREE.Object3D(), color = new THREE.Color();
+    // Yaw along the road, then pitch for a deck that slopes between its banks.
+    dummy.rotation.order = 'YZX';
     boxes.forEach((b, i) => {
-      dummy.position.set(b.x, b.y, b.z); dummy.rotation.set(0, b.yaw, 0); dummy.scale.set(b.sx, b.sy, b.sz);
+      dummy.position.set(b.x, b.y, b.z); dummy.rotation.set(0, b.yaw, b.pitch ?? 0); dummy.scale.set(b.sx, b.sy, b.sz);
       dummy.updateMatrix(); mesh.setMatrixAt(i, dummy.matrix); mesh.setColorAt(i, color.set(b.color));
     });
     mesh.instanceMatrix.needsUpdate = true;
