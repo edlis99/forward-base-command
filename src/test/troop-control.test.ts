@@ -104,6 +104,28 @@ describe('coordinated travel', () => {
     state.coordinatedMovement = true; issueSquadMove(state, state.units, { x: 2000, y: 1000 }); tick(state);
     expect(state.units[2].groupSpeedCap).toBeGreaterThan(state.units[0].groupSpeedCap!);
   });
+  it('does not brake the whole group when the leading tank bogs down in mud: the rest close up on it', () => {
+    const state = fixture(['tank', 'tank', 'apc', 'apc']);
+    issueSquadMove(state, state.units, { x: 2400, y: 1000 }, { facing: 0 });
+    tick(state, 80);
+    const pace = state.units[0].groupSpeedCap!;
+    // Mud under and ahead of the leading vehicle only (its neighbours drive in other rows).
+    const lead = state.units.reduce((a, b) => (b.pos.x > a.pos.x ? b : a));
+    const cx = Math.floor(lead.pos.x / CELL_SIZE), cy = Math.floor(lead.pos.y / CELL_SIZE);
+    for (let x = cx - 1; x <= cx + 5; x++) setTerrain(state.terrain, x, cy, 'mud');
+    expect(state.units.filter(u => Math.floor(u.pos.y / CELL_SIZE) === cy)).toEqual([lead]);
+    const others = state.units.filter(u => u !== lead);
+    const start = new Map(state.units.map(u => [u.id, { ...u.pos }]));
+    tick(state, 60);
+    // The group pace is unchanged: nobody else slows to mud speed at that instant.
+    expect(others.every(u => u.groupSpeedCap == null || u.groupSpeedCap > pace * .95)).toBe(true);
+    const moved = (u: typeof lead) => distance(u.pos, start.get(u.id)!);
+    // The bogged tank crawls; the others keep driving and close up on it.
+    expect(moved(lead)).toBeLessThan(Math.min(...others.map(moved)) * .5);
+    tick(state, 160);
+    // ... and then wait near it rather than driving off without it.
+    expect(Math.max(...others.map(u => u.pos.x)) - lead.pos.x).toBeLessThan(5 * CELL_SIZE);
+  });
   it('waits for a pinned member, then releases the group after a casualty', () => {
     const state = fixture(['infantry', 'tank']); issueSquadMove(state, state.units, { x: 1500, y: 1000 });
     state.units[0].prone = true; state.units[0].suppression = 1; tick(state, 40);

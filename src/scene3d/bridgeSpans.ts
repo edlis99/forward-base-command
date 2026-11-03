@@ -50,6 +50,18 @@ export function spanBoxes(terrain: TerrainCell[][], section: MapSection): Box[] 
     // Slab and running surface over the whole span, onto the road at both ends.
     along(0, 1, 0, -.06, .12, w, deck);
     along(.01, .99, 0, .004, .01, bridge.paved ? bridge.width : w - .14, bridge.paved ? '#4a5151' : '#8c7354');
+    if (bridge.paved) {
+      // Concrete: raised kerbs inside the railings and a girder under the deck over the water.
+      for (const s of [-1, 1]) along(.02, .98, s * (w / 2 - .09), .02, .04, .07, '#a9a69c');
+      along(Math.max(0, bridge.tin - .08), Math.min(1, bridge.tout + .08), 0, -.17, .12, w * .62, '#77746d');
+    } else {
+      // Timber: plank seams across the deck.
+      const planks = Math.max(4, Math.round(L / .2));
+      for (let k = 1; k < planks; k++) {
+        const t = k / planks, [px, pz] = at(t);
+        boxes.push({ x: px, y: top(t) + .011, z: pz, sx: .022, sy: .006, sz: w - .16, yaw, pitch, color: '#5e4a36' });
+      }
+    }
     // Railings only over the water (with a little overlap onto each bank).
     const r0 = Math.max(0, bridge.tin - .12), r1 = Math.min(1, bridge.tout + .12);
     for (const s of [-1, 1]) {
@@ -63,14 +75,22 @@ export function spanBoxes(terrain: TerrainCell[][], section: MapSection): Box[] 
           sx: end ? .1 : .06, sy: end ? .3 : .24, sz: end ? .1 : .06, yaw, color: trim });
       }
     }
-    // Abutments where the banks meet the water, piers on longer spans.
+    // Abutments where the banks meet the water, piers on longer spans. They
+    // run along the river (parallel to its banks), so a skewed bridge reads
+    // as built for the river rather than as a slab dropped across it.
     const supports = [bridge.tin, bridge.tout];
     const wet = L * (bridge.tout - bridge.tin);
     for (let k = 1, n = Math.floor(wet / 1.6); k < n; k++) supports.push(bridge.tin + (bridge.tout - bridge.tin) * k / n);
+    let flow = bridge.flow ? [bridge.flow[0], bridge.flow[1]] : [-dz, dx];
+    // Very oblique supports would be absurdly long: cap the skew at 55 degrees.
+    const sinSkew = Math.abs(flow[0] * dz - flow[1] * dx);
+    if (sinSkew < .57) flow = [-dz, dx];
+    const across = Math.abs(flow[0] * dz - flow[1] * dx) || 1;
+    const supportYaw = -Math.atan2(flow[1], flow[0]);
     supports.forEach((t, k) => {
       const [px, pz] = at(t), bed = groundHeightAt(terrain, px, pz), h = Math.max(.1, top(t) - .12 - bed);
       const abutment = k < 2;
-      boxes.push({ x: px, y: bed + h / 2, z: pz, sx: abutment ? .3 : .16, sy: h, sz: w * (abutment ? 1 : .86), yaw,
+      boxes.push({ x: px, y: bed + h / 2, z: pz, sx: (w * (abutment ? 1.08 : .9)) / across, sy: h, sz: abutment ? .3 : .16, yaw: supportYaw,
         color: bridge.paved ? '#7f7c75' : '#5e4a36' });
     });
   }

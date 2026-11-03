@@ -149,86 +149,298 @@ function distToPath(x: number, y: number, path: Point[]) {
 
 export interface RoadCrossing { roads: Set<MapRoad>; width: number; info: NonNullable<TerrainCell['bridge']>; path: Point[] }
 
+interface Piece { road: MapRoad; reversed: boolean }
+interface Chain { pieces: Piece[]; roads: MapRoad[]; points: Point[] }
+interface ChainSample { x: number; y: number; s: number; nx: number; ny: number }
+
 /**
- * Bridges: where a road's centre line runs over water with water on BOTH
- * sides of it, the road crosses on a bridge from bank to bank. A road that
- * only runs along a bank or brushes a lake keeps its edge on land (an
- * embankment); marking those as bridge left decks lying beside the water.
+ * Map data often splits a road where it meets a river, so crossings are
+ * found on chains of road pieces joined end to end: the same class of road,
+ * with the same name or no name (two different unnamed roads are not one road).
  */
-function findCrossings(roads: MapRoad[]): RoadCrossing[] {
-  const crossings: RoadCrossing[] = [];
-  // Map data often splits a road where it meets a river, so detect crossings
-  // on chains of road pieces joined end to end: the same class of road, with
-  // the same name or no name (two different unnamed roads are not one road).
-  const chains: { roads: MapRoad[]; points: Point[] }[] = [];
+function buildChains(roads: MapRoad[]): Chain[] {
+  const chains: Chain[] = [];
   const used = new Set<MapRoad>();
   const near = (p: Point, q: Point) => Math.hypot(p[0] - q[0], p[1] - q[1]) < .05;
   for (const road of roads) {
     if (used.has(road)) continue;
     used.add(road);
-    const chain = { roads: [road], points: [...road.points] };
+    const chain: Chain = { pieces: [{ road, reversed: false }], roads: [road], points: [...road.points] };
     for (let grew = true; grew;) {
       grew = false;
       for (const other of roads) {
         if (used.has(other) || other.class !== road.class || (other.name !== road.name && !!other.name && !!road.name)) continue;
         const head = chain.points[0], tail = chain.points[chain.points.length - 1];
         const o0 = other.points[0], o1 = other.points[other.points.length - 1];
-        let add: Point[] | null = null, atEnd = true;
-        if (near(tail, o0)) add = other.points.slice(1);
-        else if (near(tail, o1)) add = [...other.points].reverse().slice(1);
-        else if (near(head, o1)) { add = other.points.slice(0, -1); atEnd = false; }
-        else if (near(head, o0)) { add = [...other.points].reverse().slice(0, -1); atEnd = false; }
-        if (!add) continue;
-        chain.points = atEnd ? [...chain.points, ...add] : [...add, ...chain.points];
+        let piece: Piece | null = null, atEnd = true;
+        if (near(tail, o0)) piece = { road: other, reversed: false };
+        else if (near(tail, o1)) piece = { road: other, reversed: true };
+        else if (near(head, o1)) { piece = { road: other, reversed: false }; atEnd = false; }
+        else if (near(head, o0)) { piece = { road: other, reversed: true }; atEnd = false; }
+        if (!piece) continue;
+        const pts = piece.reversed ? [...other.points].reverse() : other.points;
+        chain.points = atEnd ? [...chain.points, ...pts.slice(1)] : [...pts.slice(0, -1), ...chain.points];
+        if (atEnd) chain.pieces.push(piece); else chain.pieces.unshift(piece);
         chain.roads.push(other); used.add(other); grew = true;
       }
     }
     chains.push(chain);
   }
-  for (const chain of chains) {
-    const samples: { x: number; y: number; s: number; nx: number; ny: number }[] = [];
-    let s0 = 0;
-    for (let i = 1; i < chain.points.length; i++) {
-      const [ax, ay] = chain.points[i - 1], [bx, by] = chain.points[i], len = Math.hypot(bx - ax, by - ay);
-      if (len < 1e-6) continue;
-      const nx = -(by - ay) / len, ny = (bx - ax) / len, n = Math.max(1, Math.ceil(len / .1));
-      for (let k = i === 1 ? 0 : 1; k <= n; k++) samples.push({ x: ax + (bx - ax) * k / n, y: ay + (by - ay) * k / n, s: s0 + len * k / n, nx, ny });
-      s0 += len;
-    }
-    const at = (s: number): Point => {
-      let lo = 0, hi = samples.length - 1;
-      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (samples[mid].s <= s) lo = mid; else hi = mid; }
-      const p = samples[lo], q = samples[hi], f = q.s > p.s ? Math.max(0, Math.min(1, (s - p.s) / (q.s - p.s))) : 0;
-      return [p.x + (q.x - p.x) * f, p.y + (q.y - p.y) * f];
-    };
-    for (let i = 0; i < samples.length; i++) {
-      if (!wetAt(samples[i].x, samples[i].y)) continue;
-      let j = i;
-      // One crossing, even where a sliver of land or an islet interrupts the water.
-      for (let k = j + 1; k < samples.length && samples[k].s - samples[j].s <= 1.3; k++) if (wetAt(samples[k].x, samples[k].y)) j = k;
-      const run = samples.slice(i, j + 1), first = i, last = j;
-      i = j;
-      // A road ending in the water, or running along it for a long way, is not a bridge.
-      if (first === 0 || last === samples.length - 1 || run[run.length - 1].s - run[0].s > 14) continue;
-      // Water on both sides of the road (within two cells of its edge) at
-      // some point over the run. Along a bank the land side has none.
-      const width = Math.max(...chain.roads.map(r => r.width));
-      const wetSide = (p: typeof run[number], dir: number) =>
-        [.3, .8, 1.4, 2].some(o => wetAt(p.x + p.nx * dir * (width / 2 + o), p.y + p.ny * dir * (width / 2 + o)));
-      const across = run.filter(p => wetSide(p, 1) && wetSide(p, -1)).length;
-      if (across < Math.max(2, run.length * .2)) continue;
+  return chains;
+}
+
+function sampleChain(points: Point[]) {
+  const samples: ChainSample[] = [];
+  let s0 = 0;
+  for (let i = 1; i < points.length; i++) {
+    const [ax, ay] = points[i - 1], [bx, by] = points[i], len = Math.hypot(bx - ax, by - ay);
+    if (len < 1e-6) continue;
+    const nx = -(by - ay) / len, ny = (bx - ax) / len, n = Math.max(1, Math.ceil(len / .1));
+    for (let k = samples.length ? 1 : 0; k <= n; k++) samples.push({ x: ax + (bx - ax) * k / n, y: ay + (by - ay) * k / n, s: s0 + len * k / n, nx, ny });
+    s0 += len;
+  }
+  const at = (s: number): Point => {
+    let lo = 0, hi = samples.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (samples[mid].s <= s) lo = mid; else hi = mid; }
+    const p = samples[lo], q = samples[hi], f = q.s > p.s ? Math.max(0, Math.min(1, (s - p.s) / (q.s - p.s))) : 0;
+    return [p.x + (q.x - p.x) * f, p.y + (q.y - p.y) * f];
+  };
+  return { samples, at, length: s0 };
+}
+
+/**
+ * Bridges: where a road's centre line runs over water with water on BOTH
+ * sides of it, the road crosses on a bridge from bank to bank. A road that
+ * only runs along a bank or brushes a lake keeps its edge on land (an
+ * embankment); marking those as bridge left decks lying beside the water.
+ */
+function crossingRuns(chain: Chain) {
+  const { samples, at, length } = sampleChain(chain.points);
+  const runs: { run: ChainSample[]; width: number }[] = [];
+  for (let i = 0; i < samples.length; i++) {
+    if (!wetAt(samples[i].x, samples[i].y)) continue;
+    let j = i;
+    // One crossing, even where a sliver of land or an islet interrupts the water.
+    for (let k = j + 1; k < samples.length && samples[k].s - samples[j].s <= 1.3; k++) if (wetAt(samples[k].x, samples[k].y)) j = k;
+    const run = samples.slice(i, j + 1), first = i, last = j;
+    i = j;
+    // A road ending in the water, or running along it for a long way, is not a bridge.
+    if (first === 0 || last === samples.length - 1 || run[run.length - 1].s - run[0].s > 14) continue;
+    // Water on both sides of the road (within two cells of its edge) at
+    // some point over the run. Along a bank the land side has none.
+    const width = Math.max(...chain.roads.map(r => r.width));
+    const wetSide = (p: ChainSample, dir: number) =>
+      [.3, .8, 1.4, 2].some(o => wetAt(p.x + p.nx * dir * (width / 2 + o), p.y + p.ny * dir * (width / 2 + o)));
+    const across = run.filter(p => wetSide(p, 1) && wetSide(p, -1)).length;
+    if (across < Math.max(2, run.length * .2)) continue;
+    runs.push({ run, width });
+  }
+  return { samples, at, length, runs };
+}
+
+function findCrossings(roads: MapRoad[]): RoadCrossing[] {
+  const crossings: RoadCrossing[] = [];
+  for (const chain of buildChains(roads)) {
+    const { samples, at, length, runs } = crossingRuns(chain);
+    for (const { run, width } of runs) {
       // The span runs from land to land: about a cell beyond the water at each end.
-      let sa = Math.max(0, run[0].s - 1), sb = Math.min(samples[samples.length - 1].s, run[run.length - 1].s + 1);
+      let sa = Math.max(0, run[0].s - 1), sb = Math.min(length, run[run.length - 1].s + 1);
       while (sa > 0 && wetAt(...at(sa) as [number, number])) sa = Math.max(0, sa - .25);
-      while (sb < samples[samples.length - 1].s && wetAt(...at(sb) as [number, number])) sb = Math.min(samples[samples.length - 1].s, sb + .25);
+      while (sb < length && wetAt(...at(sb) as [number, number])) sb = Math.min(length, sb + .25);
       const path: Point[] = [at(sa)];
       for (const p of samples) if (p.s > sa && p.s < sb && Math.abs(p.s - Math.round(p.s)) < .05) path.push([p.x, p.y]);
       path.push(at(sb));
+      // River direction at the crossing: abutments are built along the banks.
+      const m = at((run[0].s + run[run.length - 1].s) / 2), flow = riverAxis(m[0], m[1]) ?? undefined;
       crossings.push({ roads: new Set(chain.roads), width, path, info: { a: at(sa), b: at(sb), width, paved: chain.roads.some(r => r.paved),
-        tin: (run[0].s - sa) / (sb - sa), tout: (run[run.length - 1].s - sa) / (sb - sa) } });
+        tin: (run[0].s - sa) / (sb - sa), tout: (run[run.length - 1].s - sa) / (sb - sa), flow } });
     }
   }
   return crossings;
+}
+
+/** Direction of the river (flow axis) at a point, from the water around it; null on open water. */
+function riverAxis(x: number, y: number): [number, number] | null {
+  let n = 0, mx = 0, my = 0;
+  const cells: Point[] = [];
+  for (let cy = Math.floor(y - 4); cy <= Math.floor(y + 4); cy++) for (let cx = Math.floor(x - 4); cx <= Math.floor(x + 4); cx++) {
+    if (Math.hypot(cx + .5 - x, cy + .5 - y) > 4 || !WATER_BEFORE_ROADS.has(cy * MAP_COLS + cx)) continue;
+    cells.push([cx + .5, cy + .5]); mx += cx + .5; my += cy + .5; n++;
+  }
+  if (n < 6) return null;
+  mx /= n; my /= n;
+  let a = 0, b = 0, c = 0;
+  for (const [px, py] of cells) { a += (px - mx) ** 2; b += (px - mx) * (py - my); c += (py - my) ** 2; }
+  const mean = (a + c) / 2, dev = Math.sqrt(((a - c) / 2) ** 2 + b * b);
+  // Elongated water only: a river or stream, not a lake.
+  if (mean - dev <= 0 ? false : (mean + dev) / (mean - dev) < 2.2) return null;
+  const theta = .5 * Math.atan2(2 * b, a - c);
+  return [Math.cos(theta), Math.sin(theta)];
+}
+
+/**
+ * Straighten skewed crossings: where a road meets a river at a slant, its
+ * approach bends on land so the bridge crosses straight over (shorter,
+ * square to both banks), the way old country roads do. The road keeps its
+ * route up to a few cells before the river and from a few cells after it;
+ * between, smooth curves lead onto a straight span along the river's normal.
+ * Skipped where the curves would leave dry land, stray far from the old
+ * road, or pass another road; junctions on the old span move onto the new one.
+ */
+function straightenCrossings(roads: MapRoad[]) {
+  let changed = false;
+  for (const chain of buildChains(roads)) {
+    const { samples, at, length, runs } = crossingRuns(chain);
+    // Highways keep their alignment (modern skew bridges); the fairness of the
+    // two mains is measured along them.
+    if (chain.roads.some(r => /primary/.test(r.class))) continue;
+    for (const { run, width } of runs) {
+      const sIn = run[0].s, sOut = run[run.length - 1].s, sMid = (sIn + sOut) / 2;
+      const mid = at(sMid), t0 = at(sMid - .5), t1 = at(sMid + .5);
+      const tl = Math.hypot(t1[0] - t0[0], t1[1] - t0[1]) || 1, tangent = [(t1[0] - t0[0]) / tl, (t1[1] - t0[1]) / tl];
+      const axis = riverAxis(mid[0], mid[1]);
+      if (!axis) continue;
+      let d: [number, number] = [-axis[1], axis[0]];
+      if (d[0] * tangent[0] + d[1] * tangent[1] < 0) d = [-d[0], -d[1]];
+      const skew = Math.acos(Math.min(1, Math.abs(d[0] * tangent[0] + d[1] * tangent[1])));
+      if (skew < .44) continue;
+      // Banks along the river's normal through the middle of the crossing.
+      const bank = (sign: number) => {
+        let t = 0, dry = 0;
+        for (; t < 6 && dry < .3; t += .1) dry = wetAt(mid[0] + d[0] * sign * t, mid[1] + d[1] * sign * t) ? 0 : dry + .1;
+        return t < 6 ? t - dry : null;
+      };
+      const tIn = bank(-1), tOut = bank(1);
+      if (tIn === null || tOut === null) continue;
+      const pIn: Point = [mid[0] - d[0] * (tIn + .7), mid[1] - d[1] * (tIn + .7)];
+      const pOut: Point = [mid[0] + d[0] * (tOut + .7), mid[1] + d[1] * (tOut + .7)];
+      // Only where it makes the bridge much shorter: small gains are not worth
+      // moving a road (and every move shifts travel times on the map).
+      if (tIn + tOut + 1.4 > (sOut - sIn + 2) * .72) continue;
+      // Rejoin the old route a few cells from the water on each side: as far
+      // out as the land allows (longest first), for gentle bends.
+      const tangentAt = (s: number) => {
+        const p = at(s - .3), q = at(s + .3), l = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+        return [(q[0] - p[0]) / l, (q[1] - p[1]) / l];
+      };
+      const bezier = (p0: Point, p1: Point, p2: Point, p3: Point, n: number) => Array.from({ length: n - 1 }, (_, i) => {
+        const t = (i + 1) / n, u = 1 - t;
+        return [u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0],
+          u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]] as Point;
+      });
+      const tryApproach = (approach: number) => {
+        const sA = sIn - approach, sB = sOut + approach;
+        if (sA < .5 || sB > length - .5) return null;
+        const A = at(sA), B = at(sB), tA = tangentAt(sA), tB = tangentAt(sB);
+        const kIn = Math.hypot(pIn[0] - A[0], pIn[1] - A[1]) * .4, kOut = Math.hypot(B[0] - pOut[0], B[1] - pOut[1]) * .4;
+        const curveIn = bezier(A, [A[0] + tA[0] * kIn, A[1] + tA[1] * kIn], [pIn[0] - d[0] * kIn, pIn[1] - d[1] * kIn], pIn, 18);
+        const curveOut = bezier(pOut, [pOut[0] + d[0] * kOut, pOut[1] + d[1] * kOut], [B[0] - tB[0] * kOut, B[1] - tB[1] * kOut], B, 18);
+        const route: Point[] = [A, ...curveIn, pIn, pOut, ...curveOut, B];
+        // The approach curves must stay on land and near the old road.
+        const old = samples.filter(p => p.s >= sA && p.s <= sB).map(p => [p.x, p.y] as Point);
+        for (const part of [[A, ...curveIn, pIn], [pOut, ...curveOut, B]]) for (let i = 1; i < part.length; i++) {
+          const [ax, ay] = part[i - 1], [bx, by] = part[i], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / .1));
+          for (let k = 0; k <= n; k++) {
+            const x = ax + (bx - ax) * k / n, y = ay + (by - ay) * k / n;
+            if (wetAt(x, y) || distToPath(x, y, old) > 3) return null;
+          }
+        }
+        // Other roads: those ending on the old crossing stretch are moved onto
+        // the new route on their own bank; any other road passing nearby rules
+        // this approach out.
+        const own = new Set(chain.roads);
+        const moved: { road: MapRoad; index: number }[] = [];
+        for (const other of roads) {
+          if (own.has(other)) continue;
+          for (const index of [0, other.points.length - 1]) {
+            const e = other.points[index];
+            if (distToPath(e[0], e[1], old) < width / 2 + .8) moved.push({ road: other, index });
+          }
+          // Sample the other road finely (not just its vertices) wherever it comes near the new route.
+          const endsHere = (x: number, y: number) => moved.some(m => m.road === other && Math.hypot(other.points[m.index][0] - x, other.points[m.index][1] - y) < 1.6);
+          for (let i = 1; i < other.points.length; i++) {
+            const [ax, ay] = other.points[i - 1], [bx, by] = other.points[i], n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / .2));
+            for (let k = 0; k <= n; k++) {
+              const x = ax + (bx - ax) * k / n, y = ay + (by - ay) * k / n;
+              if (!endsHere(x, y) && distToPath(x, y, route) < 1) return null;
+            }
+          }
+        }
+        // Each moved junction stays on its own bank: walk the side road from its
+        // end to its first dry point clear of the old crossing; it joins the new
+        // route at the nearest point of the approach on that side.
+        const routeIn: Point[] = [A, ...curveIn, pIn], routeOut: Point[] = [pOut, ...curveOut, B];
+        const joins: { road: MapRoad; index: number; at: Point; dry: Point; cut: number }[] = [];
+        for (const { road, index } of moved) {
+          const pts = index ? [...road.points].reverse() : road.points;
+          let found: { dry: Point; cut: number } | null = null;
+          for (let i = 1, walked = 0; i < pts.length && !found && walked < 8; i++) {
+            const [ax, ay] = pts[i - 1], [bx, by] = pts[i], len = Math.hypot(bx - ax, by - ay), n = Math.max(1, Math.ceil(len / .1));
+            for (let k = 1; k <= n && !found; k++) {
+              const q: Point = [ax + (bx - ax) * k / n, ay + (by - ay) * k / n];
+              if (!wetAt(q[0], q[1]) && distToPath(q[0], q[1], old) > width / 2 + .6) found = { dry: q, cut: k === n ? i + 1 : i };
+            }
+            walked += len;
+          }
+          if (!found) return null;
+          const side = (found.dry[0] - mid[0]) * d[0] + (found.dry[1] - mid[1]) * d[1];
+          const part = side < 0 ? routeIn : routeOut;
+          let join: Point = part[0], bd = Infinity;
+          for (let i = 1; i < part.length; i++) {
+            const [ax, ay] = part[i - 1], [bx, by] = part[i], vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy || 1;
+            const t = Math.max(0, Math.min(1, ((found.dry[0] - ax) * vx + (found.dry[1] - ay) * vy) / l2)), q: Point = [ax + vx * t, ay + vy * t];
+            const dd = Math.hypot(q[0] - found.dry[0], q[1] - found.dry[1]);
+            if (dd < bd) { bd = dd; join = q; }
+          }
+          // The short link from the side road to the route must be on land too.
+          for (let k = 0; k <= 10; k++) if (wetAt(join[0] + (found.dry[0] - join[0]) * k / 10, join[1] + (found.dry[1] - join[1]) * k / 10)) return null;
+          joins.push({ road, index, at: join, ...found });
+        }
+        return { sA, sB, A, B, route, joins };
+      };
+      const plan = (width >= .6 ? [5, 4, 3.2] : [3.5, 3.2, 2.6]).map(tryApproach).find(p => p);
+      if (!plan) continue;
+      const { sA, sB, A, B, route, joins } = plan;
+      // Splice the new route into the chain's pieces at the same chain positions.
+      let routeLen = 0;
+      const routeS = route.map((p, i) => (i ? (routeLen += Math.hypot(p[0] - route[i - 1][0], p[1] - route[i - 1][1])) : 0));
+      const onRoute = (f: number): Point => {
+        const target = f * routeLen;
+        for (let i = 1; i < route.length; i++) if (routeS[i] >= target) {
+          const g = (target - routeS[i - 1]) / ((routeS[i] - routeS[i - 1]) || 1);
+          return [route[i - 1][0] + (route[i][0] - route[i - 1][0]) * g, route[i - 1][1] + (route[i][1] - route[i - 1][1]) * g];
+        }
+        return route[route.length - 1];
+      };
+      const toS = (f: number) => sA + f * (sB - sA);
+      let pieceStart = 0;
+      for (const piece of chain.pieces) {
+        const pts = piece.reversed ? [...piece.road.points].reverse() : piece.road.points;
+        const ss: number[] = [];
+        let acc = pieceStart;
+        pts.forEach((p, i) => { if (i) acc += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]); ss.push(acc); });
+        const s0 = ss[0], s1 = ss[ss.length - 1];
+        pieceStart = s1;
+        if (s1 <= sA || s0 >= sB) continue;
+        const next: Point[] = [];
+        pts.forEach((p, i) => { if (ss[i] < sA - 1e-6) next.push(p); });
+        if (s0 <= sA) next.push(A); else next.push(onRoute((s0 - sA) / (sB - sA)));
+        route.forEach((p, i) => { const s = toS(routeS[i] / routeLen); if (s > Math.max(s0, sA) + 1e-6 && s < Math.min(s1, sB) - 1e-6) next.push(p); });
+        if (s1 >= sB) next.push(B); else next.push(onRoute((s1 - sA) / (sB - sA)));
+        pts.forEach((p, i) => { if (ss[i] > sB + 1e-6) next.push(p); });
+        piece.road.points = piece.reversed ? next.reverse() : next;
+      }
+      for (const j of joins) {
+        const pts = j.index ? [...j.road.points].reverse() : j.road.points;
+        const next: Point[] = [j.at, j.dry, ...pts.slice(j.cut)];
+        j.road.points = j.index ? next.reverse() : next;
+      }
+      changed = true;
+      // Chain geometry changed: later runs of this chain are handled on the next pass.
+      break;
+    }
+  }
+  return changed;
 }
 
 /**
@@ -236,28 +448,33 @@ function findCrossings(roads: MapRoad[]): RoadCrossing[] {
  * a bridge. Move that junction to the bridge's end on the bank: the side road
  * keeps its own route as far as its last point on land beside the crossing,
  * then turns straight onto the main road at the bridge end, instead of
- * stopping short in the river or filling it in.
+ * stopping short in the river, filling it in, or getting its own second
+ * bridge that meets the first in mid-river.
  */
 function moveJunctionsOffBridges(roads: MapRoad[], crossings: RoadCrossing[]) {
+  let changed = false;
   for (const c of crossings) for (const road of roads) {
     if (c.roads.has(road)) continue;
+    // Stretches of this road that are themselves crossings (its own bridge).
+    const ownWet = crossings.filter(o => o !== c && o.roads.has(road));
     for (const tail of [false, true]) {
       const pts = tail ? [...road.points].reverse() : road.points;
       const end = pts[0];
       if (distToPath(end[0], end[1], c.path) > c.width / 2 + 1.2) continue;
       // Walk back along the road from its end (finely) to the first point
       // from which a straight lane to one of the bridge ends stays on land
-      // (the road itself may run on an embankment along the bank); take the
-      // bridge end reached soonest.
+      // (the road itself may run on an embankment along the bank, but not on
+      // its own bridge); take the bridge end reached soonest.
       const dryLine = (p: Point, bank: number[]) => {
         const len = Math.hypot(bank[0] - p[0], bank[1] - p[1]), n = Math.max(2, Math.ceil(len / .25));
         for (let k = 1; k <= n; k++) {
           const x = p[0] + (bank[0] - p[0]) * k / n, y = p[1] + (bank[1] - p[1]) * k / n;
           if (len * k / n < .6) continue;
-          if (wetAt(x, y) && distToPath(x, y, c.path) > c.width / 2 + .15) return false;
+          if (wetAt(x, y) && Math.hypot(x - bank[0], y - bank[1]) > .7) return false;
         }
         return true;
       };
+      const onOwnBridge = (q: Point) => ownWet.some(o => wetAt(q[0], q[1]) && distToPath(q[0], q[1], o.path) < o.width / 2 + .6);
       let best: { walked: number; point: Point; index: number; bank: number[] } | null = null;
       for (const bank of [c.info.a, c.info.b]) {
         let walked = 0;
@@ -266,7 +483,7 @@ function moveJunctionsOffBridges(roads: MapRoad[], crossings: RoadCrossing[]) {
           let hit: Point | null = null;
           for (let k = 1; k <= n && !hit; k++) {
             const q: Point = [p0[0] + (p1[0] - p0[0]) * k / n, p0[1] + (p1[1] - p0[1]) * k / n];
-            if (distToPath(q[0], q[1], c.path) > c.width / 2 + .5 && dryLine(q, bank)) hit = q;
+            if (distToPath(q[0], q[1], c.path) > c.width / 2 + .5 && !onOwnBridge(q) && dryLine(q, bank)) hit = q;
             else if (k === n) walked += len;
           }
           if (hit) {
@@ -281,12 +498,20 @@ function moveJunctionsOffBridges(roads: MapRoad[], crossings: RoadCrossing[]) {
       const keep = Math.hypot(pts[cut][0] - best.point[0], pts[cut][1] - best.point[1]) > .05 ? [best.point, ...pts.slice(cut)] : pts.slice(cut);
       const rerouted = [[bank[0], bank[1]], ...keep];
       road.points = tail ? rerouted.reverse() : rerouted;
+      changed = true;
     }
   }
+  return changed;
 }
 
-export const ROAD_CROSSINGS: RoadCrossing[] = snapshot.designed ? findCrossings(ROUNDED_ROADS) : [];
-if (snapshot.designed) moveJunctionsOffBridges(ROUNDED_ROADS, ROAD_CROSSINGS);
+/** Crossings on the final road network, after straightening and moving junctions. */
+export const ROAD_CROSSINGS: RoadCrossing[] = (() => {
+  if (!snapshot.designed) return [];
+  for (let pass = 0; pass < 4 && straightenCrossings(ROUNDED_ROADS); pass++);
+  let crossings = findCrossings(ROUNDED_ROADS);
+  if (moveJunctionsOffBridges(ROUNDED_ROADS, crossings)) crossings = findCrossings(ROUNDED_ROADS);
+  return crossings;
+})();
 export const LEIPALINGIS_ROADS: MapRoad[] = ROUNDED_ROADS;
 
 function place(name: string) {
@@ -425,6 +650,20 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
   }
   for (const road of LEIPALINGIS_ROADS) for (let i = 1; i < road.points.length; i++) {
     paintSegment(road, road.points[i - 1], road.points[i], road.width / 2, road.paved ? 'road' : 'gravel');
+  }
+  // Bridge approaches are cleared: no trees or hedges right beside a deck or
+  // at its ends (they grew over the railings and hid where the road went).
+  for (const c of crossings) {
+    const [a, b] = [c.info.a, c.info.b], len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const ux = (b[0] - a[0]) / len, uy = (b[1] - a[1]) / len;
+    const reach: Point[] = [[a[0] - ux * 1.5, a[1] - uy * 1.5], ...c.path, [b[0] + ux * 1.5, b[1] + uy * 1.5]];
+    const xs = reach.map(p => p[0]), ys = reach.map(p => p[1]);
+    for (let y = Math.floor(Math.min(...ys) - 3); y <= Math.ceil(Math.max(...ys) + 3); y++)
+      for (let x = Math.floor(Math.min(...xs) - 3); x <= Math.ceil(Math.max(...xs) + 3); x++) {
+        const cell = grid[y]?.[x];
+        if (!cell || (cell.type !== 'forest' && cell.type !== 'hedgerow') || distToPath(x + .5, y + .5, reach) > c.width / 2 + 1.4) continue;
+        set(grid, x, y, 'open');
+      }
   }
   // Irregular meadow patches fill unsurveyed agricultural ground. These are
   // gameplay vegetation, not additional claimed geographic features.
