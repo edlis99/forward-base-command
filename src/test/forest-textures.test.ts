@@ -12,14 +12,12 @@ const species = ['pine', 'spruce', 'birch', 'oak', 'alder'] as const;
 describe('detailed botanical forest', () => {
   it('includes transparent botanical sprites, bark maps and local preloading for every species', () => {
     for (const name of species) {
-      const leafFile = join(root, `public/assets/nature/trees/${name}_sprig.svg`);
-      const svg = readFileSync(leafFile, 'utf8');
-      expect(svg).toContain('xmlns="http://www.w3.org/2000/svg"');
-      expect(svg).toContain('</svg>');
-      // Sprigs are alpha cutouts; a full-size opaque rectangle is forbidden.
-      expect(svg).not.toContain('<rect width="64" height="96"');
-      expect(renderer).toContain(`trees/${name}_sprig.svg`);
-      expect(preloader).toContain(`trees/${name}_sprig.svg`);
+      // Leaf-cluster atlases: RGBA PNG cutouts (colour type 6), not opaque cards.
+      const png = readFileSync(join(root, `public/assets/nature/trees/${name}_leaves.png`));
+      expect(Array.from(png.subarray(0, 8))).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+      expect(png[25]).toBe(6);
+      expect(renderer).toContain(`trees/${name}_leaves.png`);
+      expect(preloader).toContain(`trees/${name}_leaves.png`);
       if (name !== 'pine') {
         expect(existsSync(join(root, `public/assets/nature/trees/${name}_bark.svg`))).toBe(true);
         expect(renderer).toContain(`trees/${name}_bark.svg`);
