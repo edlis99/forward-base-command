@@ -47,6 +47,40 @@ describe('bridges, shores and driveways', () => {
     }
   });
 
+  it('never lets two bridges meet, and puts every junction at a bridge on land at its end', () => {
+    const dist = (x: number, y: number, a: number[], b: number[]) => {
+      const vx = b[0] - a[0], vy = b[1] - a[1], l2 = vx * vx + vy * vy || 1;
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * vx + (y - a[1]) * vy) / l2));
+      return Math.hypot(a[0] + vx * t - x, a[1] + vy * t - y);
+    };
+    for (const s of spans) for (const o of spans) {
+      if (s === o) continue;
+      // Sample one deck's water stretch against the other deck's line.
+      for (let k = 0; k <= 10; k++) {
+        const t = s.tin + (s.tout - s.tin) * k / 10, x = s.a[0] + (s.b[0] - s.a[0]) * t, y = s.a[1] + (s.b[1] - s.a[1]) * t;
+        expect(dist(x, y, o.a, o.b)).toBeGreaterThan((s.width + o.width) / 2 + .3);
+      }
+    }
+    // A road that ends at a bridge ends at one of its bank ends, on land
+    // (a road the map data splits at the river carries on as its next piece).
+    const continues = (r: typeof LEIPALINGIS_ROADS[number], e: number[]) => LEIPALINGIS_ROADS.some(o => o !== r && o.class === r.class
+      && (o.name === r.name || !o.name || !r.name) && [o.points[0], o.points[o.points.length - 1]].some(p => Math.hypot(p[0] - e[0], p[1] - e[1]) < .05));
+    for (const r of LEIPALINGIS_ROADS) for (const e of [r.points[0], r.points[r.points.length - 1]]) for (const s of spans) {
+      if (continues(r, e)) continue;
+      const t = ((e[0] - s.a[0]) * (s.b[0] - s.a[0]) + (e[1] - s.a[1]) * (s.b[1] - s.a[1])) / ((s.b[0] - s.a[0]) ** 2 + (s.b[1] - s.a[1]) ** 2);
+      if (dist(e[0], e[1], s.a, s.b) > s.width / 2 + .3 || t < s.tin || t > s.tout) continue;
+      throw new Error(`road ${r.name} ends on a bridge over the water at ${e.map(v => v.toFixed(1))}`);
+    }
+  });
+
+  it('rebuilds the badly skewed crossings square to the river', () => {
+    // Radvilonių g. used to cross diagonally on a 9-cell deck with a second bridge joining it.
+    const radv = spans.filter(s => Math.abs(s.a[0] - 18.7) < 4 && Math.abs(s.a[1] - 118) < 4);
+    expect(radv.length).toBe(1);
+    expect(Math.hypot(radv[0].b[0] - radv[0].a[0], radv[0].b[1] - radv[0].a[1])).toBeLessThan(5);
+    expect(spans.every(s => Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]) < 7)).toBe(true);
+  });
+
   it('slopes each deck so both ends sit on the road at the banks', () => {
     for (const s of spans) {
       const [ha, hb] = bridgeDeckEnds(terrain, s);

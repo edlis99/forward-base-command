@@ -149,7 +149,7 @@ export interface TerrainCell {
   roadName?: string;
   /** Road deck over water: the cell is road for movement, the river runs underneath.
    * a/b are the span's ends on land; tin/tout (0..1 along a-b) where it meets the water. */
-  bridge?: { a: number[]; b: number[]; width: number; paved: boolean; tin: number; tout: number };
+  bridge?: { a: number[]; b: number[]; width: number; paved: boolean; tin: number; tout: number; flow?: number[] };
   yard?: 'courtyard' | 'garden' | 'orchard';
   settlementId?: string;
   buildingKind?: 'house' | 'brick' | 'block' | 'barn' | 'church' | 'civic' | 'workshop';
