@@ -22,6 +22,8 @@ function seeded(seed: number) {
 }
 
 class MeshWriter {
+  /** Optional per-position light factor (crown self-shading for foliage). */
+  crownLight?: (p: THREE.Vector3) => number;
   positions: number[] = [];
   normals: number[] = [];
   uv: number[] = [];
@@ -57,6 +59,7 @@ class MeshWriter {
     }
   }
   sprig(center: THREE.Vector3, width: number, height: number, roll: number, tilt: number, shade: number) {
+    shade *= this.crownLight?.(center) ?? 1;
     // Each sprig is tiny, so crossing planes are individual needle branches /
     // leaves, never the entire silhouette of a tree.
     const right = v(Math.cos(roll), 0, Math.sin(roll));
@@ -116,6 +119,14 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
   // Branch bark is darker than the trunk (birch limbs are grey, not white).
   const limbLight = species === 'birch' ? .5 : .78;
   const crownStart = isPine ? .57 : isSpruce ? .18 : isOak ? .44 : .42;
+  // Crown self-shading: leaves low and deep inside the crown get less light
+  // than the sunlit top and rim. Without it every leaf was equally bright and
+  // a tree read as a flat paper cut-out.
+  leaf.crownLight = p => {
+    const hn = Math.min(1, Math.max(0, (p.y - crownStart) / (1 - crownStart)));
+    const rn = Math.min(1, Math.hypot(p.x - trunkLean * p.y, p.z) / (conifer ? .3 : .4));
+    return .52 + .5 * (.55 * hn + .45 * rn);
+  };
 
   for (let i = 0; i < branchCount; i++) {
     const h = crownStart + ((i + .45 * rand()) / branchCount) * (.94 - crownStart);
@@ -160,7 +171,8 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
         const jy = (rand() - .5) * (conifer ? .08 : .13);
         const jz = (rand() - .5) * (conifer ? .085 : .11);
         at.add(v(jx, jy, jz));
-        const size = isPine ? [.14, .22] : isSpruce ? [.15, .24] : isOak ? [.155, .25] : [.125, .21];
+        // Each card is a leafy twig (square atlas), not a single leaf.
+        const size = isPine ? [.2, .22] : isSpruce ? [.2, .24] : isOak ? [.22, .24] : [.19, .21];
         const light = .80 + rand() * .24;
         const spin = a + rand() * Math.PI;
         leaf.sprig(at, size[0] * (.75 + rand() * .5), size[1] * (.8 + rand() * .5),
@@ -180,7 +192,7 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
   for (let i = 0; i < (near ? 22 : 14); i++) {
     const t = rand(), r = Math.sqrt(rand()) * (conifer ? .09 : .17), th = rand() * Math.PI * 2;
     const pt = v(trunkLean + Math.cos(th) * r, .84 + rand() * .15, Math.sin(th) * r);
-    leaf.sprig(pt, conifer ? .11 : .15, (conifer ? .15 : .2) + t * .08, rand() * Math.PI * 2, (rand() - .5) * 1.2, .86 + t * .16);
+    leaf.sprig(pt, conifer ? .15 : .19, (conifer ? .16 : .2) + t * .06, rand() * Math.PI * 2, (rand() - .5) * 1.2, .86 + t * .16);
   }
   const result = { wood: wood.build(), leaves: leaf.build() };
   result.wood.userData = { species, detail, role: 'real branching timber' };
