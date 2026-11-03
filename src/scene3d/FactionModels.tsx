@@ -4,11 +4,12 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { FACTIONS, FactionId } from '../game/factions';
+import { FactionWeapon, TankDetails, CarrierDetails, HelicopterDetails } from './FactionEnhancements';
 import type { Unit, UnitType } from '../game/types';
 
 const asset = (name: string) => `${import.meta.env.BASE_URL}assets/factions/${name}.glb`;
 const FACTION_MODEL_PATHS = {
-  aster: { infantry: asset('coalition-rifleman'), tank: asset('tank-hull') },
+  aster: { infantry: asset('aster-rifleman-detailed'), tank: asset('tank-hull') },
   vostran: { infantry: asset('union-rifleman'), tank: asset('tank-hull') },
 };
 
@@ -56,8 +57,9 @@ function templateFor(scene: THREE.Group, faction: FactionId, type: 'infantry' | 
           // Original olive hull panels; leave tracks, optics and rubber dark.
           if (/001|005/.test(name)) material.color.set(f.armor);
         } else if (faction === 'aster') {
-          if (/003/.test(name)) material.color.set(f.uniform);
-          if (/002/.test(name)) material.color.set(f.kit);
+          if (/003|soldier_clothes|soldier_fabric/i.test(name)) material.color.set(f.uniform);
+          if (/002|soldier_armor|soldier_elements/i.test(name)) material.color.set(f.kit);
+          if (/soldier_metal|soldier_iron/i.test(name)) material.metalness = 0.6;
         } else {
           if (name === 'swat') material.color.set(f.uniform);
           if (name === 'swat_black') material.color.set(f.kit);
@@ -125,10 +127,34 @@ function ImportedModel({ faction, type, unit }: { faction: FactionId; type: 'inf
     wrist.attach(mount);
     return mount;
   }, [model, type, faction]);
+  // The BAMEN soldier is skinned but ships without animation clips. Animate
+  // its leg bones while moving; keep authored clips for the Vostran soldier.
+  const gait = useMemo(() => {
+    if (type !== 'infantry' || loaded.animations.length) return null;
+    const bones = ['LeftUpLeg', 'RightUpLeg', 'LeftLeg', 'RightLeg'];
+    return bones.map(name => {
+      const bone = model.getObjectByName('mixamorig:' + name) ?? model.getObjectByName(name);
+      return { bone, original: bone?.rotation.x ?? 0 };
+    });
+  }, [model, loaded.animations.length, type]);
+  const gaitClock = useRef(0);
   useEffect(() => () => { animation?.mixer.stopAllAction(); animation?.mixer.uncacheRoot(model); }, [animation, model]);
   const swing = useMemo(() => ({ q: new THREE.Quaternion(), x: new THREE.Vector3(1, 0, 0) }), []);
   useFrame((_, dt) => {
-    if (!animation) return;
+    if (!animation) {
+      if (gait) {
+        const moving = !!unit && Math.hypot(unit.vel.x, unit.vel.y) > 1;
+        gaitClock.current += Math.min(dt, 0.05) * (moving ? 10 : 2);
+        const phase = gaitClock.current, stride = moving ? 0.38 : 0.015;
+        gait.forEach(({ bone, original }, i) => {
+          if (!bone) return;
+          const step = Math.sin(phase + (i % 2) * Math.PI);
+          const goal = original + (i < 2 ? step * stride : Math.max(0, -step) * stride * 0.7);
+          bone.rotation.x += (goal - bone.rotation.x) * Math.min(1, dt * 10);
+        });
+      }
+      return;
+    }
     const step = Math.min(dt, 0.05);
     const speed = unit ? Math.hypot(unit.vel.x, unit.vel.y) : 0;
     const pace = unit ? speed / Math.max(1, unit.speed) : 0; // 1 = normal marching speed
@@ -159,7 +185,12 @@ function ImportedModel({ faction, type, unit }: { faction: FactionId; type: 'inf
   });
   return <group name={`faction-model-${faction}-${type}`} userData={{ faction, unitType: type, imported: true }} dispose={null}>
     <primitive object={model} />
-    {rifleMount && createPortal(<Rifle eastern />, rifleMount)}
+    {rifleMount && createPortal(<FactionWeapon faction={faction} />, rifleMount)}
+    {type === 'infantry' && faction === 'aster' &&
+      <group position={[0.06, 0.17, 0.055]} rotation={[0, -0.22, 0]}>
+        <FactionWeapon faction={faction} />
+      </group>}
+    {type === 'tank' && <TankDetails faction={faction} />}
     {type === 'tank' && faction === 'aster' && <group>
       {/* Western-style angular turret bustle and side armour over the licensed base hull. */}
       <Block at={[-0.06, 0.22, 0]} size={[0.31, 0.105, 0.29]} color={FACTIONS.aster.armor} />
@@ -194,6 +225,7 @@ function Carrier({ faction }: { faction: FactionId }) {
     <Block at={[-0.32, 0.18, 0]} size={[0.012, 0.12, 0.21]} color={f.kit} />
     <Block at={[-0.25, 0.36, -0.11]} size={[0.005, 0.24, 0.005]} color="#282e26" />
     {[-1, 1].map(side => <Block key={side} at={[0.29, 0.205, side * 0.10]} size={[0.02, 0.025, 0.035]} color="#d6c9a0" />)}
+    <CarrierDetails faction={faction} />
   </group>;
 }
 
@@ -214,6 +246,7 @@ function Helicopter({ faction }: { faction: FactionId }) {
       <Block at={[-0.04, -0.015, side * 0.15]} size={[0.14, 0.015, 0.19]} color={f.armor} />
       <mesh position={[-0.1, -0.12, side * 0.10]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.035, 0.035, 0.025, 8]} /><meshStandardMaterial color="#232b25" /></mesh>
     </group>) : [-1, 1].map(side => <Block key={side} at={[0, -0.12, side * 0.09]} size={[0.42, 0.015, 0.018]} color="#30382f" />)}
+    <HelicopterDetails faction={faction} />
   </group>;
 }
 
