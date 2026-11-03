@@ -26,7 +26,7 @@ export function GroundSurface({ terrain, section, regional = false }: { terrain:
   const geometry = useMemo(() => buildGroundGeometry(terrain, section, regional), [terrain, regional, section]);
 
   const grain = useMemo(() => makeGrainTexture(1.6), []);
-  const roads = useMemo(() => regional ? createRoadTexture(section) : undefined, [regional, section]);
+  const roads = useMemo(() => regional ? createRoadTexture(section, terrain) : undefined, [regional, section, terrain]);
   const material = useMemo(() => landscapeMaterial(grain, roads, section), [grain, roads, section]);
   useEffect(() => () => { material.dispose(); }, [material]);
   useEffect(() => () => { roads?.dispose(); }, [roads]);
@@ -55,8 +55,9 @@ export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; sec
     const positions: number[] = [];
     const indices: number[] = [];
     const shores: number[] = [];
+    // Bridge decks span the water: the sheet runs on underneath them.
     const isWater = (x: number, y: number) =>
-      x >= 0 && y >= 0 && x < W && y < H && terrain[y][x].type === 'water';
+      x >= 0 && y >= 0 && x < W && y < H && (terrain[y][x].type === 'water' || !!terrain[y][x].bridge);
     const nearWater = (x: number, y: number) => {
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (isWater(x + dx, y + dy)) return true;
       return false;
@@ -88,8 +89,7 @@ export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; sec
     let base = 0;
     for (let y = section.y; y < section.y + section.height; y++)
       for (let x = section.x; x < section.x + section.width; x++) {
-        const water = terrain[y][x].type === 'water';
-        if (!water && !nearWater(x, y)) continue;
+        if (!isWater(x, y) && !nearWater(x, y)) continue;
         const corners: Array<[number, number]> = [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]];
         const verts: number[] = [], vertShores: number[] = [];
         for (const [cx, cy] of corners) {
@@ -126,6 +126,75 @@ export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; sec
   return <React.Suspense fallback={null}>
     <LakeSurface geometry={geometry} />
   </React.Suspense>;
+}
+
+/** One reed clump: a fan of thin tapered blades, dark at the base, straw-green at the tips. */
+function reedClumpGeometry() {
+  const pos: number[] = [], color: number[] = [];
+  const base = new THREE.Color('#4d5a30'), tip = new THREE.Color('#a9a463');
+  for (let i = 0; i < 11; i++) {
+    const a = i * 2.4, lean = .1 + hash2(i, 3) * .2, h = .65 + hash2(i, 7) * .5, w = .05;
+    const ox = Math.cos(a) * .06, oz = Math.sin(a) * .06;
+    const tx = ox + Math.cos(a) * lean, tz = oz + Math.sin(a) * lean;
+    const px = -Math.sin(a) * w, pz = Math.cos(a) * w;
+    // Tapered blade: two triangles meeting at the tip.
+    const v = [[ox - px, 0, oz - pz], [ox + px, 0, oz + pz], [tx, h, tz], [ox + px, 0, oz + pz], [ox - px, 0, oz - pz], [tx, h, tz]];
+    for (const [x, y, z] of v) {
+      pos.push(x, y, z);
+      const c = base.clone().lerp(tip, y / h);
+      color.push(c.r, c.g, c.b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(color, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Reeds along lake and river banks: land cells at the water's edge, not roads or yards. */
+export function ShoreReeds({ terrain, section }: { terrain: TerrainCell[][]; section: MapSection }) {
+  const geometry = useMemo(reedClumpGeometry, []);
+  const material = useMemo(() => new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: .95 }), []);
+  useEffect(() => () => { geometry.dispose(); material.dispose(); }, [geometry, material]);
+  const clumps = useMemo(() => {
+    const out: Array<{ x: number; z: number; s: number; rot: number }> = [];
+    const wet = (x: number, y: number) => terrain[y]?.[x]?.type === 'water';
+    for (let y = section.y; y < section.y + section.height; y++) for (let x = section.x; x < section.x + section.width; x++) {
+      const c = terrain[y][x];
+      if (c.type === 'water' || c.roadName || c.bridge || c.yard || c.type === 'urban' || c.type === 'sandbag') continue;
+      // Lean the clumps towards the neighbouring water.
+      let wx = 0, wz = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (wet(x + dx, y + dy)) { wx += dx; wz += dy; }
+      if (!wx && !wz && ![-1, 0, 1].some(dy => [-1, 0, 1].some(dx => wet(x + dx, y + dy)))) continue;
+      const n = hash2(x * 3.1, y * 1.7) < .6 ? 3 : 2;
+      for (let i = 0; i < n; i++) {
+        if (hash2(x + i * 13, y + i * 29) < .28) continue;
+        const l = Math.hypot(wx, wz) || 1;
+        out.push({
+          x: x + .5 + (wx / l) * .3 + (hash2(x + i, y + 5) - .5) * .5,
+          z: y + .5 + (wz / l) * .3 + (hash2(x + 7, y + i) - .5) * .5,
+          s: .38 + hash2(x + i * 5, y * 3) * .32, rot: hash2(x * 7 + i, y) * Math.PI * 2,
+        });
+      }
+    }
+    return out;
+  }, [terrain, section]);
+  const ref = React.useRef<THREE.InstancedMesh>(null);
+  React.useLayoutEffect(() => {
+    const mesh = ref.current;
+    if (!mesh) return;
+    const dummy = new THREE.Object3D();
+    clumps.forEach((c, i) => {
+      dummy.position.set(c.x, groundHeightAt(terrain, c.x, c.z) - .02, c.z);
+      dummy.rotation.set(0, c.rot, 0); dummy.scale.setScalar(c.s); dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+  }, [clumps, terrain]);
+  if (!clumps.length) return null;
+  return <instancedMesh ref={ref} args={[geometry, material, clumps.length]} raycast={() => null} />;
 }
 
 /** Grass tufts for tall_grass cells — replaces the old raised green boxes. */

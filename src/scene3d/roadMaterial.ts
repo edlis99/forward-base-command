@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { TerrainCell } from '../game/types';
 import { MapSection } from './mapSections';
 import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
 import { paintRoadNetwork, roadJunctions } from '../game/maps/roadSurface';
@@ -13,7 +14,32 @@ const roadBounds = LEIPALINGIS_ROADS.map(road => ({ road,
   minY: Math.min(...road.points.map(p => p[1])) - 2, maxY: Math.max(...road.points.map(p => p[1])) + 2,
 }));
 export const ROAD_GUTTER = 2;
-export function createRoadTexture(section: MapSection) {
+
+/**
+ * Driveways: a short drive from each house's front door to the street it
+ * faces. Visual only (the cells keep their gameplay type). The front is local
+ * +z of the building, i.e. (-sin a, cos a) for its propAngle.
+ */
+export function drivewaysIn(terrain: TerrainCell[][], x0: number, y0: number, x1: number, y1: number) {
+  const out: { from: [number, number]; to: [number, number]; paved: boolean }[] = [];
+  for (let y = Math.max(0, y0); y < Math.min(terrain.length, y1); y++) for (let x = Math.max(0, x0); x < Math.min(terrain[0].length, x1); x++) {
+    const c = terrain[y][x];
+    if (c.type !== 'urban' || !c.settlementId || c.buildingKind === 'barn' || c.buildingKind === 'church') continue;
+    const a = c.propAngle ?? 0, fx = -Math.sin(a), fz = Math.cos(a);
+    const cx = x + .5 + (c.buildingOffset?.[0] ?? 0), cz = y + .5 + (c.buildingOffset?.[1] ?? 0);
+    for (let t = .3; t <= 2.6; t += .1) {
+      const px = cx + fx * t, pz = cz + fz * t, n = terrain[Math.floor(pz)]?.[Math.floor(px)];
+      if (!n || n.type === 'water' || (n.type === 'urban' && n !== c)) break;
+      if (n.roadName && (n.type === 'road' || n.type === 'gravel')) {
+        out.push({ from: [cx + fx * .22, cz + fz * .22], to: [px + fx * .12, pz + fz * .12], paved: c.buildingKind === 'brick' || c.buildingKind === 'block' });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+export function createRoadTexture(section: MapSection, terrain?: TerrainCell[][]) {
   const canvas = document.createElement('canvas');
   const samples = 16;
   canvas.width = (section.width + ROAD_GUTTER * 2) * samples; canvas.height = (section.height + ROAD_GUTTER * 2) * samples;
@@ -22,6 +48,16 @@ export function createRoadTexture(section: MapSection) {
   ctx.translate(ROAD_GUTTER - section.x, ROAD_GUTTER - section.y);
   const roads = roadBounds.filter(b => b.maxX >= section.x - ROAD_GUTTER && b.minX <= section.x + section.width + ROAD_GUTTER
     && b.maxY >= section.y - ROAD_GUTTER && b.minY <= section.y + section.height + ROAD_GUTTER).map(b => b.road);
+  if (terrain) {
+    // Driveways first, so the street paints over their ends.
+    ctx.save(); ctx.lineCap = 'round';
+    for (const d of drivewaysIn(terrain, section.x - ROAD_GUTTER, section.y - ROAD_GUTTER,
+      section.x + section.width + ROAD_GUTTER, section.y + section.height + ROAD_GUTTER)) {
+      ctx.beginPath(); ctx.moveTo(...d.from); ctx.lineTo(...d.to);
+      ctx.strokeStyle = d.paved ? '#5d625f' : '#bdb497'; ctx.lineWidth = d.paved ? .21 : .2; ctx.stroke();
+    }
+    ctx.restore();
+  }
   paintRoadNetwork(ctx, roads, true, junctions);
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearMipmapLinearFilter;

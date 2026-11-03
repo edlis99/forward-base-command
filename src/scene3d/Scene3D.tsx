@@ -7,7 +7,8 @@ import {
   handleRightClickWorld, updateCommandPreview, clearCommandPreview,
 } from '../game/engine';
 import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor } from '../game/tactical';
-import { GroundSurface, WaterSheet, GrassTufts, GroundDetail } from './GroundSurface';
+import { GroundSurface, WaterSheet, GrassTufts, GroundDetail, ShoreReeds } from './GroundSurface';
+import { Bridges } from './Bridges';
 import { MAP_SECTIONS, MapSection } from './mapSections';
 import { CampaignMap } from '../components/CampaignMap';
 import { SETTLEMENTS } from '../game/maps/settlements';
@@ -122,7 +123,9 @@ function TerrainSection({ terrain, regional, section, highQuality }: { terrain: 
     <group>
       <GroundSurface terrain={terrain} section={section} regional={regional} />
       <WaterSheet terrain={terrain} section={section} />
+      <Bridges terrain={terrain} section={section} />
       <GrassTufts terrain={terrain} section={section} />
+      <ShoreReeds terrain={terrain} section={section} />
       <GroundDetail terrain={terrain} section={section} />
       {Object.entries(groups).map(([type, g]) => (
         <InstancedTerrainGroup key={type} type={type} positions={g.positions} sizes={g.sizes} />

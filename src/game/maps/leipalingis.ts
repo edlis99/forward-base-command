@@ -124,9 +124,13 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     for (let k = 0; k <= n; k++) paintDisc(a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n, snapshot.streamWidth, 'water');
   }
   for (const [fx, fy] of snapshot.fords) paintDisc(fx, fy, 2.2, 'mud');
+  // Water before roads: a road crossing it becomes a bridge deck, and its
+  // shoulders leave the water alone (they used to dam the river with land).
+  const waterBefore = new Set<number>();
+  for (let y = 0; y < MAP_ROWS; y++) for (let x = 0; x < MAP_COLS; x++) if (grid[y][x].type === 'water') waterBefore.add(y * MAP_COLS + x);
 
   // Road shoulders remain traversable for the calibrated vehicle footprint. Tracks are slower and do not acquire asphalt bonuses.
-  const paintSegment = (a: Point, b: Point, radius: number, type: TerrainType, name?: string) => {
+  const paintSegment = (a: Point, b: Point, radius: number, type: TerrainType, name?: string, deck?: MapRoad) => {
     const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
     const steps = Math.max(1, Math.ceil(length * 3));
     for (let i = 0; i <= steps; i++) {
@@ -135,8 +139,11 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
         for (let cx = Math.floor(x - radius); cx <= Math.ceil(x + radius); cx++) {
           if (!grid[cy]?.[cx] || Math.hypot(cx + 0.5 - x, cy + 0.5 - y) > radius + 0.36) continue;
           if (type !== 'road' && grid[cy][cx].type === 'road') continue;
+          const overWater = designed && waterBefore.has(cy * MAP_COLS + cx);
+          if (overWater && !deck) continue;
           set(grid, cx, cy, type);
           grid[cy][cx].roadName = name;
+          if (overWater && deck) grid[cy][cx].bridge = { a, b, width: deck.width, paved: deck.paved };
         }
       }
     }
@@ -147,10 +154,11 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
     if (road.class !== 'track') paintSegment(road.points[i - 1], road.points[i], road.width / 2 + .45, 'open', road.name);
   }
   for (const road of LEIPALINGIS_ROADS) for (let i = 1; i < road.points.length; i++) {
-    paintSegment(road.points[i - 1], road.points[i], road.width / 2 + .12, 'gravel', road.name);
+    // The gravel shoulder crosses water as part of the deck (bridges carry it too).
+    paintSegment(road.points[i - 1], road.points[i], road.width / 2 + .12, 'gravel', road.name, road);
   }
   for (const road of LEIPALINGIS_ROADS) for (let i = 1; i < road.points.length; i++) {
-    paintSegment(road.points[i - 1], road.points[i], road.width / 2, road.paved ? 'road' : 'gravel', road.name);
+    paintSegment(road.points[i - 1], road.points[i], road.width / 2, road.paved ? 'road' : 'gravel', road.name, road);
   }
   // Irregular meadow patches fill unsurveyed agricultural ground. These are
   // gameplay vegetation, not additional claimed geographic features.

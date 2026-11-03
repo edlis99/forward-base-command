@@ -56,6 +56,29 @@ export function buildGroundGeometry(terrain: TerrainCell[][], section: MapSectio
 
   const col = new THREE.Color();
   const tmp = new THREE.Color();
+  const bank = new THREE.Color('#7b6c4c');
+
+  // Shore band: damp, muddy-sandy ground on land within two cells of water
+  // (roads excluded). Weighted per cell, blended per vertex like the soil.
+  const isWet = (cx: number, cy: number) => {
+    const c = terrain[cy]?.[cx];
+    return !!c && (c.type === 'water' || !!c.bridge);
+  };
+  const shoreCache = new Map<number, number>();
+  const shoreOf = (cx: number, cy: number) => {
+    const key = cy * W + cx;
+    let v = shoreCache.get(key);
+    if (v === undefined) {
+      const c = cellAt(cx, cy);
+      v = 0;
+      if (isWet(cx, cy)) v = 1;
+      else if (!c.roadName) for (let dy = -2; dy <= 2 && v < 1; dy++) for (let dx = -2; dx <= 2; dx++) {
+        if (isWet(cx + dx, cy + dy)) v = Math.max(v, Math.max(Math.abs(dx), Math.abs(dy)) === 1 ? 1 : .3);
+      }
+      shoreCache.set(key, v);
+    }
+    return v;
+  };
 
   for (let j = 0; j < nz; j++) {
     for (let i = 0; i < nx; i++) {
@@ -73,7 +96,8 @@ export function buildGroundGeometry(terrain: TerrainCell[][], section: MapSectio
       ];
 
       const o = (j * nx + i) * 3;
-      let r = 0, g = 0, b = 0;
+      let r = 0, g = 0, b = 0, shore = 0;
+      [[ix, iz], [ix + 1, iz], [ix, iz + 1], [ix + 1, iz + 1]].forEach(([cx, cy], k) => { shore += shoreOf(cx, cy) * wts[k][1]; });
       for (const [c, w] of wts) {
         if (w <= 0) continue;
         const surface = SURFACES.indexOf(surfaceFor(c, regional));
@@ -81,6 +105,14 @@ export function buildGroundGeometry(terrain: TerrainCell[][], section: MapSectio
         else splatB[o + surface - 3] += w;
         tmp.setStyle(c.yard ? ({ courtyard: '#aaa28a', garden: '#7d8d54', orchard: '#72854b' }[c.yard]) : GROUND_TINT[regional && c.roadName ? 'open' : c.type] ?? '#5c7042');
         r += tmp.r * w; g += tmp.g * w; b += tmp.b * w;
+      }
+
+      // Banks: shift the texture blend towards wet dirt and tint it damp.
+      const wet = Math.min(1, shore) * (.72 + .28 * fbm(gx * .4 + 3, gz * .4 + 9));
+      if (wet > .01) {
+        for (let k = 0; k < 3; k++) { splatA[o + k] *= 1 - wet * .55; splatB[o + k] *= 1 - wet * .55; }
+        splatB[o] += wet * .55;
+        tmp.setRGB(r, g, b).lerp(bank, wet * .45); r = tmp.r; g = tmp.g; b = tmp.b;
       }
 
       const height = groundHeightAt(terrain, gx, gz);
