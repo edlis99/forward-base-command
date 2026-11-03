@@ -205,6 +205,8 @@ export interface PlayerSquad {
   commandId: number;
   coordinated: boolean;
   progressFloor: number;
+  /** Median route progress of the command (0..1), for spotting members that have fallen behind. */
+  progressMedian?: number;
   commandLength: number;
   memberIds: string[];
   dest: Position;

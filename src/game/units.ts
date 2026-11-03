@@ -13,7 +13,7 @@ import { getTerrainAt, hasLineOfSight, losInfo, isPassable, isWorldFootprintPass
 import { findPath } from './pathfinding';
 import { isVisibleTo } from './awareness';
 import { getUnitGrid, queryNeighbors } from './spatialGrid';
-import { spacingRadius, getSquad, cohesionSpeedFactor, ARRIVE_TOLERANCE } from './playerSquads';
+import { spacingRadius, getSquad, cohesionSpeedFactor, catchUpFactor, ARRIVE_TOLERANCE } from './playerSquads';
 
 let nextId = 1;
 /** Id counter control: a match owns its counter (state.nextUnitId) so ids never depend on other matches in the process. */
@@ -315,7 +315,8 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const squad = getSquad(state, unit);
   const cohesionFactor = squad ? cohesionSpeedFactor(unit, squad) : 1;
   const attainable = availableSpeed(unit, state);
-  const pacedSpeed = unit.groupSpeedCap == null ? attainable : Math.min(attainable, unit.groupSpeedCap);
+  const catchUp = squad ? catchUpFactor(unit, squad) : 1;
+  const pacedSpeed = unit.groupSpeedCap == null ? attainable : Math.min(attainable, unit.groupSpeedCap * catchUp);
   if (cohesionFactor === 0 || (squad?.coordinated && pacedSpeed < .01)) {
     unit.waiting = 'formation'; unit.vel = { x: 0, y: 0 };
     unit.lastProgressTime = state.time; return;

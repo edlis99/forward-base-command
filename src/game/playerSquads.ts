@@ -1,6 +1,6 @@
 import { GameState, Position, Unit, PlayerSquad, FormationType } from './types';
 import { findNearestPassableWorld, isFootprintPassable, isWorldFootprintPassable } from './terrain';
-import { availableSpeed, routeRemaining } from './movement';
+import { marchSpeed, routeRemaining } from './movement';
 import { settlementAt } from './maps/settlements';
 import { clearUnitOrders, setDestination } from './units';
 
@@ -484,18 +484,35 @@ export function updatePlayerSquads(state: GameState, dt: number) {
         u.order = u.targetPos ? next.attackMove ? 'attack_move' : 'move' : 'idle';
       }
     }
+    // Paced by march speed (slowest type, morale, fatigue), not by the ground
+    // under each member: mud under one tank must not brake everyone at once.
     const moving = members.filter(u => u.targetPos);
-    const pace = moving.length ? Math.min(...moving.map(u => availableSpeed(u, state))) : 0;
+    const pace = moving.length ? Math.min(...moving.map(marchSpeed)) : 0;
     const progress = (u: Unit) => !u.targetPos ? 1 : Math.max(0, Math.min(1, 1 - routeRemaining(u) / Math.max(1, u.routeLength ?? 1)));
     const floor = Math.min(...members.map(progress));
+    const sorted = members.map(progress).sort((a, b) => a - b), median = sorted[sorted.length >> 1];
     const length = Math.max(1, ...members.map(u => u.routeLength ?? 0));
-    for (const sq of squads) { sq.progressFloor = floor; sq.commandLength = length; sq.travelSpeed = pace; }
+    for (const sq of squads) { sq.progressFloor = floor; sq.progressMedian = median; sq.commandLength = length; sq.travelSpeed = pace; }
     for (const u of members) {
       const sq = squads.find(s => s.id === u.squadId);
       u.groupSpeedCap = sq?.coordinated && u.targetPos ? pace : null;
     }
   }
   state.playerSquads = state.playerSquads.filter(sq => sq.memberIds.length > 0);
+}
+
+/**
+ * Catch-up for a member that has fallen behind its group (it was bogged in
+ * mud, pinned or blocked): it may exceed the group pace, up to its own
+ * attainable speed, until it is back with the others. Measured on route
+ * progress, so the rear rank of a formation is not mistaken for a straggler.
+ */
+export function catchUpFactor(unit: Unit, squad: PlayerSquad): number {
+  if (!squad.coordinated || squad.state === 'arrived' || squad.convoy || squad.progressMedian === undefined) return 1;
+  const progress = Math.max(0, Math.min(1, 1 - routeRemaining(unit) / Math.max(1, unit.routeLength ?? 1)));
+  const lag = (squad.progressMedian - progress) * squad.commandLength;
+  if (lag <= squad.cohesionRadius * .5) return 1;
+  return Math.min(1.5, 1 + (lag - squad.cohesionRadius * .5) / (squad.cohesionRadius * 2));
 }
 
 /** Stop a runaway leader; laggards catch up at their own attainable speed. */
