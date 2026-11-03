@@ -40,13 +40,17 @@ export function paintRoadNetwork(ctx: CanvasRenderingContext2D, roads: MapRoad[]
     ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
   };
   ctx.save(); ctx.lineJoin = ctx.lineCap = 'round'; ctx.setLineDash([]);
-  for (const road of roads) stroke(road, '#a19c81', road.width + (road.class === 'track' ? .08 : .2));
-  for (const road of roads.filter(r => !r.paved)) stroke(road, '#988c6d', road.width);
+  // Farm tracks are drawn a little wider than their gameplay width so they
+  // read as lanes, in light dirt; thin dark tracks looked like cracks.
+  const drawn = (road: MapRoad) => road.class === 'track' ? Math.max(road.width, .32) : road.width;
+  const dirt = (road: MapRoad) => road.class === 'track' ? '#ab9e7d' : '#a09377';
+  for (const road of roads) stroke(road, '#a19c81', drawn(road) + (road.class === 'track' ? .08 : .16));
+  for (const road of roads.filter(r => !r.paved)) stroke(road, dirt(road), drawn(road));
   if (markings) for (const road of roads.filter(r => !r.paved)) {
-    // Gravel roads and tracks: two darker wheel ruts; tracks keep a grassy middle strip.
-    const ruts = road.width * .62;
-    stroke(road, '#7c7056', ruts); stroke(road, '#988c6d', ruts - .085);
-    if (road.class === 'track') stroke(road, '#7d8752', .06);
+    // Gravel roads and tracks: two faint wheel ruts; tracks keep a grassy middle strip.
+    const ruts = drawn(road) * .6;
+    stroke(road, '#8e8165', ruts); stroke(road, dirt(road), ruts - .07);
+    if (road.class === 'track') stroke(road, '#8c9659', .05);
   }
   for (const road of roads.filter(r => r.paved)) stroke(road, '#485151', road.width);
   if (markings) {
