@@ -42,6 +42,12 @@ export function paintRoadNetwork(ctx: CanvasRenderingContext2D, roads: MapRoad[]
   ctx.save(); ctx.lineJoin = ctx.lineCap = 'round'; ctx.setLineDash([]);
   for (const road of roads) stroke(road, '#a19c81', road.width + (road.class === 'track' ? .08 : .2));
   for (const road of roads.filter(r => !r.paved)) stroke(road, '#988c6d', road.width);
+  if (markings) for (const road of roads.filter(r => !r.paved)) {
+    // Gravel roads and tracks: two darker wheel ruts; tracks keep a grassy middle strip.
+    const ruts = road.width * .62;
+    stroke(road, '#7c7056', ruts); stroke(road, '#988c6d', ruts - .085);
+    if (road.class === 'track') stroke(road, '#7d8752', .06);
+  }
   for (const road of roads.filter(r => r.paved)) stroke(road, '#485151', road.width);
   if (markings) {
     // Separate paint mask, composited only once. Remove paint around junctions
@@ -50,9 +56,19 @@ export function paintRoadNetwork(ctx: CanvasRenderingContext2D, roads: MapRoad[]
     canvas.width = ctx.canvas.width; canvas.height = ctx.canvas.height;
     const lines = canvas.getContext('2d')!; lines.setTransform(ctx.getTransform());
     lines.lineCap = 'butt'; lines.lineJoin = 'round'; lines.strokeStyle = '#d7d4bc';
-    for (const road of roads.filter(r => r.paved && r.width >= 1.2)) {
-      lines.setLineDash([.55, .65]); lines.lineWidth = .035;
-      lines.beginPath(); road.points.forEach((p, i) => i ? lines.lineTo(p[0], p[1]) : lines.moveTo(p[0], p[1])); lines.stroke();
+    const path = (road: MapRoad) => { lines.beginPath(); road.points.forEach((p, i) => i ? lines.lineTo(p[0], p[1]) : lines.moveTo(p[0], p[1])); };
+    // Main and secondary roads: solid edge lines (a stroke minus its inside,
+    // which also clears other roads' lines where they cross this one) ...
+    const marked = roads.filter(r => r.paved && r.width >= .6);
+    lines.setLineDash([]);
+    for (const road of marked) {
+      lines.globalCompositeOperation = 'source-over'; lines.lineWidth = road.width - .07; path(road); lines.stroke();
+      lines.globalCompositeOperation = 'destination-out'; lines.lineWidth = road.width - .15; path(road); lines.stroke();
+    }
+    lines.globalCompositeOperation = 'source-over';
+    // ... and a dashed centre line.
+    for (const road of marked) {
+      lines.setLineDash([.32, .42]); lines.lineWidth = .045; path(road); lines.stroke();
     }
     lines.setLineDash([]); lines.globalCompositeOperation = 'destination-out';
     for (const j of junctions ?? roadJunctions(roads.filter(r => r.class !== 'track'))) {

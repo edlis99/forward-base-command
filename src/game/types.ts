@@ -147,6 +147,8 @@ export interface TerrainCell {
   /** Real building position inside the cell (cells, about ±0.3); the cell centre stays the firing slot. */
   buildingOffset?: [number, number];
   roadName?: string;
+  /** Road deck over water: the cell is road for movement, the river runs underneath. */
+  bridge?: { a: number[]; b: number[]; width: number; paved: boolean };
   yard?: 'courtyard' | 'garden' | 'orchard';
   settlementId?: string;
   buildingKind?: 'house' | 'brick' | 'block' | 'barn' | 'church' | 'civic' | 'workshop';

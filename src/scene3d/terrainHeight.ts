@@ -60,11 +60,16 @@ export function fbm(x: number, y: number) {
   return sum;
 }
 
+/** Height of a bridge deck above the bank-level road it carries. */
+export const BRIDGE_DECK_LIFT = 0.12;
+
 /**
  * Surface height (world Y, in cell units) at continuous grid coordinates.
  * Must stay identical to the vertex displacement used by GroundSurface.
+ * Under a bridge the ground is river bed (`deck` false); with `deck` true a
+ * bridge cell is its road deck, which is what units and markers stand on.
  */
-export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number, gz: number): number {
+export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number, gz: number, deck = false): number {
   if (!terrain || terrain.length === 0) return 0;
   const cellAt = (cx: number, cy: number): TerrainCell => {
     const row = terrain[Math.max(0, Math.min(H - 1, cy))] ?? terrain[0];
@@ -79,17 +84,19 @@ export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number,
     [cellAt(ix, iz + 1), (1 - fx) * fz],
     [cellAt(ix + 1, iz + 1), fx * fz],
   ];
-  let level = 0, relief = 0, elev = 0;
+  let level = 0, relief = 0, elev = 0, onDeck = 0;
   for (const [c, w] of wts) {
     if (w <= 0 || !c) continue;
-    level += (c.roadName ? 0 : GROUND_LEVEL[c.type] ?? 0) * w;
-    relief += (c.roadName ? 1 : RELIEF[c.type] ?? 1) * w;
+    const bed = !!c.bridge && !deck;
+    if (c.bridge && deck) onDeck += w;
+    level += (bed ? GROUND_LEVEL.water : c.roadName ? 0 : GROUND_LEVEL[c.type] ?? 0) * w;
+    relief += (bed ? RELIEF.water : c.roadName ? 1 : RELIEF[c.type] ?? 1) * w;
     elev += ((c.elevation ?? 1) - 1) * w;
   }
   const hills = (fbm(gx * 0.03, gz * 0.03) - 0.5) * 2.4 * BUMP_SCALE;
   const mid = (fbm(gx * 0.11, gz * 0.11) - 0.5) * 0.36;
   const fine = (fbm(gx * 0.45, gz * 0.45) - 0.5) * 0.06;
-  return level + elev * HILL_SCALE + (hills + mid + fine) * relief;
+  return level + elev * HILL_SCALE + (hills + mid + fine) * relief + onDeck * BRIDGE_DECK_LIFT;
 }
 
 /**
@@ -105,7 +112,7 @@ export function waterBedHeightAt(terrain: TerrainCell[][], gx: number, gz: numbe
   let elev = 0, total = 0;
   for (const [cx, cy, w] of [[ix, iz, (1 - fx) * (1 - fz)], [ix + 1, iz, fx * (1 - fz)], [ix, iz + 1, (1 - fx) * fz], [ix + 1, iz + 1, fx * fz]]) {
     const c = terrain[cy]?.[cx];
-    if (!c || c.type !== 'water') continue;
+    if (!c || (c.type !== 'water' && !c.bridge)) continue;
     const wt = Math.max(w, 1e-3);
     elev += ((c.elevation ?? 1) - 1) * wt;
     total += wt;
@@ -129,11 +136,11 @@ export function setActiveTerrain(t: TerrainCell[][] | undefined) {
 
 /** Surface Y at continuous grid coords, using the cached active terrain. */
 export function surfaceY(gx: number, gz: number): number {
-  return groundHeightAt(activeTerrain, gx, gz);
+  return groundHeightAt(activeTerrain, gx, gz, true);
 }
 
 /** Surface Y from engine world coordinates (pixels), given CELL_SIZE. */
 export function surfaceYWorld(wx: number, wy: number, cellSize: number): number {
-  return groundHeightAt(activeTerrain, wx / cellSize, wy / cellSize);
+  return groundHeightAt(activeTerrain, wx / cellSize, wy / cellSize, true);
 }
 
