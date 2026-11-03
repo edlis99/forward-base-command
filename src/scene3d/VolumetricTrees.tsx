@@ -97,7 +97,7 @@ function InstanceGeometry({ trees, geometry, material, wood }: {
       const shade = .85 + .18 * tree.rank;
       // Foliage varies a little in hue from tree to tree (yellower / bluer),
       // so a wood is not one flat green; bark only varies in brightness.
-      const hue = wood ? 0 : (((tree.rank * 7.31) % 1) - .5) * .16;
+      const hue = wood ? 0 : (((tree.rank * 7.31) % 1) - .5) * .1;
       tint.setRGB(shade * (1 + hue), shade, shade * (1 - hue));
       mesh.current!.setColorAt(i, tint);
     });
