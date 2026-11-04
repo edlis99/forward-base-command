@@ -6,6 +6,7 @@ import { MAP_COLS, MAP_ROWS, CELL_SIZE } from '../game/constants';
 import { SETTLEMENTS } from '../game/maps/settlements';
 import { groundHeightAt, hash2 } from './terrainHeight';
 import { ambienceUniforms } from './ambienceUniforms';
+import { chimneyOf, METRE } from './villagePlans';
 
 /**
  * The "living map": chimney smoke, birds over the countryside, and ambient
@@ -29,11 +30,14 @@ export function ChimneySmoke({ terrain }: { terrain: TerrainCell[][] }) {
       const c = terrain[z][x];
       if (c.type !== 'urban' || !c.settlementId || !(c.buildingKind === 'house' || c.buildingKind === 'brick')) continue;
       if (hash2(x + 61, z + 17) > .07) continue; // about one house in fourteen has the stove lit
+      const flue = chimneyOf(c, x, z);
+      if (!flue) continue;
       const off = c.buildingOffset ?? [0, 0], a = c.propAngle ?? 0;
-      // chimney sits at local (-.18, roof, -.24): rotate into the world like the house
-      const cx = x + .5 + off[0] + Math.cos(a) * -.18 - Math.sin(a) * -.24;
-      const cz = z + .5 + off[1] + Math.sin(a) * -.18 + Math.cos(a) * -.24;
-      const y = groundHeightAt(terrain, cx, cz) + .78;
+      // Out of the house's own chimney: its local position turned into the world like the house.
+      const bx = x + .5 + off[0], bz = z + .5 + off[1];
+      const cx = bx + (Math.cos(a) * flue.lx - Math.sin(a) * flue.lz) * METRE;
+      const cz = bz + (Math.sin(a) * flue.lx + Math.cos(a) * flue.lz) * METRE;
+      const y = groundHeightAt(terrain, bx, bz) + (flue.top + .15) * METRE;
       for (let k = 0; k < PUFFS; k++) { pos.push(cx, y, cz); phase.push(k / PUFFS + hash2(x, z) * .5); seed.push(hash2(x + k, z + 3)); }
       emitters++;
     }
@@ -52,10 +56,10 @@ export function ChimneySmoke({ terrain }: { terrain: TerrainCell[][] }) {
       varying float vAlpha;
       void main() {
         float t = fract(uTime * 0.06 + aPhase);
-        vec3 p = position + vec3((t * 1.4 + sin(uTime * 0.3 + aSeed * 6.28) * 0.12), t * 2.4, t * 0.5);
+        vec3 p = position + vec3((t * 1.0 + sin(uTime * 0.3 + aSeed * 6.28) * 0.08), t * 1.7, t * 0.35);
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        gl_PointSize = (0.14 + t * 0.6) * uScale / max(1.0, -mv.z);
+        gl_PointSize = (0.07 + t * 0.5) * uScale / max(1.0, -mv.z);
         vAlpha = (1.0 - t) * smoothstep(0.0, 0.1, t) * 0.2;
       }`,
     fragmentShader: `

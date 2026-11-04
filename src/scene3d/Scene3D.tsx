@@ -1,7 +1,7 @@
 import React, { useRef, useMemo, useEffect, useState } from 'react';
 import { Canvas, useFrame, useThree, ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
-import { GameState, InputState, Unit, TerrainCell } from '../game/types';
+import { GameState, InputState, Unit, TerrainCell, UnitType } from '../game/types';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from '../game/constants';
 import {
   handleRightClickWorld, updateCommandPreview, clearCommandPreview,
@@ -592,7 +592,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             ref={(el) => { if (el) hoverRefs.current.set(u.id, el); else hoverRefs.current.delete(u.id); }}
             position={[0, 0.015, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
           >
-            <ringGeometry args={[u.type === 'infantry' ? .16 : .36, u.type === 'infantry' ? .20 : .40, 32]} />
+            <ringGeometry args={[u.type === 'infantry' ? .11 : .36, u.type === 'infantry' ? .14 : .40, 32]} />
             <meshBasicMaterial color="#cfd8c4" transparent opacity={0.55} />
           </mesh>
 
@@ -601,7 +601,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             ref={(el) => { if (el) previewRefs.current.set(u.id, el); else previewRefs.current.delete(u.id); }}
             position={[0, 0.018, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
           >
-            <ringGeometry args={[u.type === 'infantry' ? .17 : .37, u.type === 'infantry' ? .23 : .44, 32]} />
+            <ringGeometry args={[u.type === 'infantry' ? .12 : .37, u.type === 'infantry' ? .16 : .44, 32]} />
             <meshBasicMaterial color="#7ec0ff" transparent opacity={0.55} />
           </mesh>
 
@@ -610,7 +610,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             ref={(el) => { if (el) selRefs.current.set(u.id, el); else selRefs.current.delete(u.id); }}
             position={[0, 0.022, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} visible={false}
           >
-            <ringGeometry args={[u.type === 'infantry' ? .16 : .36, u.type === 'infantry' ? .23 : .44, 36]} />
+            <ringGeometry args={[u.type === 'infantry' ? .11 : .36, u.type === 'infantry' ? .16 : .44, 36]} />
             <meshBasicMaterial color={u.team === 'player' ? '#7ec0ff' : '#ff8a6a'} transparent opacity={0.95} />
           </mesh>
 
@@ -703,12 +703,14 @@ function GhostContactsLayer({ gameStateRef }: { gameStateRef: React.MutableRefOb
 function HealthBar({ u }: { u: Unit }) {
   const pct = Math.max(0, u.health / u.maxHealth);
   if (pct >= 1) return null;
-  const h = u.type === 'helicopter' ? 2.6 : 1.4;
+  // Just above the model: a soldier is about 0.15 cell tall, a tank 0.16, a flying helicopter about 1.2.
+  const h = u.type === 'helicopter' ? 1.6 : u.type === 'infantry' ? 0.34 : 0.42;
+  const w = u.type === 'infantry' ? 0.36 : 0.6;
   return (
     <group position={[0, h, 0]}>
-      <mesh><boxGeometry args={[0.8, 0.08, 0.02]} /><meshBasicMaterial color="#222" /></mesh>
-      <mesh position={[-0.4 + (0.4 * pct), 0, 0.01]}>
-        <boxGeometry args={[0.8 * pct, 0.07, 0.025]} />
+      <mesh><boxGeometry args={[w, 0.06, 0.02]} /><meshBasicMaterial color="#222" /></mesh>
+      <mesh position={[-w / 2 + (w / 2 * pct), 0, 0.01]}>
+        <boxGeometry args={[w * pct, 0.05, 0.025]} />
         <meshBasicMaterial color={pct > 0.5 ? '#5cda5c' : pct > 0.25 ? '#dad05c' : '#da5c5c'} />
       </mesh>
     </group>
@@ -774,8 +776,8 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
     for (const p of state.projectiles) {
       if (count + 2 > 500) break;
       const i = count * 3;
-      positions[i] = p.from.x / S; positions[i + 1] = surfaceY(p.from.x / S, p.from.y / S) + 0.5; positions[i + 2] = p.from.y / S;
-      positions[i + 3] = p.to.x / S; positions[i + 4] = surfaceY(p.to.x / S, p.to.y / S) + 0.5; positions[i + 5] = p.to.y / S;
+      positions[i] = p.from.x / S; positions[i + 1] = surfaceY(p.from.x / S, p.from.y / S) + muzzleHeight(p.shooter); positions[i + 2] = p.from.y / S;
+      positions[i + 3] = p.to.x / S; positions[i + 4] = surfaceY(p.to.x / S, p.to.y / S) + aimHeight(p.targetType); positions[i + 5] = p.to.y / S;
       // Player: cool blue-white. Enemy: hot orange-red.
       const base = p.team === 'player' ? [0.55, 0.85, 1.2] : [1.3, 0.55, 0.25];
       // Fade linearly — timer starts ~0.2-0.4, becomes 0. Use clamp.
@@ -810,29 +812,33 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
       // Muzzle flash: small billboard sphere at 'from', offset slightly toward 'to'.
       const dx = p.to.x - p.from.x, dy = p.to.y - p.from.y;
       const len = Math.hypot(dx, dy) || 1;
-      const heavy = len > 135;
-      const mx = (p.from.x + (dx / len) * 6) / S;
-      const mz = (p.from.y + (dy / len) * 6) / S;
-      const gFrom = surfaceY(mx, mz);
-      flash.sphere(mx, gFrom + (heavy ? 0.72 : 0.55), mz, (heavy ? 0.3 : 0.16) + 0.16 * flashOpacity, 1,
+      // Tank guns blast big; rifles flash small, at the muzzle's real height.
+      const heavy = p.shooter ? p.shooter === 'tank' : len > 135;
+      const light = p.shooter === 'infantry';
+      const reach = (heavy ? 18 : light ? 4 : 10);
+      const mx = (p.from.x + (dx / len) * reach) / S;
+      const mz = (p.from.y + (dy / len) * reach) / S;
+      const gFrom = surfaceY(mx, mz), muzzle = muzzleHeight(p.shooter);
+      flash.sphere(mx, gFrom + muzzle, mz, (heavy ? 0.12 : light ? 0.035 : 0.06) + (heavy ? 0.1 : 0.035) * flashOpacity, 1,
         p.team === 'player' ? FLASH_PLAYER : FLASH_ENEMY, flashOpacity);
-      flash.sphere(mx - (dx / len) * 0.08, gFrom + 0.22, mz - (dy / len) * 0.08, heavy ? 0.38 : 0.2, .35 / 1.4,
+      if (heavy || !light) flash.sphere(mx - (dx / len) * 0.08, gFrom + 0.06, mz - (dy / len) * 0.08, heavy ? 0.3 : 0.12, .35 / 1.4,
         MUZZLE_DUST, flashOpacity * (heavy ? 0.42 : 0.22), 1.4);
       // Impact spark: only if it's a hit and near end of life (looks like arrival).
+      const gTo = surfaceY(p.to.x / S, p.to.y / S);
       if (p.hit && fresh > 0.7) {
-        flash.sphere(p.to.x / S, surfaceY(p.to.x / S, p.to.y / S) + 0.5, p.to.y / S, 0.14 + (p.crit ? 0.1 : 0), 1,
+        flash.sphere(p.to.x / S, gTo + aimHeight(p.targetType), p.to.y / S, (heavy ? 0.1 : 0.04) + (p.crit ? 0.04 : 0), 1,
           p.crit ? SPARK_CRIT : SPARK, flashOpacity * 0.8);
       }
-      flash.sphere(p.to.x / S, surfaceY(p.to.x / S, p.to.y / S) + 0.18, p.to.y / S, heavy ? 0.42 : 0.18, .28 / 1.5,
+      flash.sphere(p.to.x / S, gTo + 0.04, p.to.y / S, heavy ? 0.3 : 0.08, .28 / 1.5,
         IMPACT_DUST, flashOpacity * (p.hit ? 0.28 : 0.44), 1.5);
     }
     for (const e of state.explosions) {
       const t = e.timer / e.maxTimer;
       const r = e.radius / S * (1.5 - t);
       const gE = surfaceY(e.pos.x / S, e.pos.y / S);
-      expl.sphere(e.pos.x / S, gE + 0.5, e.pos.y / S, r, 1, BLAST.setRGB(1, 0.5 + t * 0.3, 0.2), t);
-      expl.ring(e.pos.x / S, gE + 0.08, e.pos.y / S, Math.max(0.08, r * 0.92), SHOCK, t * 0.45);
-      expl.sphere(e.pos.x / S, gE + 0.55 + (1 - t) * 0.9, e.pos.y / S, Math.max(0.2, r * 0.55), 1.6, BLAST_SMOKE, Math.min(0.42, (1 - t) * 0.55));
+      expl.sphere(e.pos.x / S, gE + r * 0.45, e.pos.y / S, r, 1, BLAST.setRGB(1, 0.5 + t * 0.3, 0.2), t);
+      expl.ring(e.pos.x / S, gE + 0.05, e.pos.y / S, Math.max(0.08, r * 0.92), SHOCK, t * 0.45);
+      expl.sphere(e.pos.x / S, gE + r * 0.5 + (1 - t) * 0.8, e.pos.y / S, Math.max(0.2, r * 0.55), 1.6, BLAST_SMOKE, Math.min(0.42, (1 - t) * 0.55));
     }
     flash.end(); expl.end();
   });
@@ -1435,12 +1441,18 @@ function OuterGround() {
 // ---------- Camera rig ----------
 // ---------- World scale ----------
 /**
- * Units, houses and trees are scaled together so proportions are real: a tank
- * is about the size of a village house, a soldier about a quarter of its
- * height, a pine about three times it (BUILDING_SCALE in Environment.tsx,
- * TREE_SCALE in RealisticVegetation.tsx). Gameplay distances are unchanged.
+ * Units, houses and trees share one scale (a cell is about 16 m, METRE in
+ * Environment.tsx): a tank is 0.5 cell long and 0.16 tall, a soldier 0.15
+ * tall (a little over life size, so infantry stay readable), a cottage ridge
+ * 0.45, a village birch about 0.9, a pine about 2 (TREE_SCALE in
+ * RealisticVegetation.tsx). Gameplay distances are unchanged.
  */
-const UNIT_SCALE: Record<string, number> = { infantry: 0.8, tank: 0.6, apc: 0.6, helicopter: 0.7 };
+const UNIT_SCALE: Record<string, number> = { infantry: 0.56, tank: 0.6, apc: 0.6, helicopter: 0.7 };
+/** Muzzle and aim-point heights above the ground (cells) by unit type, for tracers and flashes. */
+const MUZZLE_HEIGHT: Record<UnitType, number> = { infantry: 0.11, tank: 0.12, apc: 0.12, helicopter: 1.05 };
+const AIM_HEIGHT: Record<UnitType, number> = { infantry: 0.08, tank: 0.09, apc: 0.08, helicopter: 1.05 };
+const muzzleHeight = (type?: UnitType) => type ? MUZZLE_HEIGHT[type] : 0.12;
+const aimHeight = (type?: UnitType) => type ? AIM_HEIGHT[type] : 0.08;
 /** Seconds a fallen soldier stays on the field; wrecks last as long as the simulation's wreckage (90 s). */
 const FALLEN_SECONDS = 14, WRECK_SECONDS = 90;
 
@@ -1487,8 +1499,8 @@ function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObjec
     const onWheel = (e: WheelEvent) => {
       if (!(e.target instanceof HTMLCanvasElement)) return;
       // Proportional zoom: fine steps close up, big steps far out.
-      const step = Math.max(2, distRef.current * .14);
-      distRef.current = Math.max(8, Math.min(400, distRef.current + (e.deltaY > 0 ? step : -step)));
+      const step = Math.max(1, distRef.current * .14);
+      distRef.current = Math.max(4.5, Math.min(400, distRef.current + (e.deltaY > 0 ? step : -step)));
     };
     window.addEventListener('wheel', onWheel);
     return () => window.removeEventListener('wheel', onWheel);

@@ -159,6 +159,8 @@ export interface TerrainCell {
 
 export interface Projectile {
   from: Position; to: Position; timer: number; hit: boolean; crit: boolean; team: Team;
+  /** Who fired and at what (for drawing tracers and flashes at muzzle and target height). */
+  shooter?: UnitType; targetType?: UnitType;
 }
 export interface Wreckage { pos: Position; type: UnitType; timer: number; team: Team; }
 export interface Explosion { pos: Position; radius: number; timer: number; maxTimer: number; }

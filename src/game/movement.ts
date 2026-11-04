@@ -1,11 +1,13 @@
 import { GameState, Unit } from './types';
-import { getTerrainAt } from './terrain';
+import { deckUnder, getTerrainAt } from './terrain';
 
 /** Actual attainable ground speed, before steering and arrival easing. */
 export function availableSpeed(unit: Unit, state: GameState): number {
   if (unit.prone && unit.suppression > .5) return 0;
   const cell = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
-  const terrainFactor = unit.type === 'helicopter' || !cell ? 1 : cell.traction / cell.movementCost;
+  // A deck may reach over the river beside its own cells: on it the ground is the bridge, not the water.
+  const onDeck = unit.type !== 'helicopter' && !!cell && (cell.type === 'water' || !!cell.bridge) && !!deckUnder(state.terrain, unit.pos.x, unit.pos.y);
+  const terrainFactor = unit.type === 'helicopter' || !cell || onDeck ? 1 : cell.traction / cell.movementCost;
   return unit.speed * terrainFactor * (1 - unit.suppression * .5) * (.7 + unit.morale * .3) * (1 - unit.fatigue * .4);
 }
 /**

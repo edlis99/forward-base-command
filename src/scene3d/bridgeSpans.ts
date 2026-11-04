@@ -1,6 +1,7 @@
 import { TerrainCell } from '../game/types';
 import { MapSection } from './mapSections';
 import { BRIDGE_DECK_LIFT, bridgeDeckEnds, groundHeightAt } from './terrainHeight';
+import { deckWidth } from '../game/terrain';
 
 /**
  * Road bridges where a road's centre line crosses a river or lake. The map
@@ -41,7 +42,7 @@ export function spanBoxes(terrain: TerrainCell[][], section: MapSection): Box[] 
     const at = (t: number) => [ax + (bx - ax) * t, az + (bz - az) * t] as const;
     const yaw = -Math.atan2(dz, dx), pitch = Math.atan2(hb - ha, L);
     // Deck carries the road and its gravel shoulders.
-    const w = Math.max(.55, bridge.width + .3);
+    const w = deckWidth(bridge);
     const deck = bridge.paved ? '#8f8c84' : '#7a6248', trim = bridge.paved ? '#b1aea4' : '#5f4a35';
     const along = (t0: number, t1: number, offset: number, y: number, sy: number, sz: number, color: string) => {
       const tm = (t0 + t1) / 2, [px, pz] = at(tm);
