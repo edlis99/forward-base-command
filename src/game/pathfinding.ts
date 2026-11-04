@@ -1,6 +1,6 @@
 import { TerrainCell, Position, UnitType } from './types';
 import { CELL_SIZE, MAP_COLS, MAP_ROWS } from './constants';
-import { isPassable, isFootprintPassable, isWorldFootprintPassable, deckUnder, spanAxis, spanCoords, walkableAt, type BridgeSpan } from './terrain';
+import { isPassable, isFootprintPassable, isWorldFootprintPassable, crossesRailing, deckGate, deckUnder, railings, spanAxis, spanCoords, walkableAt, type BridgeSpan } from './terrain';
 
 interface Node { gx: number; gy: number; g: number; f: number; parent: Node | null; }
 
@@ -71,6 +71,8 @@ export function findPath(
   start: Position,
   goal: Position,
   type: UnitType,
+  /** Rule M14 for a unit setting off: onto and off bridge decks only at their ends, never through a railing. */
+  bridgeRules = false,
 ): Position[] {
   const heli = type === 'helicopter';
   if (heli) return [{ x: goal.x, y: goal.y }];
@@ -139,7 +141,16 @@ export function findPath(
         const sideA = cellPassable(terrain, cur.gx + dx, cur.gy, vehicle, heli), sideB = cellPassable(terrain, cur.gx, cur.gy + dy, vehicle, heli);
         if ((!sideA || !sideB) && !(!sideA && !sideB && deckLink(terrain, cur.gx, cur.gy, nx, ny))) continue;
       }
-      const cell = terrain[ny][nx];
+      const cell = terrain[ny][nx], here = terrain[cur.gy][cur.gx];
+      // Onto or off a bridge deck only at its ends, never through its railings
+      // (rule M14). A deck cell stands for the deck, which is narrower than the
+      // cell, so a step onto it is judged by where it comes from (a gate);
+      // on the bank no step may cut past the end of a railing either.
+      if (bridgeRules) {
+        if (here.bridge !== cell.bridge) {
+          if ((cell.bridge && !deckGate(terrain, cur.gx, cur.gy, nx, ny)) || (here.bridge && !deckGate(terrain, nx, ny, cur.gx, cur.gy))) continue;
+        } else if (!cell.bridge && crossesRailing(terrain, (cur.gx + .5) * CELL_SIZE, (cur.gy + .5) * CELL_SIZE, (nx + .5) * CELL_SIZE, (ny + .5) * CELL_SIZE)) continue;
+      }
       const ng = cur.g + base * moveCost(cell);
       const k = key(nx, ny);
       if (searchStamp[k] === generation && searchCost[k] <= ng) continue;
@@ -163,7 +174,7 @@ export function findPath(
   if (worldPath.length > 0) worldPath[worldPath.length - 1] = { ...destination };
 
   // String-pull / smooth: drop intermediate points where straight LOS is clear
-  return smoothPath(terrain, start, worldPath, vehicle, heli);
+  return smoothPath(terrain, start, worldPath, vehicle, heli, bridgeRules);
 }
 
 /**
@@ -185,7 +196,7 @@ export function alignBridgeCrossings(terrain: TerrainCell[][], start: Position, 
       samples.push({ x, y, seg: s, span: terrain[Math.floor(y / CELL_SIZE)]?.[Math.floor(x / CELL_SIZE)]?.bridge });
     }
   }
-  const cuts: { from: number; to: number; entry: Position; exit: Position; onDeck: boolean }[] = [];
+  const cuts: { from: number; to: number; entry: Position; exit: Position; onDeck: boolean; span: BridgeSpan; forward: boolean }[] = [];
   for (let i = 0; i < samples.length; i++) {
     const span = samples[i].span;
     if (!span) continue;
@@ -209,7 +220,7 @@ export function alignBridgeCrossings(terrain: TerrainCell[][], start: Position, 
       return { x: (ax + ux * t) * CELL_SIZE, y: (ay + uy * t) * CELL_SIZE };
     };
     const forward = b0 < a1;
-    cuts.push({ from: onDeck ? 0 : before.seg, to: after.seg, entry: end(forward ? 0 : L, .7), exit: end(forward ? L : 0, .7), onDeck });
+    cuts.push({ from: onDeck ? 0 : before.seg, to: after.seg, entry: end(forward ? 0 : L, .7), exit: end(forward ? L : 0, .7), onDeck, span, forward });
   }
   if (!cuts.length) return path.map(p => ontoDeck(terrain, p));
   // Rebuild: waypoints up to each crossing, its entry and exit, then the rest.
@@ -217,10 +228,26 @@ export function alignBridgeCrossings(terrain: TerrainCell[][], start: Position, 
   let next = 1;
   for (const cut of cuts) {
     for (; next <= cut.from; next++) out.push(points[next]);
-    const prev = out[out.length - 1] ?? start;
     const dirX = cut.exit.x - cut.entry.x, dirY = cut.exit.y - cut.entry.y;
-    // No turning back for an entry already behind the unit.
-    if (!cut.onDeck && (cut.entry.x - prev.x) * dirX + (cut.entry.y - prev.y) * dirY > 0) out.push(cut.entry);
+    if (!cut.onDeck) {
+      // Every crossing starts at the gate: on the road in line with the deck,
+      // in front of its end (where a column lines up in single file). Route
+      // points close before it are dropped, so the unit drives straight for the
+      // gate instead of to a grid cell beside the deck end; only a unit beside
+      // the railings first goes round their end.
+      const rail = railings(cut.span), axis = spanAxis(cut.span), gate = cut.entry;
+      const gateAt = spanCoords(cut.span, gate.x, gate.y).along;
+      while (out.length && Math.hypot(out[out.length - 1].x - gate.x, out[out.length - 1].y - gate.y) < CELL_SIZE * 1.3) out.pop();
+      const prev = out[out.length - 1] ?? start, at = spanCoords(cut.span, prev.x, prev.y);
+      const inLine = Math.abs(at.across) <= rail.offset - .05;
+      const pastGate = cut.forward ? at.along >= gateAt : at.along <= gateAt;
+      if (!inLine && at.along > rail.from - .1 && at.along < rail.to + .1) {
+        const along = cut.forward ? rail.from - .6 : rail.to + .6, side = Math.sign(at.across) * Math.max(Math.abs(at.across), rail.offset + .45);
+        const round = { x: (axis.ax + axis.ux * along - axis.uy * side) * CELL_SIZE, y: (axis.ay + axis.uy * along + axis.ux * side) * CELL_SIZE };
+        if (walkableAt(terrain, round.x, round.y, vehicle)) out.push(round);
+      }
+      if (!(inLine && pastGate)) out.push(gate);
+    }
     out.push(cut.exit);
     next = Math.max(next, cut.to + 1);
     // Nor back to a route point the exit already lies beyond.
@@ -238,18 +265,23 @@ function ontoDeck(terrain: TerrainCell[][], p: Position): Position {
   return { ...p, x: (ax + ux * t) * CELL_SIZE, y: (ay + uy * t) * CELL_SIZE };
 }
 
-function segmentCost(terrain: TerrainCell[][], a: Position, b: Position, vehicle: boolean, heli: boolean): number {
+function segmentCost(terrain: TerrainCell[][], a: Position, b: Position, vehicle: boolean, heli: boolean, bridgeRules = false): number {
   const dx = b.x - a.x, dy = b.y - a.y;
   const dist = Math.hypot(dx, dy);
   const steps = Math.max(1, Math.ceil(dist / (CELL_SIZE * 0.2)));
   let cost = 0;
-  let px = Math.floor(a.x / CELL_SIZE), py = Math.floor(a.y / CELL_SIZE);
+  let px = Math.floor(a.x / CELL_SIZE), py = Math.floor(a.y / CELL_SIZE), lx = a.x, ly = a.y;
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     const x = a.x + dx * t, y = a.y + dy * t;
     const gx = Math.floor(x / CELL_SIZE), gy = Math.floor(y / CELL_SIZE);
     if (!cellPassable(terrain, gx, gy, vehicle, heli) ||
         (vehicle && !isWorldFootprintPassable(terrain, x, y, true))) return Infinity;
+    // A shortcut may not pass through a bridge railing on the bank; over the
+    // deck cells the crossing is laid along the deck afterwards.
+    if (bridgeRules && !heli && !terrain[gy][gx].bridge && !terrain[Math.floor(ly / CELL_SIZE)]?.[Math.floor(lx / CELL_SIZE)]?.bridge &&
+        crossesRailing(terrain, lx, ly, x, y)) return Infinity;
+    lx = x; ly = y;
     // Sampling must not allow a diagonal to clip an impassable corner.
     if (gx !== px && gy !== py &&
         (!cellPassable(terrain, gx, py, vehicle, heli) || !cellPassable(terrain, px, gy, vehicle, heli))) return Infinity;
@@ -259,7 +291,7 @@ function segmentCost(terrain: TerrainCell[][], a: Position, b: Position, vehicle
   return cost;
 }
 
-function smoothPath(terrain: TerrainCell[][], start: Position, path: Position[], vehicle: boolean, heli: boolean): Position[] {
+function smoothPath(terrain: TerrainCell[][], start: Position, path: Position[], vehicle: boolean, heli: boolean, bridgeRules = false): Position[] {
   if (path.length <= 1) return path;
   const out: Position[] = [];
   let anchor: Position = start;
@@ -267,16 +299,16 @@ function smoothPath(terrain: TerrainCell[][], start: Position, path: Position[],
   // erases the road detour A* deliberately chose for its speed advantage.
   const prefix = [0];
   for (let k = 1; k < path.length; k++) {
-    prefix[k] = prefix[k - 1] + segmentCost(terrain, path[k - 1], path[k], vehicle, heli);
+    prefix[k] = prefix[k - 1] + segmentCost(terrain, path[k - 1], path[k], vehicle, heli, bridgeRules);
   }
   let i = 0;
   while (i < path.length) {
     // Bound shortcut work on long regional orders. Every original segment
     // still contributes to travel cost; this only limits smoothing lookahead.
     let j = Math.min(path.length - 1, i + 40);
-    const entryCost = segmentCost(terrain, anchor, path[i], vehicle, heli);
+    const entryCost = segmentCost(terrain, anchor, path[i], vehicle, heli, bridgeRules);
     while (j > i) {
-      const direct = segmentCost(terrain, anchor, path[j], vehicle, heli);
+      const direct = segmentCost(terrain, anchor, path[j], vehicle, heli, bridgeRules);
       const original = entryCost + prefix[j] - prefix[i];
       if (Number.isFinite(direct) && direct <= original * 1.015 + 0.01) break;
       j--;

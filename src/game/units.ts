@@ -9,7 +9,7 @@ import {
   RETARGET_INTERVAL, RETARGET_HYSTERESIS, MAX_ENGAGE_TIME, DISENGAGE_GRACE, CHASE_STANDOFF, TARGET_LOST_TIMEOUT,
   TARGET_THREAT, SUPPRESSION_RESIST, HEAVY_WEAPON_DAMAGE, SMALL_ARMS_VS_VEHICLE,
 } from './constants';
-import { getTerrainAt, hasLineOfSight, losInfo, isWorldFootprintPassable, findNearestPassableWorld, deckUnder, deckLane, spanAxis, spanCoords, walkableAt } from './terrain';
+import { getTerrainAt, hasLineOfSight, losInfo, isWorldFootprintPassable, findNearestPassableWorld, deckUnder, deckLane, railings, spanAxis, spanCoords, canStep, crossesRailing } from './terrain';
 import { alignBridgeCrossings, findPath } from './pathfinding';
 import { isVisibleTo } from './awareness';
 import { getUnitGrid, queryNeighbors } from './spatialGrid';
@@ -130,7 +130,7 @@ export function setDestination(unit: Unit, state: GameState, dest: Position, rep
   const reachableDest = findNearestPassableWorld(state.terrain, dest.x, dest.y, vehicle, helicopter, 12);
   unit.finalDest = { ...reachableDest };
   // Over a bridge, units drive the deck end to end (rule M14).
-  const route = findPath(state.terrain, unit.pos, reachableDest, unit.type);
+  const route = findPath(state.terrain, unit.pos, reachableDest, unit.type, true);
   const path = helicopter ? route : alignBridgeCrossings(state.terrain, unit.pos, route, vehicle);
   if (path.length === 0) {
     unit.targetPos = null;
@@ -370,7 +370,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const nextX = unit.pos.x + unit.vel.x * dt;
   const nextY = unit.pos.y + unit.vel.y * dt;
   const nextT = getTerrainAt(state.terrain, nextX, nextY);
-  const stepOk = heli || walkableAt(state.terrain, nextX, nextY, veh);
+  const stepOk = heli || canStep(state.terrain, unit.pos.x, unit.pos.y, nextX, nextY, veh);
   const neighbors = heli ? [] : queryNeighbors(getUnitGrid(state), nextX, nextY, 32, unit)
     .filter(other => other.alive && !other.insideOf && other.team === unit.team && other.type !== 'helicopter' && unit.boardTarget !== other.id);
   const trafficAt = (x: number, y: number) => neighbors.some(other => {
@@ -392,7 +392,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       const side = (other.pos.x - unit.pos.x) * -fy + (other.pos.y - unit.pos.y) * fx >= 0 ? 1 : -1;
       const step = Math.min(limit, 40 * dt);
       const x = other.pos.x - fy * side * step, y = other.pos.y + fx * side * step;
-      if (walkableAt(state.terrain, x, y, false)) {
+      if (canStep(state.terrain, other.pos.x, other.pos.y, x, y, false)) {
         other.pos = { x, y };
         if (other.homePos) other.homePos = { ...other.pos };
       }
@@ -430,12 +430,18 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     for (const offset of offsets) {
       const angle = unit.facing + offset;
       const x = unit.pos.x + Math.cos(angle) * step, y = unit.pos.y + Math.sin(angle) * step;
-      if (!trafficAt(x, y) && walkableAt(state.terrain, x, y, veh)) {
+      if (!trafficAt(x, y) && canStep(state.terrain, unit.pos.x, unit.pos.y, x, y, veh)) {
         unit.pos = { x, y }; break;
       }
     }
     unit.vel = { x: 0, y: 0 }; unit.waiting = 'traffic';
     unit.lastProgressTime = state.time;
+    // A soldier held up close to a route point (a parked vehicle standing on
+    // it) takes the next one: route points are only guidance on the way.
+    if (!veh && unit.path.length > 0 && distToTarget < CELL_SIZE && (unit.trafficWait ?? 0) > 1.5) {
+      unit.targetPos = unit.path.shift() ?? unit.targetPos;
+      unit.lastProgressDist = distance(unit.pos, unit.targetPos!);
+    }
     // A friendly has settled beside the slot: close enough is arrived, instead
     // of yielding forever one step short of a crowded square.
     unit.trafficWait = (unit.trafficWait ?? 0) + dt;
@@ -472,7 +478,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     for (const sign of [1, -1]) {
       const sx = unit.pos.x + (perpX / plen) * speed * dt * sign;
       const sy = unit.pos.y + (perpY / plen) * speed * dt * sign;
-      const ok = walkableAt(state.terrain, sx, sy, veh);
+      const ok = canStep(state.terrain, unit.pos.x, unit.pos.y, sx, sy, veh);
       if (ok) {
         unit.pos.x = sx; unit.pos.y = sy;
         unit.vel.x = (perpX / plen) * speed * sign * 0.6;
@@ -486,7 +492,8 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     if (unit.stuckTimer > 0.45) {
       // Recover from terrain changes or an invalid edge before rebuilding.
       const recovered = findNearestPassableWorld(state.terrain, unit.pos.x, unit.pos.y, veh, heli, 4);
-      unit.pos.x = recovered.x; unit.pos.y = recovered.y;
+      // Never through a bridge railing: then the unit only plans afresh from where it is.
+      if (heli || !crossesRailing(state.terrain, unit.pos.x, unit.pos.y, recovered.x, recovered.y)) { unit.pos.x = recovered.x; unit.pos.y = recovered.y; }
       const dest = unit.finalDest ?? unit.targetPos;
       if (dest) setDestination(unit, state, dest, true);
       unit.stuckTimer = 0;
@@ -534,10 +541,12 @@ const HALF_WIDTH: Record<string, number> = { tank: .11, apc: .1, infantry: .03, 
  * are kept to its centre line.
  */
 function keepOnDeck(unit: Unit, state: GameState) {
-  const span = deckUnder(state.terrain, unit.pos.x, unit.pos.y, .35);
+  // Only a unit on the deck: one beside it is never pulled through the railing.
+  const span = deckUnder(state.terrain, unit.pos.x, unit.pos.y);
   if (!span) return;
-  const { along, across, L } = spanCoords(span, unit.pos.x, unit.pos.y);
-  if (along < 0 || along > L) return;
+  const { along, across } = spanCoords(span, unit.pos.x, unit.pos.y), rail = railings(span);
+  // Past the railings the deck lies on the bank, open at the sides.
+  if (along < rail.from || along > rail.to) return;
   const room = Math.max(0, deckLane(span) - (HALF_WIDTH[unit.type] ?? .05));
   if (Math.abs(across) <= room) return;
   const { ax, ay, ux, uy } = spanAxis(span), side = Math.sign(across) * room;

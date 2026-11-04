@@ -1,7 +1,7 @@
 import { TerrainCell } from '../game/types';
 import { MapSection } from './mapSections';
 import { BRIDGE_DECK_LIFT, bridgeDeckEnds, groundHeightAt } from './terrainHeight';
-import { deckWidth } from '../game/terrain';
+import { deckWidth, railings } from '../game/terrain';
 
 /**
  * Road bridges where a road's centre line crosses a river or lake. The map
@@ -63,8 +63,9 @@ export function spanBoxes(terrain: TerrainCell[][], section: MapSection): Box[] 
         boxes.push({ x: px, y: top(t) + .011, z: pz, sx: .022, sy: .006, sz: w - .16, yaw, pitch, color: '#5e4a36' });
       }
     }
-    // Railings only over the water (with a little overlap onto each bank).
-    const r0 = Math.max(0, bridge.tin - .12), r1 = Math.min(1, bridge.tout + .12);
+    // Railings only over the water, a little way onto each bank: the same
+    // railings units cannot pass through (game/terrain railings()).
+    const rail = railings(bridge), r0 = rail.from / L, r1 = rail.to / L;
     for (const s of [-1, 1]) {
       along(0, 1, s * (w / 2 + .03), -.1, .22, .07, trim);
       const o = s * (w / 2 - .03);

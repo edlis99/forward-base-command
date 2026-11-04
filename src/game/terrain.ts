@@ -430,6 +430,94 @@ export function walkableAt(terrain: TerrainCell[][], x: number, y: number, vehic
   return vehicle ? isWorldFootprintPassable(terrain, x, y, true) : isPassable(cell, false, false);
 }
 
+/**
+ * Railings, as Bridges draws them and as units collide with them: along both
+ * edges of the deck over the water, reaching 0.35 cell (about 5 m) onto each
+ * bank. Where the deck lies on the bank beyond them it is level with the road
+ * and open at the sides.
+ */
+export function railings(span: BridgeSpan) {
+  const { L } = spanAxis(span);
+  return { offset: deckWidth(span) / 2 - .03, from: Math.max(0, span.tin * L - .35), to: Math.min(L, span.tout * L + .35), L };
+}
+/** Cells within two of a deck cell: a quick filter before the exact railing test. */
+const nearDeckMasks = new WeakMap<TerrainCell[][], Uint8Array>();
+function nearDeck(terrain: TerrainCell[][], gx: number, gy: number): boolean {
+  let mask = nearDeckMasks.get(terrain);
+  if (!mask) {
+    mask = new Uint8Array(MAP_COLS * MAP_ROWS);
+    for (let y = 0; y < terrain.length; y++) for (let x = 0; x < terrain[y].length; x++) {
+      if (!terrain[y][x].bridge) continue;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const xx = x + dx, yy = y + dy;
+        if (xx >= 0 && xx < MAP_COLS && yy >= 0 && yy < MAP_ROWS) mask[yy * MAP_COLS + xx] = 1;
+      }
+    }
+    nearDeckMasks.set(terrain, mask);
+  }
+  return gx >= 0 && gx < MAP_COLS && gy >= 0 && gy < MAP_ROWS && mask[gy * MAP_COLS + gx] === 1;
+}
+/**
+ * Whether the straight move a -> b (px) passes through one of a span's
+ * railings. `slack` (cells) shortens each railing at its ends: grid routing
+ * between cell centres uses it, as those are too coarse to judge an end post.
+ */
+function throughRailing(span: BridgeSpan, ax: number, ay: number, bx: number, by: number, slack = 0): boolean {
+  const p = spanCoords(span, ax, ay), q = spanCoords(span, bx, by), rail = railings(span);
+  for (const side of [-1, 1]) {
+    const u = p.across - side * rail.offset, v = q.across - side * rail.offset;
+    if ((u > 0) === (v > 0) || u === v) continue;
+    const along = p.along + (q.along - p.along) * (u / (u - v));
+    if (along >= rail.from + slack && along <= rail.to - slack) return true;
+  }
+  return false;
+}
+/**
+ * Rule M14: no unit goes through a bridge railing. Onto a deck or off it is
+ * only over its ends: along the road, or onto the deck where it lies on the
+ * bank beyond the railings. Cheap away from bridges.
+ */
+export function crossesRailing(terrain: TerrainCell[][], ax: number, ay: number, bx: number, by: number, slack = 0): boolean {
+  const gx = Math.floor(bx / CELL_SIZE), gy = Math.floor(by / CELL_SIZE);
+  if (!nearDeck(terrain, gx, gy) && !nearDeck(terrain, Math.floor(ax / CELL_SIZE), Math.floor(ay / CELL_SIZE))) return false;
+  const seen: BridgeSpan[] = [];
+  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+    const span = terrain[gy + dy]?.[gx + dx]?.bridge;
+    if (!span || seen.includes(span)) continue;
+    seen.push(span);
+    if (throughRailing(span, ax, ay, bx, by, slack)) return true;
+  }
+  return false;
+}
+/** A continuous step a -> b: the ground at b carries the unit and no railing is in the way. */
+export function canStep(terrain: TerrainCell[][], ax: number, ay: number, bx: number, by: number, vehicle: boolean): boolean {
+  return walkableAt(terrain, bx, by, vehicle) && !crossesRailing(terrain, ax, ay, bx, by);
+}
+/**
+ * For grid routing: may a unit step between a deck cell and the land cell
+ * beside it? Only at the deck's ends: the land cell must reach the open end
+ * of the deck (where it lies on the bank past the railings, or the road just
+ * in front of it). A bank cell beside the railings is not a way on.
+ */
+export function deckGate(terrain: TerrainCell[][], gx: number, gy: number, deckX: number, deckY: number): boolean {
+  const span = terrain[deckY]?.[deckX]?.bridge;
+  if (!span) return true;
+  const { ax, ay, ux, uy, L } = spanAxis(span), rail = railings(span), half = deckWidth(span) / 2 + .05;
+  const cell = [[gx, gy], [gx + 1, gy], [gx + 1, gy + 1], [gx, gy + 1]];
+  const axes = [[1, 0], [0, 1], [ux, uy], [-uy, ux]];
+  for (const [from, to] of [[-1, rail.from], [rail.to, L + 1]]) {
+    const end = [[from, -half], [to, -half], [to, half], [from, half]].map(([al, ac]) => [ax + ux * al - uy * ac, ay + uy * al + ux * ac]);
+    // Separating-axis test: the cell's square and the end's rectangle overlap
+    // unless some axis keeps them apart.
+    const apart = axes.some(([nx, ny]) => {
+      const pa = cell.map(([x, y]) => x * nx + y * ny), pb = end.map(([x, y]) => x * nx + y * ny);
+      return Math.max(...pa) < Math.min(...pb) || Math.max(...pb) < Math.min(...pa);
+    });
+    if (!apart) return true;
+  }
+  return false;
+}
+
 /** Continuous collision uses the vehicle hull radius, not a 3x3-cell square.
  * Check centre/corners when moving between cell-centred A* waypoints. */
 export function isWorldFootprintPassable(terrain: TerrainCell[][], x: number, y: number, vehicle: boolean, heli = false): boolean {
