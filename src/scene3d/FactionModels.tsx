@@ -4,14 +4,29 @@ import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { FACTIONS, FactionId } from '../game/factions';
-import { FactionWeapon, TankDetails, CarrierDetails, HelicopterDetails } from './FactionEnhancements';
-import type { Unit, UnitType } from '../game/types';
+import { FactionWeapon, TankDetails, TankTurretDetails, CarrierDetails, CarrierTurretDetails, HelicopterDetails } from './FactionEnhancements';
+import { retargetClips, QUATERNIUS_TO_MIXAMO } from './retargetClips';
+import { splitTurret } from './turretSplit';
+import { animStep } from './animationClock';
+import type { Position, Unit, UnitType } from '../game/types';
 
 const asset = (name: string) => `${import.meta.env.BASE_URL}assets/factions/${name}.glb`;
 const FACTION_MODEL_PATHS = {
   aster: { infantry: asset('aster-rifleman-detailed'), tank: asset('tank-hull') },
   vostran: { infantry: asset('union-rifleman'), tank: asset('tank-hull') },
 };
+/** The Quaternius soldier's animation set also drives the Aster (Mixamo-rigged) soldier. */
+const ANIMATION_SOURCE = asset('union-rifleman');
+/** Right-hand bones the rifle is held in ('mixamorig:RightHand' is stored without its colon). */
+const HAND_BONE = { aster: THREE.PropertyBinding.sanitizeNodeName('mixamorig:RightHand'), vostran: THREE.PropertyBinding.sanitizeNodeName('Wrist.R') };
+/** Where in the combat roll the soldier lies flat, arms forward: held as the prone / in-cover pose. */
+const PRONE_AT = .16;
+
+/** Where a unit's weapon should point (its live target), or null. */
+export type AimResolver = (unit: Unit) => Position | null;
+
+
+const angleDelta = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 /** A failed optional asset keeps its local fallback; it never blanks the battlefield. */
 class ModelBoundary extends React.Component<{ children: React.ReactNode; fallback: React.ReactNode }, { failed: boolean }> {
@@ -71,6 +86,8 @@ function templateFor(scene: THREE.Group, faction: FactionId, type: 'infantry' | 
     });
     object.material = isArray ? recoloured : recoloured[0];
   });
+  // The tank's turret is cut out of the single hull mesh so it can turn on its own.
+  if (type === 'tank') splitTurret(source);
   // Sample the gun-ready animation before measuring a skinned character.
   if (type === 'infantry' && animations.length) {
     const mixer = new THREE.AnimationMixer(source);
@@ -81,7 +98,9 @@ function templateFor(scene: THREE.Group, faction: FactionId, type: 'infantry' | 
   // Simulation yaw zero faces +X. Each source model has its own forward axis:
   // the tank's gun points along -X in its file (measured from the GLB), so it
   // turns half round; the riflemen face +-Z and turn a quarter.
-  source.rotation.y += type === 'tank' ? Math.PI : faction === 'aster' ? -Math.PI / 2 : Math.PI / 2;
+  // The Aster soldier's own file faces the other way, but its retargeted clips
+  // turn it to face like the Vostran soldier whose motion they come from.
+  source.rotation.y += type === 'tank' ? Math.PI : faction === 'aster' && !animations.length ? -Math.PI / 2 : Math.PI / 2;
   oriented.add(source); oriented.updateMatrixWorld(true);
   const bounds = new THREE.Box3().setFromObject(oriented, true);
   const size = bounds.getSize(new THREE.Vector3());
@@ -89,119 +108,201 @@ function templateFor(scene: THREE.Group, faction: FactionId, type: 'infantry' | 
   oriented.scale.setScalar(scale);
   oriented.position.set(-(bounds.min.x + bounds.max.x) * scale / 2, -bounds.min.y * scale, -(bounds.min.z + bounds.max.z) * scale / 2);
   const result = new THREE.Group(); result.add(oriented);
+  result.updateMatrixWorld(true);
+  const pivot = result.getObjectByName('turret-pivot');
+  if (pivot) {
+    // Turret ring centre in model space, where the turret-mounted details turn.
+    const at = pivot.getWorldPosition(new THREE.Vector3());
+    result.userData.turret = { x: at.x, y: at.y, z: at.z, scale };
+  }
   variants.set(key, result);
   return result;
 }
 
-function ImportedModel({ faction, type, unit }: { faction: FactionId; type: 'infantry' | 'tank'; unit?: Unit }) {
-  const loaded = useGLTF(FACTION_MODEL_PATHS[faction][type]);
-  const model = useMemo(() => clone(templateFor(loaded.scene, faction, type, loaded.animations)), [loaded, faction, type]);
-  const animation = useMemo(() => {
-    if (type !== 'infantry' || !loaded.animations.length) return null;
+/** One Aster clip set per loaded pair: the Quaternius clips baked onto the Mixamo skeleton. */
+const retargeted = new WeakMap<THREE.Object3D, THREE.AnimationClip[]>();
+function infantryClips(faction: FactionId, own: { scene: THREE.Group; animations: THREE.AnimationClip[] }, source: { scene: THREE.Group; animations: THREE.AnimationClip[] }) {
+  if (faction !== 'aster' || own.animations.length) return own.animations;
+  let clips = retargeted.get(own.scene);
+  if (!clips) {
+    clips = retargetClips(clone(own.scene), clone(source.scene), source.animations, QUATERNIUS_TO_MIXAMO);
+    retargeted.set(own.scene, clips);
+  }
+  return clips;
+}
+
+/** Prone pose offset (model space): the held combat-roll frame, centred over the unit and resting on the ground. */
+const proneOffsets = new WeakMap<THREE.AnimationClip, THREE.Vector3>();
+function proneOffset(model: THREE.Object3D, roll: THREE.AnimationClip) {
+  let offset = proneOffsets.get(roll);
+  if (!offset) {
     const mixer = new THREE.AnimationMixer(model);
-    const idleClip = loaded.animations.find(a => /Idle_Gun_Pointing$/.test(a.name)) ?? loaded.animations[0];
-    // Walk at normal pace, run only when moving fast (retreating, sprinting).
-    const walkClip = loaded.animations.find(a => /\|Walk$/.test(a.name) || /^Walk$/.test(a.name));
-    const runClip = loaded.animations.find(a => /\|Run$/.test(a.name) || /^Run$/.test(a.name));
-    const idle = mixer.clipAction(idleClip);
-    const walk = walkClip ? mixer.clipAction(walkClip) : null, run = runClip ? mixer.clipAction(runClip) : null;
-    idle.play(); mixer.update(0);
-    // Models with no walking clip (the coalition rifleman only has a standing
-    // pose) get a walk cycle driven on their leg and arm bones instead.
-    const bone = (n: string) => model.getObjectByName(n) ?? null;
-    const rig = !walk && !run ? { ul: bone('upleg.L'), ur: bone('upleg.R'), ll: bone('leg.L'), lr: bone('leg.R'), al: bone('arm.L'), ar: bone('arm.R') } : null;
-    const proceduralWalk = !!rig && !!rig.ul && !!rig.ur;
-    // Resting pose of each driven bone; the swing is applied relative to it every frame (never accumulated).
-    const rest = new Map<THREE.Object3D, THREE.Quaternion>();
-    if (proceduralWalk) for (const b of Object.values(rig!)) if (b) rest.set(b, b.quaternion.clone());
-    return { mixer, idle, walk, run, current: idle as THREE.AnimationAction, rig: proceduralWalk ? rig : null, rest, phase: 0, stride: 0 };
-  }, [model, loaded, type]);
+    const action = mixer.clipAction(roll); action.play(); mixer.setTime(roll.duration * PRONE_AT);
+    model.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(model, true);
+    offset = new THREE.Vector3(-(box.min.x + box.max.x) / 2 + .02, -box.min.y + .002, -(box.min.z + box.max.z) / 2);
+    action.stop(); mixer.uncacheRoot(model);
+    proneOffsets.set(roll, offset);
+  }
+  return offset;
+}
+
+/**
+ * Soldier: an animation state machine over the Quaternius clip set (the Aster
+ * soldier gets the same clips retargeted to its skeleton). Relaxed idle,
+ * aiming at a target, single shots when standing, firing on the run, walking
+ * or running by speed (feet keep pace), a flinch when hit, a held prone pose
+ * when pinned or in cover, and the death fall. The rifle is held in the right hand.
+ */
+function ImportedInfantry({ faction, unit }: { faction: FactionId; unit?: Unit }) {
+  const loaded = useGLTF(FACTION_MODEL_PATHS[faction].infantry);
+  const source = useGLTF(ANIMATION_SOURCE);
+  const clips = useMemo(() => infantryClips(faction, loaded, source), [faction, loaded, source]);
+  const model = useMemo(() => clone(templateFor(loaded.scene, faction, 'infantry', clips)), [loaded, faction, clips]);
+  const poseRef = useRef<THREE.Group>(null);
   const rifleMount = useMemo(() => {
-    if (type !== 'infantry' || faction !== 'vostran') return null;
-    const wrist = model.getObjectByName('Wrist.R');
-    if (!wrist) return null;
+    const hand = model.getObjectByName(HAND_BONE[faction]);
+    const aimClip = clips.find(c => /Idle_Gun_Pointing$/.test(c.name));
+    if (!hand) return null;
+    // Place the rifle at the hand in the aiming pose, pointing forward, then let it follow the hand.
+    const mixer = new THREE.AnimationMixer(model);
+    if (aimClip) { mixer.clipAction(aimClip).play(); mixer.update(0); }
+    model.updateMatrixWorld(true);
     const mount = new THREE.Group();
-    mount.position.set(0.065, 0.17, 0.028);
+    const at = model.worldToLocal(hand.getWorldPosition(new THREE.Vector3()));
+    mount.position.set(at.x + .012, at.y + .004, at.z);
+    mount.rotation.set(0, faction === 'aster' ? -.08 : 0, 0);
     model.add(mount); model.updateMatrixWorld(true);
-    // Preserve the initial gun-ready placement while following the animated wrist.
-    wrist.attach(mount);
+    hand.attach(mount);
+    mixer.stopAllAction(); mixer.uncacheRoot(model);
     return mount;
-  }, [model, type, faction]);
-  // The BAMEN soldier is skinned but ships without animation clips. Animate
-  // its leg bones while moving; keep authored clips for the Vostran soldier.
-  const gait = useMemo(() => {
-    if (type !== 'infantry' || loaded.animations.length) return null;
-    const bones = ['LeftUpLeg', 'RightUpLeg', 'LeftLeg', 'RightLeg'];
-    return bones.map(name => {
-      const bone = model.getObjectByName('mixamorig:' + name) ?? model.getObjectByName(name);
-      return { bone, original: bone?.rotation.x ?? 0 };
-    });
-  }, [model, loaded.animations.length, type]);
-  const gaitClock = useRef(0);
-  useEffect(() => () => { animation?.mixer.stopAllAction(); animation?.mixer.uncacheRoot(model); }, [animation, model]);
-  const swing = useMemo(() => ({ q: new THREE.Quaternion(), x: new THREE.Vector3(1, 0, 0) }), []);
+  }, [model, clips, faction]);
+  const anim = useMemo(() => {
+    const mixer = new THREE.AnimationMixer(model);
+    const get = (name: string) => clips.find(c => c.name === name || c.name.endsWith('|' + name));
+    const action = (name: string, once = false) => {
+      const clip = get(name);
+      if (!clip) return null;
+      const a = mixer.clipAction(clip);
+      if (once) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+      return a;
+    };
+    const roll = get('Roll');
+    const prone = roll ? mixer.clipAction(roll) : null;
+    const offset = roll ? proneOffset(clone(model), roll) : new THREE.Vector3();
+    const idle = action('Idle_Gun') ?? action('Idle_Gun_Pointing') ?? (clips[0] ? mixer.clipAction(clips[0]) : null);
+    if (idle) { idle.play(); mixer.update(0); }
+    return {
+      mixer, idle, aim: action('Idle_Gun_Pointing'), walk: action('Walk'), run: action('Run'), runShoot: action('Run_Shoot'),
+      shoot: action('Idle_Gun_Shoot', true) ?? action('Gun_Shoot', true), hit: action('HitRecieve', true), death: action('Death', true),
+      prone, offset, current: idle, lastFire: unit?.lastFireTime ?? 0, lastHit: unit?.lastDamageTime ?? 0, shotAt: -99, hitAt: -99, clock: 0,
+    };
+    // unit is read for its starting fire/damage times only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, clips]);
+  useEffect(() => () => { anim.mixer.stopAllAction(); anim.mixer.uncacheRoot(model); }, [anim, model]);
   useFrame((_, dt) => {
-    if (!animation) {
-      if (gait) {
-        const moving = !!unit && Math.hypot(unit.vel.x, unit.vel.y) > 1;
-        gaitClock.current += Math.min(dt, 0.05) * (moving ? 10 : 2);
-        const phase = gaitClock.current, stride = moving ? 0.38 : 0.015;
-        gait.forEach(({ bone, original }, i) => {
-          if (!bone) return;
-          const step = Math.sin(phase + (i % 2) * Math.PI);
-          const goal = original + (i < 2 ? step * stride : Math.max(0, -step) * stride * 0.7);
-          bone.rotation.x += (goal - bone.rotation.x) * Math.min(1, dt * 10);
-        });
-      }
-      return;
+    const a = anim, step = animStep(dt);
+    if (!a.idle) return;
+    a.clock += step;
+    const now = a.clock;
+    let shot = false;
+    if (unit) {
+      if (unit.lastFireTime !== a.lastFire) { a.lastFire = unit.lastFireTime; a.shotAt = now; shot = true; }
+      if (unit.lastDamageTime !== a.lastHit) { a.lastHit = unit.lastDamageTime; a.hitAt = now; }
     }
-    const step = Math.min(dt, 0.05);
     const speed = unit ? Math.hypot(unit.vel.x, unit.vel.y) : 0;
     const pace = unit ? speed / Math.max(1, unit.speed) : 0; // 1 = normal marching speed
     const fast = !!unit && (unit.order === 'retreat' || pace > 1.15);
-    const want = speed <= 1 ? animation.idle : fast ? (animation.run ?? animation.walk ?? animation.idle) : (animation.walk ?? animation.run ?? animation.idle);
-    if (want !== animation.current) {
-      animation.current.fadeOut(0.2);
-      want.reset().fadeIn(0.2).play();
-      animation.current = want;
+    const moving = speed > 1;
+    const down = !!unit && unit.alive && !moving && (unit.prone || (unit.inCover && !unit.targetPos));
+    let want = a.idle, restart = false;
+    if (unit && !unit.alive && a.death) want = a.death;
+    else if (down && a.prone) want = a.prone;
+    else if (now - a.hitAt < .45 && a.hit) want = a.hit;
+    else if (moving) want = (now - a.shotAt < 1.2 && a.runShoot) ? a.runShoot : fast ? (a.run ?? a.walk ?? a.idle) : (a.walk ?? a.run ?? a.idle);
+    else if (now - a.shotAt < .5 && a.shoot) { want = a.shoot; restart = shot; }
+    else if (unit && (unit.aiming || unit.engaging || unit.attackTarget) && a.aim) want = a.aim;
+    if (want !== a.current || restart) {
+      if (want !== a.current) a.current?.fadeOut(.18);
+      want.reset().setEffectiveWeight(1).fadeIn(restart ? .04 : .18).play();
+      if (want === a.prone) { want.time = want.getClip().duration * PRONE_AT; want.paused = true; }
+      a.current = want;
     }
     // Leg speed follows ground speed, so feet do not slide.
-    if (want !== animation.idle) want.timeScale = Math.max(.55, Math.min(1.6, pace * (fast ? .8 : 1)));
-    animation.mixer.update(step);
-    if (animation.rig) {
-      // Bone-driven walk: thighs swing, knees bend on the back swing, arms counter-swing.
-      const r = animation.rig;
-      animation.stride += ((speed > 1 ? 1 : 0) - animation.stride) * Math.min(1, step * 8);
-      animation.phase += step * (5.5 + pace * 3) * animation.stride;
-      const a = Math.sin(animation.phase) * .55 * animation.stride, k = animation.stride * .75;
-      const turn = (b: THREE.Object3D | null, angle: number) => {
-        const base = b && animation.rest.get(b);
-        if (b && base) b.quaternion.copy(base).multiply(swing.q.setFromAxisAngle(swing.x, angle));
-      };
-      turn(r.ul, a); turn(r.ur, -a);
-      turn(r.ll, Math.max(0, -Math.sin(animation.phase)) * k); turn(r.lr, Math.max(0, Math.sin(animation.phase)) * k);
-      turn(r.al, -a * .6); turn(r.ar, a * .6);
+    if (want === a.walk || want === a.run || want === a.runShoot) want.timeScale = Math.max(.55, Math.min(1.6, pace * (fast ? .8 : 1)));
+    a.mixer.update(step);
+    // The held prone frame comes from a moving roll: centre it on the unit and lay it on the ground.
+    const pose = poseRef.current;
+    if (pose) {
+      const k = Math.min(1, step * 6), proneNow = want === a.prone;
+      pose.position.lerp(proneNow ? a.offset : ZERO, k);
     }
   });
-  return <group name={`faction-model-${faction}-${type}`} userData={{ faction, unitType: type, imported: true }} dispose={null}>
-    <primitive object={model} />
+  return <group name={`faction-model-${faction}-infantry`} userData={{ faction, unitType: 'infantry', imported: true }} dispose={null}>
+    <group ref={poseRef}><primitive object={model} /></group>
     {rifleMount && createPortal(<FactionWeapon faction={faction} />, rifleMount)}
-    {type === 'infantry' && faction === 'aster' &&
-      <group position={[0.06, 0.17, 0.055]} rotation={[0, -0.22, 0]}>
-        <FactionWeapon faction={faction} />
-      </group>}
-    {type === 'tank' && <TankDetails faction={faction} />}
-    {type === 'tank' && faction === 'aster' && <group>
-      {/* Western-style angular turret bustle and side armour over the licensed base hull. */}
-      <Block at={[-0.06, 0.22, 0]} size={[0.31, 0.105, 0.29]} color={FACTIONS.aster.armor} />
-      <Block at={[-0.16, 0.245, 0]} size={[0.12, 0.07, 0.32]} color="#3e4a39" />
-      {[-1, 1].map(side => <Block key={side} at={[-0.06, 0.095, side * 0.205]} size={[0.48, 0.08, 0.018]} color={FACTIONS.aster.armor} />)}
-    </group>}
+  </group>;
+}
+const ZERO = new THREE.Vector3();
+
+/**
+ * Tank: the turret turns towards the target at a realistic traverse rate and
+ * returns forward when there is none; each shot kicks the turret back and
+ * rocks the hull. Turret-mounted details turn with it.
+ */
+function ImportedTank({ faction, unit, aimAt, wrecked }: { faction: FactionId; unit?: Unit; aimAt?: AimResolver; wrecked?: boolean }) {
+  const loaded = useGLTF(FACTION_MODEL_PATHS[faction].tank);
+  const model = useMemo(() => clone(templateFor(loaded.scene, faction, 'tank', loaded.animations)), [loaded, faction]);
+  const parts = useMemo(() => {
+    const pivot = model.getObjectByName('turret-pivot') ?? null;
+    const turret = pivot?.getObjectByName('turret') ?? null;
+    const info = model.userData.turret as { x: number; y: number; z: number; scale: number } | undefined;
+    return { pivot, turret, base: turret?.position.clone() ?? new THREE.Vector3(), info };
+  }, [model]);
+  const detail = useRef<THREE.Group>(null), detailKick = useRef<THREE.Group>(null), rock = useRef<THREE.Group>(null);
+  const state = useRef({ yaw: 0, recoil: 0, lastFire: unit?.lastFireTime ?? 0, wreckYaw: .6 + Math.random() * 1.6 });
+  useFrame((_, dt) => {
+    const s = state.current, step = animStep(dt);
+    if (wrecked) { s.yaw = s.wreckYaw; s.recoil = 0; }
+    else {
+      const target = unit && aimAt?.(unit);
+      const goal = target ? angleDelta(Math.atan2(target.y - unit!.pos.y, target.x - unit!.pos.x) - unit!.facing) : 0;
+      const d = angleDelta(goal - s.yaw);
+      s.yaw += Math.max(-1.3 * step, Math.min(1.3 * step, d));
+      if (unit && unit.lastFireTime !== s.lastFire) { s.lastFire = unit.lastFireTime; s.recoil = 1; }
+      s.recoil = Math.max(0, s.recoil - step * 3.2);
+    }
+    // Fast kick back, slower run-out.
+    const kick = s.recoil > .8 ? (1 - s.recoil) / .2 : s.recoil / .8;
+    if (parts.pivot) parts.pivot.rotation.y = -s.yaw;
+    if (parts.turret) parts.turret.position.x = parts.base.x + kick * .32;
+    if (detail.current) detail.current.rotation.y = -s.yaw;
+    if (detailKick.current && parts.info) detailKick.current.position.x = -kick * .32 * parts.info.scale;
+    if (rock.current) rock.current.rotation.z = kick * .03;
+  });
+  const t = parts.info;
+  return <group name={`faction-model-${faction}-tank`} userData={{ faction, unitType: 'tank', imported: true }} dispose={null}>
+    <group ref={rock}>
+      <primitive object={model} />
+      <TankDetails faction={faction} />
+      <group ref={detail} position={t ? [t.x, 0, t.z] : [-.13, 0, 0]}>
+        <group ref={detailKick}><group position={t ? [-t.x, 0, -t.z] : [.13, 0, 0]}>
+          <TankTurretDetails faction={faction} />
+          {faction === 'aster' && <group>
+            {/* Western-style angular turret bustle over the licensed base hull. */}
+            <Block at={[-0.06, 0.22, 0]} size={[0.31, 0.105, 0.29]} color={FACTIONS.aster.armor} />
+            <Block at={[-0.16, 0.245, 0]} size={[0.12, 0.07, 0.32]} color="#3e4a39" />
+          </group>}
+        </group></group>
+      </group>
+      {faction === 'aster' && [-1, 1].map(side => <Block key={side} at={[-0.06, 0.095, side * 0.205]} size={[0.48, 0.08, 0.018]} color={FACTIONS.aster.armor} />)}
+    </group>
   </group>;
 }
 
-/** Original faction-specific APC geometry: high western cabin vs low eastern boat hull. */
-function Carrier({ faction }: { faction: FactionId }) {
+/** Original faction-specific APC geometry: high western cabin vs low eastern boat hull. Wheels roll with speed; the weapon station tracks targets. */
+function Carrier({ faction, unit, aimAt, scale = .6, wrecked }: { faction: FactionId; unit?: Unit; aimAt?: AimResolver; scale?: number; wrecked?: boolean }) {
   const f = FACTIONS[faction], eastern = faction === 'vostran';
   const hull = useMemo(() => {
     const shape = new THREE.Shape();
@@ -212,41 +313,86 @@ function Carrier({ faction }: { faction: FactionId }) {
     g.translate(0, 0, -0.155); g.computeVertexNormals(); return g;
   }, [eastern]);
   useEffect(() => () => hull.dispose(), [hull]);
+  const wheels = useRef<(THREE.Group | null)[]>([]), station = useRef<THREE.Group>(null), turret = useRef<THREE.Group>(null);
+  const state = useRef({ roll: 0, yaw: 0 });
+  useFrame((_, dt) => {
+    if (wrecked || !unit) return;
+    const s = state.current, step = animStep(dt);
+    // Wheel radius .087 model units; unit speed px/s -> cells/s -> model units/s.
+    const forward = (unit.vel.x * Math.cos(unit.facing) + unit.vel.y * Math.sin(unit.facing)) / 32 / scale;
+    s.roll -= forward * step / .087;
+    for (const w of wheels.current) if (w) w.rotation.z = s.roll;
+    const target = aimAt?.(unit);
+    const goal = target ? angleDelta(Math.atan2(target.y - unit.pos.y, target.x - unit.pos.x) - unit.facing) : 0;
+    s.yaw += Math.max(-2 * step, Math.min(2 * step, angleDelta(goal - s.yaw)));
+    if (station.current) station.current.rotation.y = -s.yaw;
+    if (turret.current) turret.current.rotation.y = -s.yaw;
+  });
+  const cx = eastern ? 0.08 : -0.03;
   return <group name={`faction-model-${faction}-apc`} userData={{ faction, unitType: 'apc' }}>
     <mesh geometry={hull} castShadow receiveShadow><meshStandardMaterial color={f.armor} roughness={0.9} /></mesh>
-    {[-0.25, -0.09, 0.09, 0.25].flatMap((x, i) => [-1, 1].map(side => <group key={`${i}/${side}`}>
-      <mesh position={[x, 0.105, side * 0.18]} rotation={[Math.PI / 2, 0, 0]} castShadow><cylinderGeometry args={[0.087, 0.087, 0.065, 12]} /><meshStandardMaterial color="#242824" roughness={1} /></mesh>
-      <mesh position={[x, 0.105, side * 0.217]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.043, 0.043, 0.008, 10]} /><meshStandardMaterial color={f.kit} roughness={0.8} /></mesh>
+    {[-0.25, -0.09, 0.09, 0.25].flatMap((x, i) => [-1, 1].map(side => <group key={`${i}/${side}`} position={[x, 0.105, side * 0.18]}
+      ref={el => { wheels.current[i * 2 + (side + 1) / 2] = el; }}>
+      <mesh rotation={[Math.PI / 2, 0, 0]} castShadow><cylinderGeometry args={[0.087, 0.087, 0.065, 12]} /><meshStandardMaterial color="#242824" roughness={1} /></mesh>
+      <mesh position={[0, 0, side * 0.037]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.043, 0.043, 0.008, 10]} /><meshStandardMaterial color={f.kit} roughness={0.8} /></mesh>
+      {/* Hub bolts make the wheel's turning visible. */}
+      {[0, 1, 2].map(k => <mesh key={k} position={[Math.cos(k * 2.09) * .028, Math.sin(k * 2.09) * .028, side * 0.042]}><boxGeometry args={[.012, .012, .006]} /><meshStandardMaterial color="#1d211d" /></mesh>)}
     </group>))}
-    <mesh position={[eastern ? 0.08 : -0.03, eastern ? 0.275 : 0.355, 0]} castShadow>
-      <cylinderGeometry args={[eastern ? 0.065 : 0.055, 0.085, 0.065, eastern ? 10 : 4]} /><meshStandardMaterial color={f.kit} roughness={0.85} />
-    </mesh>
-    <Block at={[0.16, eastern ? 0.29 : 0.385, 0]} size={[eastern ? 0.21 : 0.13, 0.014, 0.015]} color="#262d27" />
+    <group ref={turret} position={[cx, 0, 0]}><group position={[-cx, 0, 0]}>
+      <mesh position={[cx, eastern ? 0.275 : 0.355, 0]} castShadow>
+        <cylinderGeometry args={[eastern ? 0.065 : 0.055, 0.085, 0.065, eastern ? 10 : 4]} /><meshStandardMaterial color={f.kit} roughness={0.85} />
+      </mesh>
+      <Block at={[0.16, eastern ? 0.29 : 0.385, 0]} size={[eastern ? 0.21 : 0.13, 0.014, 0.015]} color="#262d27" />
+    </group></group>
     <Block at={[-0.32, 0.18, 0]} size={[0.012, 0.12, 0.21]} color={f.kit} />
     <Block at={[-0.25, 0.36, -0.11]} size={[0.005, 0.24, 0.005]} color="#282e26" />
     {[-1, 1].map(side => <Block key={side} at={[0.29, 0.205, side * 0.10]} size={[0.02, 0.025, 0.035]} color="#d6c9a0" />)}
     <CarrierDetails faction={faction} />
+    <group ref={station} position={[.09, 0, 0]}><group position={[-.09, 0, 0]}><CarrierTurretDetails faction={faction} /></group></group>
   </group>;
 }
 
-function Helicopter({ faction }: { faction: FactionId }) {
+/** Helicopter: rotors spin, the nose dips into forward flight, it banks into turns and bobs in the hover. */
+function Helicopter({ faction, unit, wrecked }: { faction: FactionId; unit?: Unit; wrecked?: boolean }) {
   const f = FACTIONS[faction], eastern = faction === 'vostran';
-  const rotor = useRef<THREE.Group>(null), tail = useRef<THREE.Group>(null);
-  useFrame((_, dt) => { if (rotor.current) rotor.current.rotation.y += dt * 30; if (tail.current) tail.current.rotation.z += dt * 40; });
-  return <group name={`faction-model-${faction}-helicopter`} userData={{ faction, unitType: 'helicopter' }} position={[0, 1.5, 0]}>
-    <mesh scale={[eastern ? 0.31 : 0.27, eastern ? 0.11 : 0.09, 0.10]} castShadow><sphereGeometry args={[1, 12, 8]} /><meshStandardMaterial color={f.armor} roughness={0.85} /></mesh>
-    <mesh position={[0.18, 0.015, 0]} scale={[0.13, 0.08, 0.083]} castShadow><sphereGeometry args={[1, 10, 7]} /><meshStandardMaterial color="#283e3e" roughness={0.4} /></mesh>
-    <Block at={[-0.34, 0.015, 0]} size={[0.42, 0.035, 0.035]} color={f.armor} />
-    <Block at={[-0.53, 0.07, 0]} size={[0.045, 0.15, 0.02]} color={f.armor} />
-    <group ref={rotor} position={[0, 0.15, 0]}>
-      {[0, Math.PI / 2].map(angle => <Block key={angle} at={[0, 0, 0]} rotation={[0, angle, 0]} size={[0.94, 0.009, 0.025]} color="#30372f" />)}
+  const rotor = useRef<THREE.Group>(null), tail = useRef<THREE.Group>(null), body = useRef<THREE.Group>(null);
+  const state = useRef({ pitch: 0, bank: 0, facing: unit?.facing ?? 0, t: Math.random() * 10 });
+  useFrame((_, dt) => {
+    const s = state.current, step = animStep(dt);
+    if (wrecked) {
+      if (body.current) { body.current.position.y = .05; body.current.rotation.set(.35, 0, .5); }
+      return;
+    }
+    if (rotor.current) rotor.current.rotation.y += step * 30;
+    if (tail.current) tail.current.rotation.z += step * 40;
+    s.t += step;
+    const forward = unit ? (unit.vel.x * Math.cos(unit.facing) + unit.vel.y * Math.sin(unit.facing)) / Math.max(1, unit.speed) : 0;
+    const turnRate = unit ? angleDelta(unit.facing - s.facing) / Math.max(step, 1e-3) : 0;
+    if (unit) s.facing = unit.facing;
+    s.pitch += (-Math.max(-.2, Math.min(.25, forward * .22)) - s.pitch) * Math.min(1, step * 2.5);
+    s.bank += (Math.max(-.35, Math.min(.35, turnRate * .25)) - s.bank) * Math.min(1, step * 2.5);
+    if (body.current) {
+      body.current.position.y = 1.5 + Math.sin(s.t * 1.7) * .03;
+      body.current.rotation.order = 'YZX';
+      body.current.rotation.set(s.bank, 0, s.pitch);
+    }
+  });
+  return <group name={`faction-model-${faction}-helicopter`} userData={{ faction, unitType: 'helicopter' }}>
+    <group ref={body} position={[0, 1.5, 0]}>
+      <mesh scale={[eastern ? 0.31 : 0.27, eastern ? 0.11 : 0.09, 0.10]} castShadow><sphereGeometry args={[1, 12, 8]} /><meshStandardMaterial color={f.armor} roughness={0.85} /></mesh>
+      <mesh position={[0.18, 0.015, 0]} scale={[0.13, 0.08, 0.083]} castShadow><sphereGeometry args={[1, 10, 7]} /><meshStandardMaterial color="#283e3e" roughness={0.4} /></mesh>
+      <Block at={[-0.34, 0.015, 0]} size={[0.42, 0.035, 0.035]} color={f.armor} />
+      <Block at={[-0.53, 0.07, 0]} size={[0.045, 0.15, 0.02]} color={f.armor} />
+      <group ref={rotor} position={[0, 0.15, 0]}>
+        {[0, Math.PI / 2].map(angle => <Block key={angle} at={[0, 0, 0]} rotation={[0, angle, 0]} size={[0.94, 0.009, 0.025]} color="#30372f" />)}
+      </group>
+      <group ref={tail} position={[-0.54, 0.08, 0.025]}><Block at={[0, 0, 0]} size={[0.025, 0.18, 0.008]} color="#242d26" /></group>
+      {eastern ? [-1, 1].map(side => <group key={side}>
+        <Block at={[-0.04, -0.015, side * 0.15]} size={[0.14, 0.015, 0.19]} color={f.armor} />
+        <mesh position={[-0.1, -0.12, side * 0.10]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.035, 0.035, 0.025, 8]} /><meshStandardMaterial color="#232b25" /></mesh>
+      </group>) : [-1, 1].map(side => <Block key={side} at={[0, -0.12, side * 0.09]} size={[0.42, 0.015, 0.018]} color="#30382f" />)}
+      <HelicopterDetails faction={faction} />
     </group>
-    <group ref={tail} position={[-0.54, 0.08, 0.025]}><Block at={[0, 0, 0]} size={[0.025, 0.18, 0.008]} color="#242d26" /></group>
-    {eastern ? [-1, 1].map(side => <group key={side}>
-      <Block at={[-0.04, -0.015, side * 0.15]} size={[0.14, 0.015, 0.19]} color={f.armor} />
-      <mesh position={[-0.1, -0.12, side * 0.10]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.035, 0.035, 0.025, 8]} /><meshStandardMaterial color="#232b25" /></mesh>
-    </group>) : [-1, 1].map(side => <Block key={side} at={[0, -0.12, side * 0.09]} size={[0.42, 0.015, 0.018]} color="#30382f" />)}
-    <HelicopterDetails faction={faction} />
   </group>;
 }
 
@@ -260,11 +406,83 @@ function Fallback({ faction, type }: { faction: FactionId; type: UnitType }) {
   return <group><Block at={[0, 0.12, 0]} size={[0.65, 0.17, 0.38]} color={f.armor} /><Block at={[0.03, 0.24, 0]} size={[0.26, 0.12, 0.25]} color={f.kit} /><Block at={[0.28, 0.25, 0]} size={[0.4, 0.02, 0.02]} color="#29332b" /></group>;
 }
 
-export function FactionUnitModel({ faction, type, unit }: { faction: FactionId; type: UnitType; unit?: Unit }) {
-  if (type === 'apc') return <Carrier faction={faction} />;
-  if (type === 'helicopter') return <Helicopter faction={faction} />;
-  const fallback = <Fallback faction={faction} type={type} />;
-  return <ModelBoundary fallback={fallback}><Suspense fallback={fallback}><ImportedModel faction={faction} type={type} unit={unit} /></Suspense></ModelBoundary>;
+/**
+ * A destroyed vehicle: its own model burnt black (materials replaced on this
+ * copy only), with a rising smoke column and, at first, flames.
+ */
+function Wreck({ children, height = .35 }: { children: React.ReactNode; height?: number }) {
+  const group = useRef<THREE.Group>(null);
+  const burnt = useMemo(() => new Map<THREE.Material, THREE.Material>(), []);
+  useFrame(() => {
+    // Models load asynchronously: burn any newly appeared mesh.
+    group.current?.traverse(o => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || mesh.userData.burnt) return;
+      const swap = (m: THREE.Material) => {
+        let b = burnt.get(m);
+        if (!b) {
+          b = new THREE.MeshStandardMaterial({ color: '#1f1c19', roughness: 1, metalness: .05 });
+          burnt.set(m, b);
+        }
+        return b;
+      };
+      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(swap) : swap(mesh.material);
+      mesh.userData.burnt = true;
+    });
+  });
+  useEffect(() => () => burnt.forEach(m => m.dispose()), [burnt]);
+  return <group>
+    <group ref={group}>{children}</group>
+    <WreckSmoke height={height} />
+  </group>;
+}
+
+const smokeGeometry = new THREE.SphereGeometry(1, 8, 6);
+function WreckSmoke({ height }: { height: number }) {
+  const puffs = useMemo(() => Array.from({ length: 7 }, (_, i) => ({
+    mesh: new THREE.Mesh(smokeGeometry, new THREE.MeshBasicMaterial({ color: '#2b2825', transparent: true, depthWrite: false, opacity: 0 })),
+    age: i / 7, drift: Math.random() * Math.PI * 2,
+  })), []);
+  const fire = useMemo(() => new THREE.Mesh(smokeGeometry, new THREE.MeshBasicMaterial({ color: '#ff8a2a', transparent: true, depthWrite: false, opacity: .8 })), []);
+  const age = useRef(0);
+  useEffect(() => () => { puffs.forEach(p => (p.mesh.material as THREE.Material).dispose()); (fire.material as THREE.Material).dispose(); }, [puffs, fire]);
+  useFrame((_, dt) => {
+    const step = animStep(dt);
+    const life = (age.current += step);
+    // Thick black smoke at first, thinning over a minute and a half.
+    const strength = Math.max(.15, 1 - life / 90);
+    for (const p of puffs) {
+      p.age += step / 4.5;
+      if (p.age > 1) { p.age -= 1; p.drift = Math.random() * Math.PI * 2; }
+      const a = p.age, r = .07 + a * .38;
+      p.mesh.position.set(Math.cos(p.drift) * a * .25, height + a * 1.6, Math.sin(p.drift) * a * .25);
+      p.mesh.scale.setScalar(r);
+      (p.mesh.material as THREE.MeshBasicMaterial).opacity = Math.sin(Math.PI * Math.min(1, a * 1.15)) * .5 * strength;
+    }
+    const flames = Math.max(0, 1 - life / 25);
+    fire.visible = flames > 0;
+    if (flames > 0 && step > 0) {
+      fire.position.set(0, height * .8, 0);
+      fire.scale.setScalar(.04 + (.03 + Math.random() * .03) * flames);
+      (fire.material as THREE.MeshBasicMaterial).opacity = (.4 + Math.random() * .3) * Math.min(1, flames * 2);
+    }
+  });
+  return <group>{puffs.map((p, i) => <primitive key={i} object={p.mesh} />)}<primitive object={fire} /></group>;
+}
+
+export function FactionUnitModel({ faction, type, unit, aimAt, scale, wrecked }: {
+  faction: FactionId; type: UnitType; unit?: Unit; aimAt?: AimResolver; scale?: number; wrecked?: boolean;
+}) {
+  let model: React.ReactNode;
+  if (type === 'apc') model = <Carrier faction={faction} unit={unit} aimAt={aimAt} scale={scale} wrecked={wrecked} />;
+  else if (type === 'helicopter') model = <Helicopter faction={faction} unit={unit} wrecked={wrecked} />;
+  else {
+    const fallback = <Fallback faction={faction} type={type} />;
+    model = <ModelBoundary fallback={fallback}><Suspense fallback={fallback}>
+      {type === 'infantry' ? <ImportedInfantry faction={faction} unit={unit} /> : <ImportedTank faction={faction} unit={unit} aimAt={aimAt} wrecked={wrecked} />}
+    </Suspense></ModelBoundary>;
+  }
+  return wrecked && type !== 'infantry' ? <Wreck height={type === 'helicopter' ? .2 : .35}>{model}</Wreck> : <>{model}</>;
 }
 
 export function FactionPreview({ faction }: { faction: FactionId }) {

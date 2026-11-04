@@ -57,7 +57,7 @@
     "file": "aster-rifleman-detailed.glb",
     "author": "BAMEN",
     "title": "FREE [Military Soldier] RIGGED",
-    "modifications": "Converted to GLB and retinted by mirror repository; procedural animation added at runtime."
+    "modifications": "Converted to GLB and retinted by mirror repository; animated at runtime with Quaternius CC0 clips retargeted to its skeleton."
   },
   {
     "id": "quaternius-scarl",

@@ -24,6 +24,7 @@ import { RealisticVegetation } from './RealisticVegetation';
 import { getTerrainAt } from '../game/terrain';
 import { factionFor } from '../game/factions';
 import { FactionUnitModel } from './FactionModels';
+import { setAnimationTimeScale } from './animationClock';
 import { coverLabel, isOccupyableCover, coverState, unitStatus } from '../game/cover';
 import { controllable, selectUnits } from '../game/selection';
 import { Shield, Footprints, Truck, Crosshair } from 'lucide-react';
@@ -450,10 +451,30 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
   const blipRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const [, forceRender] = React.useReducer((n) => n + 1, 0);
   const knownIdsRef = useRef<string>('');
+  // When each unit was first seen dead (game seconds): fallen soldiers and wrecks stay on the field a while.
+  const deathAtRef = useRef<Map<string, number>>(new Map());
+  // Smoothed hull pitch/roll of ground vehicles following the terrain.
+  const tiltRef = useRef<Map<string, { p: number; r: number }>>(new Map());
+  const aimAt = React.useCallback((u: Unit) => {
+    if (!u.attackTarget) return null;
+    const target = gameStateRef.current.units.find(o => o.id === u.attackTarget);
+    return target && target.alive ? target.pos : null;
+  }, [gameStateRef]);
+  const showFallen = (u: Unit, now: number) => {
+    const at = deathAtRef.current.get(u.id);
+    return at !== undefined && now - at < (u.type === 'infantry' ? FALLEN_SECONDS : WRECK_SECONDS);
+  };
 
   useFrame((_, dt) => {
     const state = gameStateRef.current;
-    const ids = state.units.filter(u => u.alive).map(u => `${u.id}:${u.insideOf ?? ''}`).join(',');
+    // Game time: a paused battlefield keeps its wrecks and freezes its animations.
+    const now = state.time;
+    setAnimationTimeScale(state.paused || state.gameOver ? 0 : state.timeScale ?? 1);
+    for (const u of state.units) if (!u.alive && !deathAtRef.current.has(u.id)) {
+      // Units already dead when the battlefield first renders are not replayed.
+      deathAtRef.current.set(u.id, knownIdsRef.current === '' ? -1e9 : now);
+    }
+    const ids = state.units.filter(u => u.alive || showFallen(u, now)).map(u => `${u.id}:${u.insideOf ?? ''}:${u.alive ? 1 : 0}`).join(',');
     if (ids !== knownIdsRef.current) {
       knownIdsRef.current = ids;
       forceRender();
@@ -464,12 +485,34 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
     const hoverId = pickScreenUnit(state, camera, size.width, size.height, inputRef.current.mousePos, hoverVector)?.id;
 
     for (const u of state.units) {
-      if (!u.alive || u.insideOf) continue;
+      if (u.insideOf) continue;
+      if (!u.alive) {
+        // Fallen soldier or wreck: stays where it fell; soldiers sink into the ground before vanishing.
+        const ref = unitRefs.current.get(u.id);
+        if (!ref) continue;
+        const age = now - (deathAtRef.current.get(u.id) ?? now);
+        if (u.type === 'infantry') ref.position.y = surfaceY(u.pos.x / S, u.pos.y / S) - Math.max(0, age - (FALLEN_SECONDS - 3)) / 3 * .12;
+        ref.visible = u.team === 'player' || u.spottedByEnemy;
+        for (const m of [selRefs, previewRefs, hoverRefs, suppRefs, blipRefs]) { const o = m.current.get(u.id); if (o) o.visible = false; }
+        continue;
+      }
       const ref = unitRefs.current.get(u.id);
       if (ref) {
         ref.position.x = u.pos.x / S;
         ref.position.z = u.pos.y / S;
-        ref.rotation.y = -u.facing;
+        if (u.type === 'tank' || u.type === 'apc') {
+          // Hulls pitch and roll with the ground under their tracks / wheels.
+          const fx = Math.cos(u.facing), fz = Math.sin(u.facing), d = .45, cx = u.pos.x / S, cz = u.pos.y / S;
+          const front = surfaceY(cx + fx * d, cz + fz * d), back = surfaceY(cx - fx * d, cz - fz * d);
+          const left = surfaceY(cx - fz * d, cz + fx * d), right = surfaceY(cx + fz * d, cz - fx * d);
+          const tilt = tiltRef.current.get(u.id) ?? { p: 0, r: 0 };
+          const kt = 1 - Math.exp(-dt * 5);
+          tilt.p += (Math.atan2(front - back, 2 * d) - tilt.p) * kt;
+          tilt.r += (-Math.atan2(left - right, 2 * d) - tilt.r) * kt;
+          tiltRef.current.set(u.id, tilt);
+          ref.rotation.order = 'YZX';
+          ref.rotation.set(tilt.r, -u.facing, tilt.p);
+        } else ref.rotation.y = -u.facing;
         // Sink into trench when standing in a trench cell — smooth tween in/out (~0.4s).
         const gx = Math.floor(u.pos.x / S);
         const gy = Math.floor(u.pos.y / S);
@@ -479,9 +522,10 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         const targetY = gY + (inTrench ? -0.08 : 0);
         const k = 1 - Math.exp(-dt * 8); // ~0.4s ease
         ref.position.y += (targetY - ref.position.y) * k;
-        // Prone / digging crouch: squash + slight bob while digging — tweened too.
+        // Digging crouch: squash + slight bob — tweened too. Prone and in-cover
+        // soldiers now lie down in their animation instead of being squashed.
         const isDigging = u.order === 'entrench';
-        const proneTarget = (u.prone || isDigging) ? 0.62 : (inTrench || (u.type === 'infantry' && u.inCover && !u.targetPos)) ? 0.7 : 1;
+        const proneTarget = isDigging ? 0.62 : 1;
         const bob = isDigging ? 1 + Math.sin(t * 8) * 0.08 : 1;
         const curY = ref.scale.y;
         const newY = curY + (proneTarget * bob - curY) * k;
@@ -527,7 +571,8 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
   });
 
   const state = gameStateRef.current;
-  const liveUnits = state.units.filter(u => u.alive && !u.insideOf);
+  const renderNow = state.time;
+  const liveUnits = state.units.filter(u => (u.alive && !u.insideOf) || (!u.alive && showFallen(u, renderNow)));
 
   return (
     <group ref={groupRef}>
@@ -538,7 +583,8 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
           position={[u.pos.x / S, surfaceY(u.pos.x / S, u.pos.y / S), u.pos.y / S]}
         >
           <group scale={UNIT_SCALE[u.type]}>
-            <FactionUnitModel faction={factionFor(gameStateRef.current, u.team).id} type={u.type} unit={u} />
+            <FactionUnitModel faction={factionFor(gameStateRef.current, u.team).id} type={u.type} unit={u}
+              aimAt={aimAt} scale={UNIT_SCALE[u.type]} wrecked={!u.alive} />
           </group>
 
           {/* hover ring (under selection/preview) */}
@@ -601,7 +647,7 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             </group>
           )}
 
-          <HealthBar u={u} />
+          {u.alive && <HealthBar u={u} />}
         </group>
       ))}
       {/* contact-only blips (rendered outside unit groups so they show while models are hidden) */}
@@ -670,12 +716,54 @@ function HealthBar({ u }: { u: Unit }) {
 }
 
 // ---------- Effects ----------
+const FLASH_PLAYER = new THREE.Color(1.0, 0.95, 0.7), FLASH_ENEMY = new THREE.Color(1.0, 0.75, 0.35);
+const MUZZLE_DUST = new THREE.Color(0.72, 0.62, 0.46), IMPACT_DUST = new THREE.Color(0.58, 0.5, 0.38);
+const SPARK = new THREE.Color(1.0, 0.7, 0.4), SPARK_CRIT = new THREE.Color(1.0, 0.9, 0.4);
+const SHOCK = new THREE.Color(0.85, 0.72, 0.48), BLAST_SMOKE = new THREE.Color(0.22, 0.21, 0.18), BLAST = new THREE.Color();
+const unitSphere = new THREE.SphereGeometry(1, 10, 7);
+const unitRing = new THREE.RingGeometry(0.75 / 0.92, 1, 32);
+
+/** Reusable effect meshes: shared unit geometry, one material per pooled mesh, hidden when unused. */
+class EffectPool {
+  private meshes: THREE.Mesh[] = [];
+  constructor(private parent: () => THREE.Group | null) {}
+  begin() { /* meshes are marked as taken while used this frame */ }
+  private take(geometry: THREE.BufferGeometry) {
+    const group = this.parent();
+    let mesh = this.meshes.find(m => m.geometry === geometry && !m.userData.taken);
+    if (!mesh) {
+      mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+      mesh.raycast = () => null;
+      this.meshes.push(mesh);
+      group?.add(mesh);
+    }
+    if (group && mesh.parent !== group) group.add(mesh);
+    mesh.userData.taken = true;
+    mesh.visible = true;
+    return mesh;
+  }
+  sphere(x: number, y: number, z: number, r: number, squash: number, color: THREE.Color, opacity: number, spread = 1) {
+    const m = this.take(unitSphere);
+    m.position.set(x, y, z); m.scale.set(r * spread, r * squash * spread, r * spread); m.rotation.set(0, 0, 0);
+    const mat = m.material as THREE.MeshBasicMaterial; mat.color.copy(color); mat.opacity = opacity;
+  }
+  ring(x: number, y: number, z: number, r: number, color: THREE.Color, opacity: number) {
+    const m = this.take(unitRing);
+    m.position.set(x, y, z); m.scale.setScalar(r); m.rotation.set(-Math.PI / 2, 0, 0);
+    const mat = m.material as THREE.MeshBasicMaterial; mat.color.copy(color); mat.opacity = opacity;
+  }
+  end() { for (const m of this.meshes) { if (!m.userData.taken) m.visible = false; m.userData.taken = false; } }
+  dispose() { for (const m of this.meshes) { (m.material as THREE.Material).dispose(); m.removeFromParent(); } this.meshes = []; }
+}
+
 function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<GameState> }) {
   const linesRef = useRef<THREE.LineSegments>(null);
   const positionsRef = useRef<Float32Array>(new Float32Array(3000));
   const colorsRef = useRef<Float32Array>(new Float32Array(3000));
   const explRef = useRef<THREE.Group>(null);
   const flashRef = useRef<THREE.Group>(null);
+  const flashPool = useRef(new EffectPool(() => flashRef.current));
+  const explPool = useRef(new EffectPool(() => explRef.current));
 
   useFrame(() => {
     const state = gameStateRef.current;
@@ -697,91 +785,58 @@ function EffectsLayer({ gameStateRef }: { gameStateRef: React.MutableRefObject<G
       count += 2;
     }
     if (linesRef.current) {
+      // One fixed buffer, updated in place (a new attribute every frame leaked a GPU buffer each time).
       const geo = linesRef.current.geometry as THREE.BufferGeometry;
-      geo.setAttribute('position', new THREE.BufferAttribute(positions.slice(0, count * 3), 3));
-      geo.setAttribute('color', new THREE.BufferAttribute(colors.slice(0, count * 3), 3));
+      if (geo.getAttribute('position')?.array !== positions) {
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
+        geo.setAttribute('color', new THREE.BufferAttribute(colors, 3).setUsage(THREE.DynamicDrawUsage));
+      }
       geo.setDrawRange(0, count);
       geo.attributes.position.needsUpdate = true;
+      geo.attributes.color.needsUpdate = true;
+      if (count) geo.computeBoundingSphere();
     }
 
-    // Muzzle flashes + impact sparks. Rebuild each frame from projectile freshness.
-    if (flashRef.current) {
-      flashRef.current.clear();
-      for (const p of state.projectiles) {
-        // Freshness: 1 at spawn → 0 as timer decays. Estimate initial via bucket.
-        const fresh = Math.max(0, Math.min(1, p.timer / 0.28));
-        if (fresh <= 0.55) continue; // only render for the first ~half of tracer life
-        const flashOpacity = (fresh - 0.55) / 0.45; // 0..1 quick fade
-        const flashCol = p.team === 'player' ? new THREE.Color(1.0, 0.95, 0.7) : new THREE.Color(1.0, 0.75, 0.35);
-        // Muzzle flash: small billboard sphere at 'from', offset slightly toward 'to'.
-        const dx = p.to.x - p.from.x, dy = p.to.y - p.from.y;
-        const len = Math.hypot(dx, dy) || 1;
-        const heavy = len > 135;
-        const mx = (p.from.x + (dx / len) * 6) / S;
-        const mz = (p.from.y + (dy / len) * 6) / S;
-        const flash = new THREE.Mesh(
-          new THREE.SphereGeometry((heavy ? 0.3 : 0.16) + 0.16 * flashOpacity, 10, 7),
-          new THREE.MeshBasicMaterial({ color: flashCol, transparent: true, opacity: flashOpacity, depthWrite: false }),
-        );
-        const gFrom = surfaceY(mx, mz);
-        flash.position.set(mx, gFrom + (heavy ? 0.72 : 0.55), mz);
-        flashRef.current.add(flash);
-        const dust = new THREE.Mesh(
-          new THREE.SphereGeometry(heavy ? 0.38 : 0.2, 8, 5),
-          new THREE.MeshBasicMaterial({ color: new THREE.Color(0.72, 0.62, 0.46), transparent: true, opacity: flashOpacity * (heavy ? 0.42 : 0.22), depthWrite: false }),
-        );
-        dust.scale.set(1.4, 0.35, 1.4);
-        dust.position.set(mx - (dx / len) * 0.08, gFrom + 0.22, mz - (dy / len) * 0.08);
-        flashRef.current.add(dust);
-        // Impact spark: only if it's a hit and near end of life (looks like arrival).
-        if (p.hit && fresh > 0.7) {
-          const sparkCol = p.crit ? new THREE.Color(1.0, 0.9, 0.4) : new THREE.Color(1.0, 0.7, 0.4);
-          const spark = new THREE.Mesh(
-            new THREE.SphereGeometry(0.14 + (p.crit ? 0.1 : 0), 6, 4),
-            new THREE.MeshBasicMaterial({ color: sparkCol, transparent: true, opacity: flashOpacity * 0.8, depthWrite: false }),
-          );
-          spark.position.set(p.to.x / S, surfaceY(p.to.x / S, p.to.y / S) + 0.5, p.to.y / S);
-          flashRef.current.add(spark);
-        }
-        const impactDust = new THREE.Mesh(
-          new THREE.SphereGeometry(heavy ? 0.42 : 0.18, 8, 5),
-          new THREE.MeshBasicMaterial({ color: new THREE.Color(0.58, 0.5, 0.38), transparent: true, opacity: flashOpacity * (p.hit ? 0.28 : 0.44), depthWrite: false }),
-        );
-        impactDust.scale.set(1.5, 0.28, 1.5);
-        impactDust.position.set(p.to.x / S, surfaceY(p.to.x / S, p.to.y / S) + 0.18, p.to.y / S);
-        flashRef.current.add(impactDust);
+    // Muzzle flashes + impact sparks, from projectile freshness. Meshes come
+    // from a pool reused every frame: creating geometry and materials per
+    // frame leaked GPU memory for every shot fired.
+    const flash = flashPool.current, expl = explPool.current;
+    flash.begin(); expl.begin();
+    for (const p of state.projectiles) {
+      // Freshness: 1 at spawn → 0 as timer decays. Estimate initial via bucket.
+      const fresh = Math.max(0, Math.min(1, p.timer / 0.28));
+      if (fresh <= 0.55) continue; // only render for the first ~half of tracer life
+      const flashOpacity = (fresh - 0.55) / 0.45; // 0..1 quick fade
+      // Muzzle flash: small billboard sphere at 'from', offset slightly toward 'to'.
+      const dx = p.to.x - p.from.x, dy = p.to.y - p.from.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const heavy = len > 135;
+      const mx = (p.from.x + (dx / len) * 6) / S;
+      const mz = (p.from.y + (dy / len) * 6) / S;
+      const gFrom = surfaceY(mx, mz);
+      flash.sphere(mx, gFrom + (heavy ? 0.72 : 0.55), mz, (heavy ? 0.3 : 0.16) + 0.16 * flashOpacity, 1,
+        p.team === 'player' ? FLASH_PLAYER : FLASH_ENEMY, flashOpacity);
+      flash.sphere(mx - (dx / len) * 0.08, gFrom + 0.22, mz - (dy / len) * 0.08, heavy ? 0.38 : 0.2, .35 / 1.4,
+        MUZZLE_DUST, flashOpacity * (heavy ? 0.42 : 0.22), 1.4);
+      // Impact spark: only if it's a hit and near end of life (looks like arrival).
+      if (p.hit && fresh > 0.7) {
+        flash.sphere(p.to.x / S, surfaceY(p.to.x / S, p.to.y / S) + 0.5, p.to.y / S, 0.14 + (p.crit ? 0.1 : 0), 1,
+          p.crit ? SPARK_CRIT : SPARK, flashOpacity * 0.8);
       }
+      flash.sphere(p.to.x / S, surfaceY(p.to.x / S, p.to.y / S) + 0.18, p.to.y / S, heavy ? 0.42 : 0.18, .28 / 1.5,
+        IMPACT_DUST, flashOpacity * (p.hit ? 0.28 : 0.44), 1.5);
     }
-
-    if (explRef.current) {
-      explRef.current.clear();
-      for (const e of state.explosions) {
-        const t = e.timer / e.maxTimer;
-        const r = e.radius / S * (1.5 - t);
-        const mesh = new THREE.Mesh(
-          new THREE.SphereGeometry(r, 12, 8),
-          new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.5 + t * 0.3, 0.2), transparent: true, opacity: t })
-        );
-        const gE = surfaceY(e.pos.x / S, e.pos.y / S);
-        mesh.position.set(e.pos.x / S, gE + 0.5, e.pos.y / S);
-        explRef.current.add(mesh);
-        const shock = new THREE.Mesh(
-          new THREE.RingGeometry(Math.max(0.05, r * 0.75), Math.max(0.08, r * 0.92), 32),
-          new THREE.MeshBasicMaterial({ color: new THREE.Color(0.85, 0.72, 0.48), transparent: true, opacity: t * 0.45, side: THREE.DoubleSide, depthWrite: false }),
-        );
-        shock.rotation.x = -Math.PI / 2;
-        shock.position.set(e.pos.x / S, gE + 0.08, e.pos.y / S);
-        explRef.current.add(shock);
-        const smoke = new THREE.Mesh(
-          new THREE.SphereGeometry(Math.max(0.2, r * 0.55), 10, 7),
-          new THREE.MeshBasicMaterial({ color: new THREE.Color(0.22, 0.21, 0.18), transparent: true, opacity: Math.min(0.42, (1 - t) * 0.55), depthWrite: false }),
-        );
-        smoke.scale.set(1, 1.6, 1);
-        smoke.position.set(e.pos.x / S, gE + 0.55 + (1 - t) * 0.9, e.pos.y / S);
-        explRef.current.add(smoke);
-      }
+    for (const e of state.explosions) {
+      const t = e.timer / e.maxTimer;
+      const r = e.radius / S * (1.5 - t);
+      const gE = surfaceY(e.pos.x / S, e.pos.y / S);
+      expl.sphere(e.pos.x / S, gE + 0.5, e.pos.y / S, r, 1, BLAST.setRGB(1, 0.5 + t * 0.3, 0.2), t);
+      expl.ring(e.pos.x / S, gE + 0.08, e.pos.y / S, Math.max(0.08, r * 0.92), SHOCK, t * 0.45);
+      expl.sphere(e.pos.x / S, gE + 0.55 + (1 - t) * 0.9, e.pos.y / S, Math.max(0.2, r * 0.55), 1.6, BLAST_SMOKE, Math.min(0.42, (1 - t) * 0.55));
     }
+    flash.end(); expl.end();
   });
+  useEffect(() => () => { flashPool.current.dispose(); explPool.current.dispose(); }, []);
 
   return (
     <group>
@@ -1386,6 +1441,8 @@ function OuterGround() {
  * TREE_SCALE in RealisticVegetation.tsx). Gameplay distances are unchanged.
  */
 const UNIT_SCALE: Record<string, number> = { infantry: 0.8, tank: 0.6, apc: 0.6, helicopter: 0.7 };
+/** Seconds a fallen soldier stays on the field; wrecks last as long as the simulation's wreckage (90 s). */
+const FALLEN_SECONDS = 14, WRECK_SECONDS = 90;
 
 // ---------- Horizon ----------
 /** A ring of hazy hills far beyond the board, so the horizon reads as distant countryside. */
@@ -1636,4 +1693,5 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
 };
 
 export default Scene3D;
+
 
