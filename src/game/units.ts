@@ -9,8 +9,8 @@ import {
   RETARGET_INTERVAL, RETARGET_HYSTERESIS, MAX_ENGAGE_TIME, DISENGAGE_GRACE, CHASE_STANDOFF, TARGET_LOST_TIMEOUT,
   TARGET_THREAT, SUPPRESSION_RESIST, HEAVY_WEAPON_DAMAGE, SMALL_ARMS_VS_VEHICLE,
 } from './constants';
-import { getTerrainAt, hasLineOfSight, losInfo, isPassable, isWorldFootprintPassable, findNearestPassableWorld } from './terrain';
-import { findPath } from './pathfinding';
+import { getTerrainAt, hasLineOfSight, losInfo, isWorldFootprintPassable, findNearestPassableWorld, deckUnder, deckLane, spanAxis, spanCoords, walkableAt } from './terrain';
+import { alignBridgeCrossings, findPath } from './pathfinding';
 import { isVisibleTo } from './awareness';
 import { getUnitGrid, queryNeighbors } from './spatialGrid';
 import { spacingRadius, getSquad, cohesionSpeedFactor, catchUpFactor, ARRIVE_TOLERANCE } from './playerSquads';
@@ -129,7 +129,9 @@ export function setDestination(unit: Unit, state: GameState, dest: Position, rep
   const helicopter = unit.type === 'helicopter';
   const reachableDest = findNearestPassableWorld(state.terrain, dest.x, dest.y, vehicle, helicopter, 12);
   unit.finalDest = { ...reachableDest };
-  const path = findPath(state.terrain, unit.pos, reachableDest, unit.type);
+  // Over a bridge, units drive the deck end to end (rule M14).
+  const route = findPath(state.terrain, unit.pos, reachableDest, unit.type);
+  const path = helicopter ? route : alignBridgeCrossings(state.terrain, unit.pos, route, vehicle);
   if (path.length === 0) {
     unit.targetPos = null;
     unit.path = [];
@@ -313,7 +315,10 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const alignFactor = veh ? Math.max(0, alignment) ** 2 : (alignment > 0 ? 1 : 0.6);
 
   const squad = getSquad(state, unit);
-  const cohesionFactor = squad ? cohesionSpeedFactor(unit, squad) : 1;
+  // Never hold for the group on a bridge or just off its ends: a unit waiting
+  // there blocks the deck for everyone behind it (rule M14).
+  const onCrossing = !heli && !!deckUnder(state.terrain, unit.pos.x, unit.pos.y, BRIDGE_CLEARANCE, 4);
+  const cohesionFactor = squad && !onCrossing ? cohesionSpeedFactor(unit, squad) : 1;
   const attainable = availableSpeed(unit, state);
   const catchUp = squad ? catchUpFactor(unit, squad) : 1;
   const pacedSpeed = unit.groupSpeedCap == null ? attainable : Math.min(attainable, unit.groupSpeedCap * catchUp);
@@ -333,7 +338,9 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     const ahead = state.units.find(o => o.id === unit.convoyAhead);
     const deploying = remaining < CONVOY_RELEASE;
     if (!ahead || !ahead.alive || ahead.insideOf || !ahead.targetPos || deploying) { unit.convoyAhead = undefined; unit.convoyGap = undefined; }
-    else {
+    // Keep moving on a crossing, and never wait for a leader that has fallen
+    // behind: on a narrow deck it can only come past once this unit moves on.
+    else if (!onCrossing && (ahead.pos.x - unit.pos.x) * dirX + (ahead.pos.y - unit.pos.y) * dirY > -CELL_SIZE * .25) {
       const gap = unit.convoyGap ?? CELL_SIZE * 1.5, d = distance(unit.pos, ahead.pos);
       convoyFactor = Math.max(0, Math.min(1, (d - gap * .6) / (gap * .4)));
       if (convoyFactor < .05) {
@@ -363,9 +370,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const nextX = unit.pos.x + unit.vel.x * dt;
   const nextY = unit.pos.y + unit.vel.y * dt;
   const nextT = getTerrainAt(state.terrain, nextX, nextY);
-  const stepOk = heli || (veh
-    ? isWorldFootprintPassable(state.terrain, nextX, nextY, true)
-    : isPassable(nextT, false, false));
+  const stepOk = heli || walkableAt(state.terrain, nextX, nextY, veh);
   const neighbors = heli ? [] : queryNeighbors(getUnitGrid(state), nextX, nextY, 32, unit)
     .filter(other => other.alive && !other.insideOf && other.team === unit.team && other.type !== 'helicopter' && unit.boardTarget !== other.id);
   const trafficAt = (x: number, y: number) => neighbors.some(other => {
@@ -379,13 +384,15 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   if (veh && trafficAt(nextX, nextY)) {
     const fx = Math.cos(unit.facing), fy = Math.sin(unit.facing);
     for (const other of neighbors) {
-      if (other.type !== 'infantry' || other.targetPos || other.insideOf || other.team !== unit.team) continue;
+      // Also a soldier only standing for his group or for traffic: on a bridge
+      // or a narrow street he would otherwise hold the vehicle up for good.
+      if (other.type !== 'infantry' || (other.targetPos && !other.waiting) || other.insideOf || other.team !== unit.team) continue;
       const limit = (spacingRadius(unit) + spacingRadius(other)) * .6;
       if (Math.hypot(nextX - other.pos.x, nextY - other.pos.y) >= limit) continue;
       const side = (other.pos.x - unit.pos.x) * -fy + (other.pos.y - unit.pos.y) * fx >= 0 ? 1 : -1;
       const step = Math.min(limit, 40 * dt);
       const x = other.pos.x - fy * side * step, y = other.pos.y + fx * side * step;
-      if (isPassable(getTerrainAt(state.terrain, x, y), false, false)) {
+      if (walkableAt(state.terrain, x, y, false)) {
         other.pos = { x, y };
         if (other.homePos) other.homePos = { ...other.pos };
       }
@@ -423,7 +430,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     for (const offset of offsets) {
       const angle = unit.facing + offset;
       const x = unit.pos.x + Math.cos(angle) * step, y = unit.pos.y + Math.sin(angle) * step;
-      if (!trafficAt(x, y) && isWorldFootprintPassable(state.terrain, x, y, veh)) {
+      if (!trafficAt(x, y) && walkableAt(state.terrain, x, y, veh)) {
         unit.pos = { x, y }; break;
       }
     }
@@ -451,6 +458,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   unit.trafficWait = Math.max(0, (unit.trafficWait ?? 0) - dt * .5);
   if (stepOk) {
     unit.pos.x = nextX; unit.pos.y = nextY;
+    if (!heli) keepOnDeck(unit, state);
     unit.stuckTimer = 0;
     if (!heli && nextT && (nextT.type === 'tall_grass' || (nextT.type === 'forest' && veh))) {
       nextT.trampled = true;
@@ -464,9 +472,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     for (const sign of [1, -1]) {
       const sx = unit.pos.x + (perpX / plen) * speed * dt * sign;
       const sy = unit.pos.y + (perpY / plen) * speed * dt * sign;
-      const ok = veh
-        ? isWorldFootprintPassable(state.terrain, sx, sy, true)
-        : isPassable(getTerrainAt(state.terrain, sx, sy), false, false);
+      const ok = walkableAt(state.terrain, sx, sy, veh);
       if (ok) {
         unit.pos.x = sx; unit.pos.y = sy;
         unit.vel.x = (perpX / plen) * speed * sign * 0.6;
@@ -517,6 +523,27 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
 }
 
 function speedMagnitude(unit: Unit) { return Math.hypot(unit.vel.x, unit.vel.y); }
+
+/** Cells beyond a bridge's ends where units still keep moving instead of waiting for their group. */
+const BRIDGE_CLEARANCE = 2.5;
+/** Half a unit's width in cells (a tank is about 3.5 m wide, a cell 16 m). */
+const HALF_WIDTH: Record<string, number> = { tank: .11, apc: .1, infantry: .03, helicopter: 0 };
+/**
+ * Rule M14: on a bridge a unit stays on the deck, inside its railings,
+ * instead of walking across the river beside it; on a narrow deck vehicles
+ * are kept to its centre line.
+ */
+function keepOnDeck(unit: Unit, state: GameState) {
+  const span = deckUnder(state.terrain, unit.pos.x, unit.pos.y, .35);
+  if (!span) return;
+  const { along, across, L } = spanCoords(span, unit.pos.x, unit.pos.y);
+  if (along < 0 || along > L) return;
+  const room = Math.max(0, deckLane(span) - (HALF_WIDTH[unit.type] ?? .05));
+  if (Math.abs(across) <= room) return;
+  const { ax, ay, ux, uy } = spanAxis(span), side = Math.sign(across) * room;
+  unit.pos.x = (ax + ux * along - uy * side) * CELL_SIZE;
+  unit.pos.y = (ay + uy * along + ux * side) * CELL_SIZE;
+}
 
 /** Movement rule M3: reverse when the goal is behind (over 110° off the hull) and closer than this. */
 export const REVERSE_BEHIND = 110 * Math.PI / 180;
@@ -705,7 +732,7 @@ export function updateCombat(unit: Unit, dt: number, state: GameState): { killMs
   state.projectiles.push({
     from: { ...unit.pos }, to: projTarget,
     timer: unit.type === 'tank' ? 0.4 : 0.2,
-    hit: isHit, crit: isCrit, team: unit.team,
+    hit: isHit, crit: isCrit, team: unit.team, shooter: unit.type, targetType: target.type,
   });
   unit.attackTimer = unit.attackCooldown;
   unit.lastFireTime = state.time;

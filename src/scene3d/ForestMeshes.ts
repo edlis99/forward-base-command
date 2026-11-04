@@ -9,7 +9,7 @@ import * as THREE from 'three';
  * Tree meshes are normalized to approximately one unit tall. LOD swaps the
  * number of branches and botanical sprigs, not the full-tree silhouette.
  */
-export type ForestSpecies = 'pine' | 'spruce' | 'birch' | 'oak' | 'alder';
+export type ForestSpecies = 'pine' | 'spruce' | 'birch' | 'oak' | 'alder' | 'apple';
 export type ForestDetail = 'near' | 'far';
 export interface ForestGeometry { wood: THREE.BufferGeometry; leaves: THREE.BufferGeometry; }
 
@@ -87,14 +87,16 @@ class MeshWriter {
 }
 
 function createTree(species: ForestSpecies, variant: number, detail: ForestDetail): ForestGeometry {
-  const seed = 1987 + variant * 901 + ['pine', 'spruce', 'birch', 'oak', 'alder'].indexOf(species) * 1079;
+  const seed = 1987 + variant * 901 + ['pine', 'spruce', 'birch', 'oak', 'alder', 'apple'].indexOf(species) * 1079;
   const rand = seeded(seed);
   const wood = new MeshWriter(), leaf = new MeshWriter();
   const conifer = species === 'pine' || species === 'spruce';
   const isPine = species === 'pine';
   const isSpruce = species === 'spruce';
   const isOak = species === 'oak';
-  const trunkRadius = isOak ? .063 : isPine ? .034 : isSpruce ? .035 : .030;
+  // Fruit tree: short stout trunk, low wide rounded crown (orchards and gardens).
+  const isApple = species === 'apple';
+  const trunkRadius = isOak ? .063 : isApple ? .05 : isPine ? .034 : isSpruce ? .035 : .030;
   const trunkLean = (rand() - .5) * .08;
 
   const near = detail === 'near';
@@ -116,14 +118,14 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
 
   const branchCount = isSpruce ? (near ? 58 : 14)
     : isPine ? (near ? 42 : 11)
-    : isOak ? (near ? 42 : 11) : (near ? 38 : 10);
+    : isOak ? (near ? 42 : 11) : isApple ? (near ? 36 : 10) : (near ? 38 : 10);
   const leafPerBranch = isSpruce ? (near ? 11 : 5)
     : isPine ? (near ? 10 : 5)
-    : isOak ? (near ? 12 : 6) : (near ? 11 : 5);
+    : isOak || isApple ? (near ? 12 : 6) : (near ? 11 : 5);
   const cardScale = near ? 1 : 1.55;
   // Branch bark is darker than the trunk (birch limbs are grey, not white).
   const limbLight = species === 'birch' ? .5 : .78;
-  const crownStart = isPine ? .57 : isSpruce ? .18 : isOak ? .44 : .42;
+  const crownStart = isPine ? .57 : isSpruce ? .18 : isOak ? .44 : isApple ? .3 : .42;
   // Crown self-shading: leaves low and deep inside the crown get less light
   // than the sunlit top and rim. Without it every leaf was equally bright and
   // a tree read as a flat paper cut-out.
@@ -140,15 +142,16 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
     const spread = isSpruce ? .16 + .31 * taper :
       isPine ? .15 + .29 * Math.sin(Math.PI * (h - crownStart) / (.99 - crownStart)) :
       isOak ? .28 + .19 * (taper ** .4) :
+      isApple ? .2 + .27 * Math.sin(Math.PI * Math.min(1, (h - crownStart) / (.97 - crownStart))) :
       .16 + .24 * Math.sqrt(taper);
     const length = spread * (.76 + .45 * rand());
     const direction = v(Math.cos(a), 0, Math.sin(a));
     const start = v(trunkLean * h, h, 0);
-    const bend = isSpruce ? -.10 : isPine ? .035 : .14;
+    const bend = isSpruce ? -.10 : isPine ? .035 : isApple ? .2 : .14;
     const mid = start.clone().addScaledVector(direction, length * .50).add(v(0, bend * length * .5 + .04 * rand(), 0));
     const end = start.clone().addScaledVector(direction, length).add(v(0, bend * length + .09 * rand(), 0));
     // Conifer limbs are slim: thick ones showed as dark stars from above.
-    const radius = (isOak ? .024 : conifer ? .0075 : .012) * (.5 + taper) * (.78 + .4 * rand());
+    const radius = (isOak ? .024 : isApple ? .018 : conifer ? .0075 : .012) * (.5 + taper) * (.78 + .4 * rand());
     // The limb's wood stops short of its foliage, so no bare tips stick out.
     const woodEnd = start.clone().lerp(end, .86);
     if (near) {
@@ -179,7 +182,7 @@ function createTree(species: ForestSpecies, variant: number, detail: ForestDetai
         const jz = (rand() - .5) * (conifer ? .085 : .11);
         at.add(v(jx, jy, jz));
         // Each card is a leafy twig (square atlas), not a single leaf.
-        const size = isPine ? [.2, .22] : isSpruce ? [.2, .24] : isOak ? [.22, .24] : [.19, .21];
+        const size = isPine ? [.2, .22] : isSpruce ? [.2, .24] : isOak || isApple ? [.22, .24] : [.19, .21];
         const light = .80 + rand() * .24;
         const spin = a + rand() * Math.PI;
         leaf.sprig(at, size[0] * cardScale * (.75 + rand() * .5), size[1] * cardScale * (.8 + rand() * .5),

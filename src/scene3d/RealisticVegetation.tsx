@@ -8,6 +8,7 @@ import type { MapSection } from './mapSections';
 import { SETTLEMENTS } from '../game/maps/settlements';
 import { fbm, groundHeightAt, hash2 } from './terrainHeight';
 import { VolumetricTrees, type TreePlacement } from './VolumetricTrees';
+import { villageTrees } from './villageTrees';
 
 export const TREE_SCALE = 0.48;
 const ROOT = `${import.meta.env.BASE_URL}assets/nature`;
@@ -46,7 +47,7 @@ function scatter(terrain: TerrainCell[][], section: MapSection): NatureLayout {
   };
   for (let z = section.y; z < section.y + section.height; z++)
     for (let x = section.x; x < section.x + section.width; x++) {
-      if (terrain[z][x].type !== 'forest') continue;
+      if (terrain[z][x].type !== 'forest') { villageTrees(terrain, x, z, result.broadleaf); continue; }
       const edge = terrain[z - 1]?.[x]?.type !== 'forest'
         || terrain[z + 1]?.[x]?.type !== 'forest'
         || terrain[z]?.[x - 1]?.type !== 'forest'

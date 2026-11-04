@@ -384,16 +384,71 @@ export function isFootprintPassable(
   return true;
 }
 
+export type BridgeSpan = NonNullable<TerrainCell['bridge']>;
+/** Width of a bridge deck between its outer edges, in cells (also what Bridges draws). */
+export const deckWidth = (span: BridgeSpan) => Math.max(.55, span.width + .3);
+/** Half the width units may use on a deck: inside the railings. */
+export const deckLane = (span: BridgeSpan) => deckWidth(span) / 2 - .1;
+/** A span's axis in cells: start, unit direction, length. */
+export function spanAxis(span: BridgeSpan) {
+  const L = Math.hypot(span.b[0] - span.a[0], span.b[1] - span.a[1]) || 1;
+  return { ax: span.a[0], ay: span.a[1], ux: (span.b[0] - span.a[0]) / L, uy: (span.b[1] - span.a[1]) / L, L };
+}
+/** Position of a world point (px) along a span's axis and across it, in cells. */
+export function spanCoords(span: BridgeSpan, x: number, y: number) {
+  const { ax, ay, ux, uy, L } = spanAxis(span);
+  const px = x / CELL_SIZE - ax, py = y / CELL_SIZE - ay;
+  return { along: px * ux + py * uy, across: -px * uy + py * ux, L };
+}
+/**
+ * The bridge whose deck carries a world point (px), or null. A deck cell is a
+ * whole cell of road over water, but the deck itself is only a few metres
+ * wide: the rest of the cell is the river. `margin` widens the deck (cells),
+ * `reach` is how many cells round the point are searched for its span.
+ */
+export function deckUnder(terrain: TerrainCell[][], x: number, y: number, margin = 0, reach = 1): BridgeSpan | null {
+  const gx = Math.floor(x / CELL_SIZE), gy = Math.floor(y / CELL_SIZE);
+  let seen: BridgeSpan | null = null;
+  for (let dy = -reach; dy <= reach; dy++) for (let dx = -reach; dx <= reach; dx++) {
+    const span = terrain[gy + dy]?.[gx + dx]?.bridge;
+    if (!span || span === seen) continue;
+    seen = span;
+    const { along, across, L } = spanCoords(span, x, y);
+    if (along >= -margin && along <= L + margin && Math.abs(across) <= deckLane(span) + margin) return span;
+  }
+  return null;
+}
+/**
+ * Continuous-movement passability at a world point: a bridge deck carries
+ * units over the river on either side of its cells, and the water part of a
+ * deck cell is not walkable.
+ */
+export function walkableAt(terrain: TerrainCell[][], x: number, y: number, vehicle: boolean): boolean {
+  if (deckUnder(terrain, x, y)) return true;
+  const cell = getTerrainAt(terrain, x, y);
+  if (cell?.bridge) return false;
+  return vehicle ? isWorldFootprintPassable(terrain, x, y, true) : isPassable(cell, false, false);
+}
+
 /** Continuous collision uses the vehicle hull radius, not a 3x3-cell square.
  * Check centre/corners when moving between cell-centred A* waypoints. */
 export function isWorldFootprintPassable(terrain: TerrainCell[][], x: number, y: number, vehicle: boolean, heli = false): boolean {
   if (heli) return true;
+  if (deckUnder(terrain, x, y)) return true;
+  const centre = getTerrainAt(terrain, x, y);
+  if (centre?.bridge) return false;
+  // Driving along a road or track, the hull may brush the trees or hedge beside it.
+  const onRoad = vehicle && !!centre && isRoadCell(centre) && isPassable(centre, true, false);
   const r = vehicle ? CELL_SIZE * .24 : CELL_SIZE * .045;
   for (const dx of [-r, 0, r]) for (const dy of [-r, 0, r]) {
-    if (!isPassable(getTerrainAt(terrain, x + dx, y + dy), vehicle, false)) return false;
+    const cell = getTerrainAt(terrain, x + dx, y + dy);
+    if (!isPassable(cell, vehicle, false) && !(onRoad && isRoadsideGreen(cell))) return false;
   }
   return true;
 }
+export const isRoadCell = (cell: TerrainCell | null | undefined) => !!cell && (cell.type === 'road' || cell.type === 'gravel');
+/** Woods and hedges beside a road: a vehicle on the road may brush them, never houses or works. */
+export const isRoadsideGreen = (cell: TerrainCell | null | undefined) => !!cell && !cell.blocksMovement && (cell.type === 'forest' || cell.type === 'hedgerow');
 
 /** BFS-nearest passable cell (footprint aware). Returns world-space center of that cell. */
 export function findNearestPassableWorld(
@@ -415,7 +470,9 @@ export function findNearestPassableWorld(
       for (let dx = -r; dx <= r; dx++) {
         if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
         const nx = gx + dx, ny = gy + dy;
-        if (isFootprintPassable(terrain, nx, ny, isVehicle, false)) {
+        // A deck cell counts only where the deck is: its centre may lie over the river.
+        if (isFootprintPassable(terrain, nx, ny, isVehicle, false) &&
+            (!terrain[ny][nx].bridge || deckUnder(terrain, (nx + .5) * CELL_SIZE, (ny + .5) * CELL_SIZE))) {
           const d = dx * dx + dy * dy;
           if (!best || d < best.d) best = { x: nx, y: ny, d };
         }

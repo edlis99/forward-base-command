@@ -7,10 +7,12 @@ import { ImportedPines } from './ImportedPines';
 
 export interface TreePlacement {
   x: number; y: number; z: number; size: number; width: number; yaw: number; rank: number;
+  /** Fixed species (village trees); forest trees take theirs from their rank. */
+  species?: ForestSpecies;
 }
 export type TreeSpecies = ForestSpecies;
 
-const speciesOrder: ForestSpecies[] = ['pine', 'spruce', 'birch', 'oak', 'alder'];
+const speciesOrder: ForestSpecies[] = ['pine', 'spruce', 'birch', 'oak', 'alder', 'apple'];
 const ROOT = `${import.meta.env.BASE_URL}assets/nature`;
 const texturePaths = [
   'pine/Textures/pine_bark.png', 'trees/pine_leaves.png',
@@ -18,6 +20,8 @@ const texturePaths = [
   'trees/birch_bark.svg', 'trees/birch_leaves.png',
   'trees/oak_bark.svg', 'trees/oak_leaves.png',
   'trees/alder_bark.svg', 'trees/alder_leaves.png',
+  // Fruit trees: dark bark, rounded dark leaves.
+  'trees/oak_bark.svg', 'trees/alder_leaves.png',
 ].map(p => `${ROOT}/${p}`);
 
 interface TreeMaterials { wood: THREE.MeshStandardMaterial; foliage: THREE.MeshStandardMaterial; }
@@ -65,13 +69,13 @@ function useForestMaterials(): Materials {
 interface Positioned { key: string; tree: TreePlacement; }
 type SpeciesGroups = Record<ForestSpecies, Positioned[]>;
 function distribute(pine: TreePlacement[], broadleaf: TreePlacement[]): SpeciesGroups {
-  const result = { pine: [], spruce: [], birch: [], oak: [], alder: [] } as SpeciesGroups;
+  const result = { pine: [], spruce: [], birch: [], oak: [], alder: [], apple: [] } as SpeciesGroups;
   pine.forEach((tree, index) => {
-    const species = tree.rank < .19 ? 'spruce' : 'pine';
+    const species = tree.species ?? (tree.rank < .19 ? 'spruce' : 'pine');
     result[species].push({ tree, key: `p${index}` });
   });
   broadleaf.forEach((tree, index) => {
-    const species = tree.rank < .48 ? 'birch' : tree.rank < .83 ? 'oak' : 'alder';
+    const species = tree.species ?? (tree.rank < .48 ? 'birch' : tree.rank < .83 ? 'oak' : 'alder');
     result[species].push({ tree, key: `b${index}` });
   });
   return result;

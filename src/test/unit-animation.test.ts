@@ -6,6 +6,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { retargetClips, QUATERNIUS_TO_MIXAMO } from '../scene3d/retargetClips';
 import { splitTurret } from '../scene3d/turretSplit';
+import { reachFor, strideSpeed } from '../scene3d/soldierRig';
 
 /** Parse a bundled GLB (the buffer is copied into this realm's ArrayBuffer, which GLTFLoader requires). */
 async function load(name: string) {
@@ -47,6 +48,48 @@ describe('soldier animation transfer', () => {
           expect(t.dot(s), `${name} ${tb} at ${f}`).toBeGreaterThan(.97);
         }
       }
+    }
+  });
+});
+
+describe('soldier gait and rifle hold', () => {
+  /** A soldier as the game shows it: facing +X, 0.27 tall. */
+  async function soldier(file: string, clipsFrom?: string) {
+    const own = await load(file), source = clipsFrom ? await load(clipsFrom) : own;
+    const scene = clone(own.scene);
+    const clips = clipsFrom ? retargetClips(clone(own.scene), clone(source.scene), source.animations, QUATERNIUS_TO_MIXAMO) : own.animations;
+    scene.rotation.y = Math.PI / 2;
+    const root = new THREE.Group(); root.add(scene); root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root, true);
+    root.scale.setScalar(.27 / (box.max.y - box.min.y)); root.updateMatrixWorld(true);
+    return { root, clips };
+  }
+  it('measures each clip\'s stride, so the legs can keep pace with the ground (no sliding feet)', async () => {
+    const rigs = [
+      { ...(await soldier('union-rifleman.glb')), feet: ['Foot.L', 'Foot.R'] },
+      { ...(await soldier('aster-rifleman-detailed.glb', 'union-rifleman.glb')), feet: ['mixamorig:LeftFoot', 'mixamorig:RightFoot'] },
+    ];
+    for (const { root, clips, feet } of rigs) {
+      const clip = (n: string) => clips.find(c => c.name.endsWith('|' + n))!;
+      // Model units per second for a 0.27-tall soldier: walk ~1.3 m/s, run ~3 m/s.
+      const walk = strideSpeed(root, clip('Walk'), feet, 'x'), run = strideSpeed(root, clip('Run'), feet, 'x');
+      expect(walk).toBeGreaterThan(.15); expect(walk).toBeLessThan(.23);
+      expect(run).toBeGreaterThan(.38); expect(run).toBeLessThan(.55);
+      expect(strideSpeed(root, clip('Run_Left'), feet, 'z')).toBeGreaterThan(.38);
+    }
+  });
+  it('reaches the arms to the rifle: two-bone IK puts the hand on the grip', async () => {
+    const { root, clips } = await soldier('union-rifleman.glb');
+    const mixer = new THREE.AnimationMixer(root.children[0]);
+    mixer.clipAction(clips.find(c => c.name.endsWith('|Idle_Gun'))!).play(); mixer.update(0);
+    root.updateMatrixWorld(true);
+    const [a, b, w] = ['UpperArm.R', 'LowerArm.R', 'Wrist.R'].map(n => root.getObjectByName(clean(n))!);
+    const shoulder = a.getWorldPosition(new THREE.Vector3());
+    for (const offset of [new THREE.Vector3(.035, -.01, -.008), new THREE.Vector3(.03, -.035, -.01), new THREE.Vector3(.02, -.02, -.02)]) {
+      const target = shoulder.clone().add(offset);
+      reachFor(a, b, w, target, new THREE.Vector3(-.2, -.5, 1));
+      root.updateMatrixWorld(true);
+      expect(w.getWorldPosition(new THREE.Vector3()).distanceTo(target)).toBeLessThan(.001);
     }
   });
 });
