@@ -11,6 +11,7 @@ import { GroundSurface, WaterSheet, GrassTufts, GroundDetail, ShoreReeds } from 
 import { Bridges } from './Bridges';
 import { MAP_SECTIONS, MapSection } from './mapSections';
 import { CampaignMap } from '../components/CampaignMap';
+import { cameraView } from './cameraView';
 import { SETTLEMENTS } from '../game/maps/settlements';
 import { PLAYABLE_CELLS } from '../game/maps/geography';
 import { FOB_RULES, visibleFobs } from '../game/fob';
@@ -1184,13 +1185,25 @@ function screenUnit(unit: Unit, camera: THREE.Camera, width: number, height: num
   return { x: (v.x * .5 + .5) * width, y: (-v.y * .5 + .5) * height - 12,
     visible: v.z >= -1 && v.z <= 1 && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 };
 }
+/** How wide a unit is on screen, relative to its badge's height above the ground (for picking). */
+const PICK_WIDTH: Record<UnitType, number> = { infantry: .45, tank: 1.6, apc: 1.4, helicopter: 1.2 };
+/**
+ * The unit under a screen point: anywhere on its body from the ground up to
+ * its badge, so a close zoom lets you click the model itself; far out the
+ * 19 px target round the badge point is unchanged.
+ */
 function pickScreenUnit(state: GameState, camera: THREE.Camera, width: number, height: number, at: { x: number; y: number }, v: THREE.Vector3) {
-  let best: Unit | null = null, distance = 19;
+  let best: Unit | null = null, score = 1;
   for (const unit of state.units.filter(controllable)) {
     const p = screenUnit(unit, camera, width, height, v);
     if (!p.visible) continue;
-    const d = Math.hypot(at.x - p.x, at.y - p.y);
-    if (d < distance) { distance = d; best = unit; }
+    v.set(unit.pos.x / S, surfaceY(unit.pos.x / S, unit.pos.y / S) + (unit.type === 'helicopter' ? 1.2 : 0), unit.pos.y / S).project(camera);
+    const gx = (v.x * .5 + .5) * width, gy = (-v.y * .5 + .5) * height;
+    const sx = p.x - gx, sy = p.y - gy, len2 = sx * sx + sy * sy || 1;
+    const t = Math.max(0, Math.min(1, ((at.x - gx) * sx + (at.y - gy) * sy) / len2));
+    const d = Math.hypot(at.x - gx - sx * t, at.y - gy - sy * t);
+    const radius = Math.max(19, Math.sqrt(len2) * PICK_WIDTH[unit.type]);
+    if (d / radius < score) { score = d / radius; best = unit; }
   }
   return best;
 }
@@ -1488,28 +1501,65 @@ function DistantHills() {
 
 /** The original fixed camera angle (about 57° down), kept at the player's request. */
 const CAMERA_HEIGHT = 0.85, CAMERA_BACK = 0.55;
+/**
+ * Zoom range (camera distance from the point it looks at, in cells). Fully
+ * in, the camera is about 1.4 cells (22 m) above the ground and a soldier
+ * stands a tenth of the screen tall; fully out, the whole region shows.
+ */
+const MIN_ZOOM = 1.6, MAX_ZOOM = 400;
+
+/** Screen corners for the minimap's view outline: [x in NDC, top edge?], clockwise from the top left. */
+const VIEW_CORNERS: [number, boolean][] = [[-1, true], [1, true], [1, false], [-1, false]];
 
 function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObject<InputState>; gameStateRef: React.MutableRefObject<GameState> }) {
-  const { camera, scene } = useThree();
+  const { camera, scene, size } = useThree();
   const players = gameStateRef.current.units.filter(u => u.team === 'player' && u.alive);
   const targetRef = useRef({ x: players.reduce((n, u) => n + u.pos.x / S, 0) / (players.length || 1), z: players.reduce((n, u) => n + u.pos.y / S, 0) / (players.length || 1) });
-  const distRef = useRef(32);
+  // The wheel sets where the zoom is going; the camera glides there.
+  const distRef = useRef(32), zoomTo = useRef(32);
+  // Zooming in closes on the ground point under the cursor.
+  const anchorRef = useRef<{ x: number; z: number } | null>(null);
+  const raycaster = useMemo(() => new THREE.Raycaster(), []), ndc = useMemo(() => new THREE.Vector2(), []);
   const yawRef = useRef(0);
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
       if (!(e.target instanceof HTMLCanvasElement)) return;
-      // Proportional zoom: fine steps close up, big steps far out.
-      const step = Math.max(1, distRef.current * .14);
-      distRef.current = Math.max(4.5, Math.min(400, distRef.current + (e.deltaY > 0 ? step : -step)));
+      // Proportional zoom: every notch (100) is the same 16% of the distance,
+      // fine close up and quick far out; a trackpad's small steps glide.
+      const factor = Math.exp(Math.max(-300, Math.min(300, e.deltaY)) * .0015);
+      const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoomTo.current * factor));
+      anchorRef.current = null;
+      if (next < zoomTo.current) {
+        // The ground point under the cursor: a ray from the camera through it
+        // onto the ground level of the view (right after a pan as well).
+        const rect = e.target.getBoundingClientRect();
+        ndc.set((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1);
+        raycaster.setFromCamera(ndc, camera);
+        const { origin, direction } = raycaster.ray, level = surfaceY(targetRef.current.x, targetRef.current.z);
+        const t = direction.y < -1e-4 ? (level - origin.y) / direction.y : -1;
+        if (t > 0) anchorRef.current = { x: origin.x + direction.x * t, z: origin.z + direction.z * t };
+      }
+      zoomTo.current = next;
     };
     window.addEventListener('wheel', onWheel);
     return () => window.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [camera, raycaster, ndc]);
   useFrame((_, dt) => {
     const keys = inputRef.current.keys;
     const focus = inputRef.current.cameraFocus;
-    if (focus) { targetRef.current = { x: focus.x / S, z: focus.y / S }; delete inputRef.current.cameraFocus; }
-    const sp = (20 + distRef.current * 0.45) * Math.min(dt, .1);
+    if (focus) { targetRef.current = { x: focus.x / S, z: focus.y / S }; anchorRef.current = null; delete inputRef.current.cameraFocus; }
+    // Glide towards the wheel's zoom; while closing in, keep the cursor's ground point under it.
+    const before = distRef.current;
+    distRef.current += (zoomTo.current - before) * (1 - Math.exp(-Math.min(dt, .1) * 10));
+    if (Math.abs(zoomTo.current - distRef.current) < 1e-3 * zoomTo.current) { distRef.current = zoomTo.current; anchorRef.current = null; }
+    const anchor = anchorRef.current;
+    if (anchor && distRef.current < before) {
+      const k = distRef.current / before;
+      targetRef.current.x = anchor.x + (targetRef.current.x - anchor.x) * k;
+      targetRef.current.z = anchor.z + (targetRef.current.z - anchor.z) * k;
+    }
+    // Panning speed follows the zoom: a few cells a second fully in, quick far out.
+    const sp = Math.min(4 + distRef.current * .9, 20 + distRef.current * .45) * Math.min(dt, .1);
     if (keys.has('home')) {
       const selected = gameStateRef.current.units.filter(u => u.alive && u.team === 'player' && u.selected && !u.insideOf);
       const focus = selected.length ? selected : gameStateRef.current.units.filter(u => u.alive && u.team === 'player' && !u.insideOf);
@@ -1537,9 +1587,20 @@ function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObjec
     const back = d * CAMERA_BACK;
     const ty = surfaceY(targetRef.current.x, targetRef.current.z);
     const camX = targetRef.current.x + Math.sin(yawRef.current) * back, camZ = targetRef.current.z + Math.cos(yawRef.current) * back;
-    // Never inside a hill: stay above the ground under the camera.
-    camera.position.set(camX, Math.max(ty + d * CAMERA_HEIGHT, surfaceY(camX, camZ) + 1.5), camZ);
+    // Never inside a hill: stay above the ground under the camera (less margin fully zoomed in).
+    camera.position.set(camX, Math.max(ty + d * CAMERA_HEIGHT, surfaceY(camX, camZ) + Math.min(1.5, .4 + d * .25)), camZ);
     camera.lookAt(targetRef.current.x, ty, targetRef.current.z);
+    // The view's outline on the ground, for the minimap: rays through the
+    // corners of the part of the screen the HUD leaves open.
+    camera.updateMatrixWorld();
+    const top = 1 - 2 * Math.min(42, size.height / 2) / size.height, bottom = 1 - 2 * Math.max(42, size.height - 212) / size.height;
+    cameraView.corners = VIEW_CORNERS.map(([nx, edge]) => {
+      ndc.set(nx, edge ? top : bottom);
+      raycaster.setFromCamera(ndc, camera);
+      const { origin, direction } = raycaster.ray;
+      const t = direction.y < -1e-4 ? (ty - origin.y) / direction.y : 1e4;
+      return { x: origin.x + direction.x * t, z: origin.z + direction.z * t };
+    });
   }, -2);
   return null;
 }
@@ -1564,10 +1625,15 @@ function SunLight({ high }: { high: boolean }) {
     // Low afternoon sun (about 34° up): long shadows give hills, woods and houses their shape.
     light.position.set(x + SUN_DIR[0] * 120, SUN_DIR[1] * 120, z + SUN_DIR[2] * 120);
     light.target.position.set(x, 0, z); light.target.updateMatrixWorld();
-    const extent = Math.max(32, Math.min(190, camera.position.y * .9));
+    // The shadow box shrinks with the zoom (the view and a margin for the long
+    // shadows of trees just outside it), so close up every shadow map texel
+    // is a few centimetres instead of half a metre.
+    const extent = Math.max(10, Math.min(190, camera.position.y * 1.1 + 6));
     const shadow = light.shadow.camera;
     shadow.left = shadow.bottom = -extent; shadow.right = shadow.top = extent;
     shadow.updateProjectionMatrix();
+    // Bias in step with the texel size: no shadow acne far out, no floating shadows close in.
+    light.shadow.normalBias = 3.2 * extent / light.shadow.mapSize.width;
   });
   return (
     <>
