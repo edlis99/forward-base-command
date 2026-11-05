@@ -9,6 +9,7 @@ import {
 import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor } from '../game/tactical';
 import { GroundSurface, WaterSheet, GrassTufts, GroundDetail, ShoreReeds } from './GroundSurface';
 import { Bridges } from './Bridges';
+import { GrassField } from './GrassField';
 import { MAP_SECTIONS, MapSection } from './mapSections';
 import { CampaignMap } from '../components/CampaignMap';
 import { cameraView } from './cameraView';
@@ -30,7 +31,7 @@ import { coverLabel, isOccupyableCover, coverState, unitStatus } from '../game/c
 import { controllable, selectUnits } from '../game/selection';
 import { Shield, Footprints, Truck, Crosshair } from 'lucide-react';
 import { spacingRadius } from '../game/playerSquads';
-import { setActiveTerrain, surfaceY, groundHeightAt } from './terrainHeight';
+import { setActiveTerrain, surfaceY, groundHeightAt, hullSurface } from './terrainHeight';
 
 
 const S = CELL_SIZE;
@@ -502,10 +503,12 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         ref.position.x = u.pos.x / S;
         ref.position.z = u.pos.y / S;
         if (u.type === 'tank' || u.type === 'apc') {
-          // Hulls pitch and roll with the ground under their tracks / wheels.
+          // Hulls pitch and roll with the ground under their tracks / wheels
+          // (on a bridge: with its deck).
           const fx = Math.cos(u.facing), fz = Math.sin(u.facing), d = .45, cx = u.pos.x / S, cz = u.pos.y / S;
-          const front = surfaceY(cx + fx * d, cz + fz * d), back = surfaceY(cx - fx * d, cz - fz * d);
-          const left = surfaceY(cx - fz * d, cz + fx * d), right = surfaceY(cx + fz * d, cz - fx * d);
+          const ground = hullSurface(cx, cz).at;
+          const front = ground(cx + fx * d, cz + fz * d), back = ground(cx - fx * d, cz - fz * d);
+          const left = ground(cx - fz * d, cz + fx * d), right = ground(cx + fz * d, cz - fx * d);
           const tilt = tiltRef.current.get(u.id) ?? { p: 0, r: 0 };
           const kt = 1 - Math.exp(-dt * 5);
           tilt.p += (Math.atan2(front - back, 2 * d) - tilt.p) * kt;
@@ -548,15 +551,18 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
           ((bl as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.35 + u.detectionLevel * 0.5;
         }
       }
+      // On a bridge the rings ride above the deck's kerbs instead of cutting through them.
+      const ringLift = hullSurface(u.pos.x / S, u.pos.y / S).onDeck ? DECK_RING_LIFT : 0;
       const sel = selRefs.current.get(u.id);
       if (sel) {
         sel.visible = u.selected && (u.team === 'player' || u.spottedByEnemy);
         sel.scale.set(pulse, pulse, pulse);
+        sel.position.y = .022 + ringLift;
       }
       const pv = previewRefs.current.get(u.id);
-      if (pv) pv.visible = state.previewSelected.has(u.id) && !u.selected;
+      if (pv) { pv.visible = state.previewSelected.has(u.id) && !u.selected; pv.position.y = .018 + ringLift; }
       const hv = hoverRefs.current.get(u.id);
-      if (hv) hv.visible = hoverId === u.id && !u.selected && !state.previewSelected.has(u.id);
+      if (hv) { hv.visible = hoverId === u.id && !u.selected && !state.previewSelected.has(u.id); hv.position.y = .015 + ringLift; }
       const sr = suppRefs.current.get(u.id);
       if (sr) {
         const on = u.suppression > 0.35 && (u.team === 'player' || u.spottedByEnemy);
@@ -587,6 +593,8 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
             <FactionUnitModel faction={factionFor(gameStateRef.current, u.team).id} type={u.type} unit={u}
               aimAt={aimAt} scale={UNIT_SCALE[u.type]} wrecked={!u.alive} />
           </group>
+          <mesh geometry={contactShadowGeometry} material={contactShadowMaterials[u.type]} position={[0, .006, 0]} renderOrder={-1}
+            scale={[CONTACT[u.type].length, 1, CONTACT[u.type].width]} raycast={() => null} />
 
           {/* hover ring (under selection/preview) */}
           <mesh
@@ -1461,6 +1469,33 @@ function OuterGround() {
  * RealisticVegetation.tsx). Gameplay distances are unchanged.
  */
 const UNIT_SCALE: Record<string, number> = { infantry: 0.56, tank: 0.6, apc: 0.6, helicopter: 0.7 };
+/**
+ * Contact shadow under each unit: the soft darkening where little skylight
+ * reaches the ground beneath a hull or round a soldier's boots. It grounds a
+ * unit at every zoom, where the sun's shadow map is too coarse for a soldier.
+ * Size along and across the hull (cells) and darkness.
+ */
+const CONTACT: Record<UnitType, { length: number; width: number; opacity: number }> = {
+  tank: { length: .56, width: .36, opacity: .4 }, apc: { length: .5, width: .32, opacity: .36 },
+  infantry: { length: .095, width: .085, opacity: .3 }, helicopter: { length: .6, width: .36, opacity: .2 },
+};
+const contactShadowMaterials = (() => {
+  const size = 64, canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(.45, 'rgba(255,255,255,.75)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, size, size);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  const make = (opacity: number) => new THREE.MeshBasicMaterial({ color: '#000000', alphaMap: texture, transparent: true, opacity,
+    depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, toneMapped: false });
+  return Object.fromEntries(Object.entries(CONTACT).map(([type, c]) => [type, make(c.opacity)])) as Record<UnitType, THREE.MeshBasicMaterial>;
+})();
+const contactShadowGeometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+/** Rings of a unit on a bridge sit this much higher: over the deck's kerbs (Bridges: 4 cm boxes, scene units). */
+const DECK_RING_LIFT = 0.035;
 /** Muzzle and aim-point heights above the ground (cells) by unit type, for tracers and flashes. */
 const MUZZLE_HEIGHT: Record<UnitType, number> = { infantry: 0.11, tank: 0.12, apc: 0.12, helicopter: 1.05 };
 const AIM_HEIGHT: Record<UnitType, number> = { infantry: 0.08, tank: 0.09, apc: 0.08, helicopter: 1.05 };
@@ -1605,35 +1640,57 @@ function CameraRig({ inputRef, gameStateRef }: { inputRef: React.MutableRefObjec
   return null;
 }
 
-/**
- * Sun light whose shadow camera is aimed at the centre of the map and sized to
- * enclose it, so no region falls outside the shadow frustum (which would render
- * as a large permanently dark patch).
- */
 /** Direction towards the sun (normalised), shared by the light and the sky. */
 const SUN_DIR = (() => { const v = new THREE.Vector3(95, 75, 60).normalize(); return [v.x, v.y, v.z] as const; })();
+/** The shadow camera's axes: its view runs along the sunlight, "up" as near world up as it gets. */
+const SUN_Z = new THREE.Vector3(...SUN_DIR), SUN_X = new THREE.Vector3(0, 1, 0).cross(SUN_Z).normalize(), SUN_Y = new THREE.Vector3().crossVectors(SUN_Z, SUN_X);
+/** Distance of the shadow camera from the ground it looks at, and the depth it covers either side (cells). */
+const SUN_DISTANCE = 150, SUN_DEPTH = 70;
 
+/**
+ * The sun and its shadow map. The shadow camera covers exactly the ground in
+ * view (the frustum's corners on the ground, at the heights the hills reach,
+ * seen along the sunlight): everything casting a shadow into the view lies on
+ * the same rays, so nothing is lost and every texel is spent where it shows.
+ * The box snaps to whole texels and to steps in size, so shadows do not crawl
+ * as the camera pans, and the bias follows the texel size: soldiers and
+ * vehicles keep crisp shadows attached to their feet and tracks.
+ */
 function SunLight({ high }: { high: boolean }) {
   const { camera } = useThree();
   const ref = useRef<THREE.DirectionalLight>(null);
+  const tmp = useMemo(() => ({ ndc: new THREE.Vector3(), dir: new THREE.Vector3(), p: new THREE.Vector3(), c: new THREE.Vector3() }), []);
+  const mapSize = high ? 4096 : 2048;
   useFrame(() => {
     const light = ref.current;
     if (!light) return;
-    // Concentrate the shadow map on the view: sharper near shadows without
-    // allocating a 4096 texture across the entire campaign region.
-    const x = camera.position.x, z = camera.position.z - camera.position.y * .55 / .85;
-    // Low afternoon sun (about 34° up): long shadows give hills, woods and houses their shape.
-    light.position.set(x + SUN_DIR[0] * 120, SUN_DIR[1] * 120, z + SUN_DIR[2] * 120);
-    light.target.position.set(x, 0, z); light.target.updateMatrixWorld();
-    // The shadow box shrinks with the zoom (the view and a margin for the long
-    // shadows of trees just outside it), so close up every shadow map texel
-    // is a few centimetres instead of half a metre.
-    const extent = Math.max(10, Math.min(190, camera.position.y * 1.1 + 6));
+    camera.updateMatrixWorld();
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity, w = 0, n = 0;
+    for (const nx of [-1, 1]) for (const ny of [-1, 1]) {
+      tmp.dir.set(nx, ny, .5).unproject(camera).sub(camera.position).normalize();
+      for (const h of [-1.5, 3]) {
+        // Where the corner's ray meets ground at this height (a long way off near the horizon).
+        const t = tmp.dir.y < -1e-3 ? Math.min(400, (h - camera.position.y) / tmp.dir.y) : 400;
+        tmp.p.copy(camera.position).addScaledVector(tmp.dir, Math.max(0, t));
+        const u = tmp.p.dot(SUN_X), v = tmp.p.dot(SUN_Y);
+        minU = Math.min(minU, u); maxU = Math.max(maxU, u); minV = Math.min(minV, v); maxV = Math.max(maxV, v);
+        w += tmp.p.dot(SUN_Z); n++;
+      }
+    }
+    // Size in steps of about 9 %, so zooming re-fits now and then rather than every frame.
+    const fit = (span: number) => Math.pow(2, Math.ceil(Math.log2(Math.max(8, span + 2)) * 8) / 8);
+    const sizeU = Math.min(420, fit(maxU - minU)), sizeV = Math.min(420, fit(maxV - minV));
+    const texelU = sizeU / mapSize, texelV = sizeV / mapSize;
+    const cu = Math.round((minU + maxU) / 2 / texelU) * texelU, cv = Math.round((minV + maxV) / 2 / texelV) * texelV;
+    tmp.c.set(0, 0, 0).addScaledVector(SUN_X, cu).addScaledVector(SUN_Y, cv).addScaledVector(SUN_Z, w / n);
+    light.target.position.copy(tmp.c); light.target.updateMatrixWorld();
+    light.position.copy(tmp.c).addScaledVector(SUN_Z, SUN_DISTANCE);
     const shadow = light.shadow.camera;
-    shadow.left = shadow.bottom = -extent; shadow.right = shadow.top = extent;
+    shadow.left = -sizeU / 2; shadow.right = sizeU / 2; shadow.bottom = -sizeV / 2; shadow.top = sizeV / 2;
+    shadow.near = SUN_DISTANCE - SUN_DEPTH; shadow.far = SUN_DISTANCE + SUN_DEPTH;
     shadow.updateProjectionMatrix();
-    // Bias in step with the texel size: no shadow acne far out, no floating shadows close in.
-    light.shadow.normalBias = 3.2 * extent / light.shadow.mapSize.width;
+    // About one texel of normal offset: no acne on the sloping ground, no gap under a soldier's boots.
+    light.shadow.normalBias = 1.1 * Math.max(texelU, texelV);
   });
   return (
     <>
@@ -1642,11 +1699,11 @@ function SunLight({ high }: { high: boolean }) {
         position={[W / 2 + 120, 190, H / 2 + 90]}
         intensity={2.5} color="#ffe8c6"
         castShadow
-        shadow-mapSize-width={high ? 2048 : 1024} shadow-mapSize-height={high ? 2048 : 1024}
-        shadow-bias={-0.0006} shadow-normalBias={0.05}
-        shadow-camera-near={1} shadow-camera-far={520}
-        shadow-camera-left={-190} shadow-camera-right={190}
-        shadow-camera-top={190} shadow-camera-bottom={-190}
+        shadow-mapSize-width={mapSize} shadow-mapSize-height={mapSize}
+        shadow-bias={-0.0003} shadow-normalBias={0.02}
+        shadow-camera-near={SUN_DISTANCE - SUN_DEPTH} shadow-camera-far={SUN_DISTANCE + SUN_DEPTH}
+        shadow-camera-left={-60} shadow-camera-right={60}
+        shadow-camera-top={60} shadow-camera-bottom={-60}
       />
     </>
   );
@@ -1710,6 +1767,7 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <OuterGround />
         <DistantHills />
         <TerrainMesh terrain={terrain} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} highQuality={highQuality} />
+        <GrassField terrain={terrain} highQuality={highQuality} />
         <TerrainDebugLayer gameStateRef={gameStateRef} />
         <CapturePoints gameStateRef={gameStateRef} />
         <FobLayer gameStateRef={gameStateRef} />

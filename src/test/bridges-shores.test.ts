@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { generateTerrain, isPassable } from '../game/terrain';
 import { TerrainCell } from '../game/types';
-import { groundHeightAt, bridgeDeckEnds } from '../scene3d/terrainHeight';
+import { groundHeightAt, bridgeDeckEnds, bridgeDeckAt, DECK_SURFACE, hullSurface, setActiveTerrain } from '../scene3d/terrainHeight';
+import { deckWidth } from '../game/terrain';
 import { spanBoxes } from '../scene3d/bridgeSpans';
 import { drivewaysIn } from '../scene3d/roadMaterial';
 import { mapSections } from '../scene3d/mapSections';
@@ -144,5 +145,23 @@ describe('bridges, shores and driveways', () => {
         if (turn > .45) expect(ends.some(e => Math.hypot(e[0] - b[0], e[1] - b[1]) < .35)).toBe(true);
       }
     }
+  });
+
+  it('units on a deck stand on its road surface everywhere across it, not sunk towards the river beside it', () => {
+    setActiveTerrain(terrain);
+    for (const span of spans) {
+      const L = Math.hypot(span.b[0] - span.a[0], span.b[1] - span.a[1]), ux = (span.b[0] - span.a[0]) / L, uy = (span.b[1] - span.a[1]) / L;
+      for (const t of [.3, .5, .7]) for (const k of [-.9, -.5, 0, .5, .9]) {
+        const across = k * deckWidth(span) / 2;
+        const gx = span.a[0] + ux * L * t - uy * across, gz = span.a[1] + uy * L * t + ux * across;
+        const deck = bridgeDeckAt(terrain, span, gx, gz) + DECK_SURFACE;
+        expect(groundHeightAt(terrain, gx, gz, true)).toBeCloseTo(deck, 6);
+        // A hull there rolls with the deck, not with the river bed beside it.
+        const hull = hullSurface(gx, gz);
+        expect(hull.onDeck).toBe(true);
+        expect(hull.at(gx - uy * .45, gz + ux * .45)).toBeCloseTo(hull.at(gx + uy * .45, gz - ux * .45), 6);
+      }
+    }
+    setActiveTerrain(undefined);
   });
 });
