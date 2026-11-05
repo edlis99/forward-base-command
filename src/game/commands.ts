@@ -5,6 +5,7 @@ import { isVisibleTo } from './awareness';
 import { issueSquadMove } from './playerSquads';
 import { coverLabel, occupyCover } from './cover';
 import { deployRadio, layOutSpawn } from './fob';
+import { CELL_SIZE } from './constants';
 
 /**
  * The only way a side can influence a match. Commands are plain serializable
@@ -41,6 +42,29 @@ function owned(state: GameState, team: Team, ids: unknown, opts: { onBoard?: boo
   if (!Array.isArray(ids)) return [];
   const want = new Set(ids.filter((id): id is string => typeof id === 'string').slice(0, MAX_COMMAND_UNITS));
   return state.units.filter(u => want.has(u.id) && u.alive && u.team === team && (opts.onBoard || !u.insideOf));
+}
+
+/** An APC this close to the infantry boarding it waits for them; farther away it drives to meet them. */
+const PICKUP_WAIT = 2.5 * CELL_SIZE;
+/** How far short of the middle of the group the APC stops, so it does not drive into the soldiers. */
+const PICKUP_STANDOFF = 1.2 * CELL_SIZE;
+/**
+ * The APC goes to the infantry boarding it, or waits for them, rather than
+ * leaving them to chase it: it drops its current orders and, unless they are
+ * already close, drives to a point just short of the middle of the group.
+ * Returns where the pickup happens.
+ */
+function meetBoarders(state: GameState, apc: Unit, boarders: Unit[]): Position {
+  const n = boarders.length || 1;
+  const mid = boarders.reduce((p, u) => ({ x: p.x + u.pos.x / n, y: p.y + u.pos.y / n }), { x: 0, y: 0 });
+  const d = boarders.length ? distance(apc.pos, mid) : 0;
+  clearUnitOrders(apc);
+  if (d > PICKUP_WAIT) {
+    const k = (d - PICKUP_STANDOFF) / d;
+    setDestination(apc, state, { x: apc.pos.x + (mid.x - apc.pos.x) * k, y: apc.pos.y + (mid.y - apc.pos.y) * k });
+    if (apc.finalDest) apc.order = 'move';
+  }
+  return apc.finalDest ? { ...apc.finalDest } : { ...apc.pos };
 }
 
 export function applyCommand(state: GameState, team: Team, cmd: Command): CommandResult {
@@ -98,15 +122,19 @@ export function applyCommand(state: GameState, team: Team, cmd: Command): Comman
       if (!apc || !apc.alive || apc.team !== team || apc.type !== 'apc') return fail('invalid transport');
       const units = owned(state, team, cmd.unitIds).filter(u => u.type === 'infantry' && u.id !== apc.id);
       if (!units.length) return fail('no infantry to board');
-      for (const u of units) {
-        if (apc.passengers.length >= 4) break;
+      // Four seats: the nearest soldiers take those still free.
+      const inbound = () => state.units.filter(u => u.alive && !u.insideOf && u.boardTarget === apc.id);
+      let seats = 4 - apc.passengers.length - inbound().filter(u => !units.includes(u)).length;
+      if (seats <= 0) return fail('no free seats');
+      for (const u of [...units].sort((a, b) => distance(a.pos, apc.pos) - distance(b.pos, apc.pos))) {
+        if (seats-- <= 0) break;
         clearUnitOrders(u);
-        setDestination(u, state, { x: apc.pos.x, y: apc.pos.y });
-        u.attackTarget = null;
         u.order = 'move';
         u.boardTarget = apc.id;
       }
-      pushMarker(state, 'board', apc.pos, team);
+      const boarders = inbound(), meet = meetBoarders(state, apc, boarders);
+      for (const u of boarders) setDestination(u, state, meet);
+      pushMarker(state, 'board', meet, team);
       return { ok: true };
     }
 

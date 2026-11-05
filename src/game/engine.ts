@@ -106,7 +106,9 @@ export function update(state: GameState, input: InputState, dt: number) {
   dt = dt * (state.timeScale ?? 1);
   state.time += dt;
 
-  // Boarding intents
+  // Boarding intents. The APC drives to meet its passengers or waits (see the
+  // board command): soldiers walk to where it is going, straight to it once
+  // it is close, and climb in beside it.
   for (const unit of state.units) {
     if (!unit.alive) continue;
     const intent = unit.boardTarget;
@@ -120,8 +122,16 @@ export function update(state: GameState, input: InputState, dt: number) {
         unit.pos = { ...apc.pos };
         apc.passengers.push(unit.id);
         state.eventLog.unshift({ message: `${unit.type} boarded APC`, time: state.time, type: 'info' });
-      } else if (!unit.finalDest || distance(unit.finalDest, apc.pos) > CELL_SIZE) {
-        setDestination(unit, state, apc.pos);
+        continue;
+      }
+      const driving = !!apc.finalDest && (!!apc.targetPos || apc.path.length > 0);
+      const meet = driving && distance(unit.pos, apc.pos) > 2 * CELL_SIZE ? apc.finalDest! : apc.pos;
+      if (distance(unit.pos, meet) > CELL_SIZE / 2 && (!unit.finalDest || distance(unit.finalDest, meet) > CELL_SIZE)) {
+        setDestination(unit, state, meet);
+        if (!unit.finalDest) {
+          clearUnitOrders(unit);
+          state.eventLog.unshift({ message: 'Infantry cannot reach the APC', time: state.time, type: 'info' });
+        }
       }
     }
   }
