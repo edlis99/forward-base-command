@@ -6,7 +6,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { retargetClips, QUATERNIUS_TO_MIXAMO } from '../scene3d/retargetClips';
 import { splitTurret } from '../scene3d/turretSplit';
-import { reachFor, strideSpeed } from '../scene3d/soldierRig';
+import { bakeRifleHold, reachFor, RIFLE, SOLDIER_RIGS, strideSpeed } from '../scene3d/soldierRig';
 
 /** Parse a bundled GLB (the buffer is copied into this realm's ArrayBuffer, which GLTFLoader requires). */
 async function load(name: string) {
@@ -90,6 +90,66 @@ describe('soldier gait and rifle hold', () => {
       reachFor(a, b, w, target, new THREE.Vector3(-.2, -.5, 1));
       root.updateMatrixWorld(true);
       expect(w.getWorldPosition(new THREE.Vector3()).distanceTo(target)).toBeLessThan(.001);
+    }
+  });
+});
+
+describe('baked two-handed rifle hold', () => {
+  async function soldier(file: string, clipsFrom?: string) {
+    const own = await load(file), source = clipsFrom ? await load(clipsFrom) : own;
+    const clips = clipsFrom ? retargetClips(clone(own.scene), clone(source.scene), source.animations, QUATERNIUS_TO_MIXAMO) : own.animations;
+    const scene = clone(own.scene);
+    scene.rotation.y = Math.PI / 2;
+    const root = new THREE.Group(); root.add(scene); root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root, true);
+    root.scale.setScalar(.27 / (box.max.y - box.min.y)); root.updateMatrixWorld(true);
+    return { root, clips };
+  }
+  it('keeps both hands on the rifle in every baked clip, frame by frame, for both soldiers', async () => {
+    const soldiers = [
+      { ...(await soldier('union-rifleman.glb')), rig: SOLDIER_RIGS.vostran },
+      { ...(await soldier('aster-rifleman-detailed.glb', 'union-rifleman.glb')), rig: SOLDIER_RIGS.aster },
+    ];
+    for (const { root, clips, rig } of soldiers) {
+      const { clips: baked, grip } = bakeRifleHold(root, clips, rig);
+      expect(baked).toHaveLength(clips.length);
+      // The game's soldier: a copy of the model, the rifle a child of the right wrist.
+      const model = clone(root), bone = (n: string) => model.getObjectByName(clean(n))!;
+      const rifle = new THREE.Object3D();
+      rifle.position.copy(grip.position); rifle.quaternion.copy(grip.quaternion); rifle.scale.copy(grip.scale);
+      bone(rig.right[2]).add(rifle);
+      /** Middle of the palm: halfway from the wrist to the knuckles. */
+      const palm = (side: 'right' | 'left') => {
+        const knuckles = rig.fingers[side].slice(0, 4).map(c => bone(c[rig.knuckle]).getWorldPosition(new THREE.Vector3()));
+        const k = knuckles.reduce((a, b) => a.add(b), new THREE.Vector3()).divideScalar(4);
+        return bone(rig[side][2]).getWorldPosition(new THREE.Vector3()).lerp(k, .5);
+      };
+      const mixer = new THREE.AnimationMixer(model);
+      for (const name of ['Idle_Gun', 'Walk', 'Run', 'Idle_Gun_Pointing', 'Gun_Shoot', 'Run_Left', 'Run_Back']) {
+        const clip = baked.find(c => c.name.endsWith('|' + name))!;
+        mixer.stopAllAction(); mixer.clipAction(clip).play();
+        for (const f of [.1, .45, .8]) {
+          mixer.setTime(clip.duration * f); model.updateMatrixWorld(true);
+          // Both palms in the rifle's own frame (model units: the soldier is 0.27 tall).
+          const toRifle = rifle.matrixWorld.clone().invert();
+          const right = palm('right').applyMatrix4(toRifle), left = palm('left').applyMatrix4(toRifle);
+          const at = `${rig.hips} ${name} at ${f}`;
+          expect(right.distanceTo(RIFLE.grip), `${at}: right hand on the pistol grip`).toBeLessThan(.008);
+          expect(left.x, `${at}: left hand ahead of the magazine`).toBeGreaterThan(RIFLE.guardFrom - .004);
+          expect(left.x, `${at}: left hand on the handguard`).toBeLessThan(RIFLE.guardTo + .004);
+          expect(Math.abs(left.y - RIFLE.guardY), `${at}: left hand under the handguard`).toBeLessThan(.008);
+          expect(Math.abs(left.z), `${at}: left hand under the rifle`).toBeLessThan(.008);
+        }
+      }
+      // Shouldered when aiming: the rifle points ahead (+X), level; at low ready, ahead and down.
+      for (const [name, level] of [['Idle_Gun_Pointing', true], ['Walk', false]] as const) {
+        const clip = baked.find(c => c.name.endsWith('|' + name))!;
+        mixer.stopAllAction(); mixer.clipAction(clip).play(); mixer.setTime(clip.duration * .3); model.updateMatrixWorld(true);
+        const barrel = new THREE.Vector3(1, 0, 0).transformDirection(rifle.matrixWorld);
+        expect(barrel.x, `${rig.hips} ${name} points ahead`).toBeGreaterThan(level ? .9 : .6);
+        if (level) expect(Math.abs(barrel.y)).toBeLessThan(.15);
+        else expect(barrel.y).toBeLessThan(-.25);
+      }
     }
   });
 });

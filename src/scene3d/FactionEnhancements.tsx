@@ -2,6 +2,7 @@ import React, { Suspense, useMemo } from 'react';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import type { FactionId } from '../game/factions';
+import { RIFLE_LENGTH } from './soldierRig';
 
 /**
  * Original faction-specific detail meshes. These are decorative and do not
@@ -160,8 +161,8 @@ function LoadedWeapon({ faction }: { faction: FactionId }) {
     const b = new THREE.Box3().setFromObject(clone);
     const size = b.getSize(new THREE.Vector3());
     const centre = b.getCenter(new THREE.Vector3());
-    // About a metre long beside a soldier 0.27 tall (1.8 m).
-    const scale = .15 / Math.max(size.x, size.y, size.z, .0001);
+    // 0.9 m long beside a soldier 0.27 tall (1.8 m); the hands' grip points assume this length.
+    const scale = RIFLE_LENGTH / Math.max(size.x, size.y, size.z, .0001);
     clone.position.sub(centre.multiplyScalar(1));
     const root = new THREE.Group();
     root.scale.setScalar(scale);

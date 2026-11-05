@@ -107,6 +107,43 @@ describe('M9: loading and unloading with U', () => {
     expect(men.filter(m => m.boardTarget === b.id)).toHaveLength(4);
     expect(s.eventLog[0].message).toContain('1 left behind');
   });
+  it('the APC drives to meet infantry boarding it instead of driving off while they chase it', () => {
+    const s = openState();
+    const apc = add(s, 'apc', 'player', 1000, 1000);
+    const men = [0, 1, 2].map(i => add(s, 'infantry', 'player', 1000 + i * 30, 1400, { selected: true }));
+    // The APC is on its way somewhere else when the soldiers are told to board it.
+    apc.selected = true; handleRightClickWorld(2200, 1000, s); apc.selected = false;
+    run(s, 1);
+    expect(apc.targetPos).not.toBeNull();
+    const start = men.map(m => ({ ...m.pos }));
+    handleRightClickWorld(apc.pos.x, apc.pos.y, s);
+    expect(men.every(m => m.boardTarget === apc.id)).toBe(true);
+    // It turns towards them, stopping short of the group.
+    const mid = { x: 1030, y: 1400 };
+    expect(Math.hypot(apc.finalDest!.x - mid.x, apc.finalDest!.y - mid.y) / 32).toBeLessThan(2);
+    let boardedAt = -1;
+    run(s, 25, () => { if (boardedAt < 0 && men.every(m => m.insideOf === apc.id)) boardedAt = s.time; });
+    expect(apc.passengers).toHaveLength(3);
+    expect(boardedAt).toBeGreaterThan(0);
+    expect(boardedAt).toBeLessThan(18);
+    // The soldiers met it near where they stood, the APC went the rest of the way.
+    men.forEach((m, i) => expect(Math.hypot(m.pos.x - start[i].x, m.pos.y - start[i].y) / 32).toBeLessThan(4));
+    expect(Math.hypot(apc.pos.x - mid.x, apc.pos.y - mid.y) / 32).toBeLessThan(3);
+  });
+  it('an APC already beside the infantry stops and waits for them', () => {
+    const s = openState();
+    const apc = add(s, 'apc', 'player', 1000, 1000);
+    const men = [0, 1].map(i => add(s, 'infantry', 'player', 1050, 980 + i * 40, { selected: true }));
+    apc.selected = true; handleRightClickWorld(2200, 1000, s); apc.selected = false;
+    run(s, .5);
+    const at = { ...apc.pos };
+    handleRightClickWorld(apc.pos.x, apc.pos.y, s);
+    expect(apc.targetPos).toBeNull();
+    expect(apc.path).toHaveLength(0);
+    run(s, 8);
+    expect(men.every(m => m.insideOf === apc.id)).toBe(true);
+    expect(Math.hypot(apc.pos.x - at.x, apc.pos.y - at.y) / 32).toBeLessThan(.5);
+  });
   it('U unloads when only APCs are selected', () => {
     const s = openState();
     const apc = add(s, 'apc', 'player', 1000, 1000, { selected: true });

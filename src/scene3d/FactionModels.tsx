@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useMemo, useRef } from 'react';
-import { Canvas, createPortal, useFrame, useThree } from '@react-three/fiber';
+import { Canvas, createPortal, useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
@@ -8,7 +8,7 @@ import { FactionWeapon, TankDetails, TankTurretDetails, CarrierDetails, CarrierT
 import { retargetClips, QUATERNIUS_TO_MIXAMO } from './retargetClips';
 import { splitTurret } from './turretSplit';
 import { animStep } from './animationClock';
-import { armLength, reachFor, strideSpeed } from './soldierRig';
+import { bakeRifleHold, SOLDIER_RIGS, strideSpeed } from './soldierRig';
 import type { Position, Unit, UnitType } from '../game/types';
 import { CELL_SIZE } from '../game/constants';
 
@@ -147,64 +147,40 @@ function proneOffset(model: THREE.Object3D, roll: THREE.AnimationClip) {
   return offset;
 }
 
-/** Bones the rifle hold and the stride measurement use, per rig (GLTF strips ':' and '.' from names). */
+/** GLTF strips ':' and '.' from bone names. */
 const san = THREE.PropertyBinding.sanitizeNodeName;
-const RIGS: Record<FactionId, { hips: string; neck: string; right: string[]; left: string[]; feet: string[] }> = {
-  aster: {
-    hips: 'mixamorig:Hips', neck: 'mixamorig:Neck', feet: ['mixamorig:LeftFoot', 'mixamorig:RightFoot'],
-    right: ['mixamorig:RightArm', 'mixamorig:RightForeArm', 'mixamorig:RightHand'],
-    left: ['mixamorig:LeftArm', 'mixamorig:LeftForeArm', 'mixamorig:LeftHand'],
-  },
-  vostran: {
-    hips: 'Hips', neck: 'Neck', feet: ['Foot.L', 'Foot.R'],
-    right: ['UpperArm.R', 'LowerArm.R', 'Wrist.R'], left: ['UpperArm.L', 'LowerArm.L', 'Wrist.L'],
-  },
-};
-
-/**
- * How the rifle is held, in the torso's frame (forward, up, right): the grip
- * (right hand) relative to the middle of the shoulders, in arm lengths, and
- * the barrel direction. Elbow poles say which way each elbow bends. The left
- * hand holds the handguard, 0.4 arm lengths up the barrel. Lying prone the
- * torso's "up" runs along the ground towards the head.
- */
-type Triple = [number, number, number];
-interface Hold { grip: Triple; barrel: Triple; poleR: Triple; poleL: Triple }
-const HOLDS: Record<'ready' | 'run' | 'aim' | 'prone', Hold> = {
-  ready: { grip: [.55, -.62, .2], barrel: [.86, -.44, -.2], poleR: [-.3, -1, .7], poleL: [0, -1, -.4] },
-  run: { grip: [.5, -.6, .24], barrel: [.74, .3, -.6], poleR: [-.3, -1, .7], poleL: [0, -1, -.3] },
-  aim: { grip: [.5, -.14, .24], barrel: [1, -.03, -.03], poleR: [-.2, -.5, 1], poleL: [.1, -1, -.35] },
-  prone: { grip: [.12, .6, .2], barrel: [.06, 1, -.05], poleR: [1, 0, .7], poleL: [1, 0, -.7] },
-};
-/** Rifle model geometry along its barrel (FactionWeapon: 0.15 long, centred): grip, handguard. */
-const RIFLE_GRIP = -.0045, RIFLE_DROP = .01;
 
 /**
  * Soldier: an animation state machine over the Quaternius clip set (the Aster
  * soldier gets the same clips retargeted to its skeleton). The legs play the
  * walk, run, strafe or back-pedal clip matching the direction of travel, at
  * the speed where the planted feet stay put (measured from each clip's
- * stride). The clips hold a pistol one-handed, so the arms are posed on top
- * by IK: both hands on the rifle, at low ready, across the chest on the run,
- * shouldered when aiming or firing (with recoil), along the ground when
- * prone. A flinch when hit, the death fall (the rifle stays in the hand).
+ * stride). The clips hold a pistol one-handed; their arms are re-baked once
+ * at load to hold the rifle in both hands (at low ready, across the chest on
+ * the run, shouldered when aiming, firing or strafing, along the ground when
+ * prone), and the rifle rides in the right hand. So both hands are on it at
+ * every distance and through every blend, at no cost per frame. A flinch when
+ * hit, a kick when firing, the death fall (the rifle stays in the hand).
  */
 function ImportedInfantry({ faction, unit, scale = 1 }: { faction: FactionId; unit?: Unit; scale?: number }) {
   const loaded = useGLTF(FACTION_MODEL_PATHS[faction].infantry);
   const source = useGLTF(ANIMATION_SOURCE);
-  const clips = useMemo(() => infantryClips(faction, loaded, source), [faction, loaded, source]);
-  const model = useMemo(() => clone(templateFor(loaded.scene, faction, 'infantry', clips)), [loaded, faction, clips]);
+  const raw = useMemo(() => infantryClips(faction, loaded, source), [faction, loaded, source]);
+  const template = useMemo(() => templateFor(loaded.scene, faction, 'infantry', raw), [loaded, faction, raw]);
+  const { clips, grip } = useMemo(() => bakeRifleHold(template, raw, SOLDIER_RIGS[faction]), [template, raw, faction]);
+  const model = useMemo(() => clone(template), [template]);
   const poseRef = useRef<THREE.Group>(null);
-  const { camera } = useThree();
-  const rig = useMemo(() => {
-    const r = RIGS[faction], bone = (n: string) => model.getObjectByName(san(n)) ?? null;
-    const right = r.right.map(bone), left = r.left.map(bone), hips = bone(r.hips), neck = bone(r.neck);
-    if (right.some(b => !b) || left.some(b => !b) || !hips || !neck) return null;
-    const mount = new THREE.Group();
-    mount.name = 'rifle-mount';
-    model.add(mount);
-    return { right: right as THREE.Object3D[], left: left as THREE.Object3D[], hips, neck, mount, attached: false };
-  }, [model, faction]);
+  // The rifle in the right hand, as the baked arms hold it.
+  const mount = useMemo(() => {
+    const wrist = model.getObjectByName(san(SOLDIER_RIGS[faction].right[2]));
+    if (!wrist) return null;
+    const m = new THREE.Group();
+    m.name = 'rifle-mount';
+    m.position.copy(grip.position); m.quaternion.copy(grip.quaternion); m.scale.copy(grip.scale);
+    wrist.add(m);
+    return m;
+  }, [model, faction, grip]);
+  useEffect(() => () => { mount?.removeFromParent(); }, [mount]);
   const anim = useMemo(() => {
     const mixer = new THREE.AnimationMixer(model);
     const get = (name: string) => clips.find(c => c.name === name || c.name.endsWith('|' + name));
@@ -220,7 +196,7 @@ function ImportedInfantry({ faction, unit, scale = 1 }: { faction: FactionId; un
     const offset = roll ? proneOffset(clone(model), roll) : new THREE.Vector3();
     const idle = action('Idle_Gun') ?? action('Idle_Gun_Pointing') ?? (clips[0] ? mixer.clipAction(clips[0]) : null);
     if (idle) { idle.play(); mixer.update(0); }
-    const feet = RIGS[faction].feet;
+    const feet = SOLDIER_RIGS[faction].feet;
     const stride = (a: THREE.AnimationAction | null, axis: 'x' | 'z') => a ? strideSpeed(model, a.getClip(), feet, axis) : .45;
     const walk = action('Walk'), run = action('Run'), runShoot = action('Run_Shoot');
     const back = action('Run_Back'), leftward = action('Run_Left'), rightward = action('Run_Right');
@@ -230,18 +206,12 @@ function ImportedInfantry({ faction, unit, scale = 1 }: { faction: FactionId; un
       prone, offset, current: idle, lastFire: unit?.lastFireTime ?? 0, lastHit: unit?.lastDamageTime ?? 0, shotAt: -99, hitAt: -99, clock: 0,
       speeds: new Map<THREE.AnimationAction | null, number>([[walk, stride(walk, 'x')], [run, stride(run, 'x')], [runShoot, stride(runShoot, 'x')],
         [back, stride(back, 'x')], [leftward, stride(leftward, 'z')], [rightward, stride(rightward, 'z')]]),
-      running: false, recoil: 0, ik: 1, hold: { ...HOLDS.ready, grip: [...HOLDS.ready.grip] as Triple, barrel: [...HOLDS.ready.barrel] as Triple,
-        poleR: [...HOLDS.ready.poleR] as Triple, poleL: [...HOLDS.ready.poleL] as Triple },
+      running: false, recoil: 0,
     };
     // unit is read for its starting fire/damage times only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, clips, faction]);
   useEffect(() => () => { anim.mixer.stopAllAction(); anim.mixer.uncacheRoot(model); }, [anim, model]);
-  // Per-frame scratch space.
-  const tmp = useMemo(() => ({ inv: new THREE.Matrix4(), m: new THREE.Matrix4(), sr: new THREE.Vector3(), sl: new THREE.Vector3(), hip: new THREE.Vector3(),
-    nk: new THREE.Vector3(), f: new THREE.Vector3(), u: new THREE.Vector3(), r: new THREE.Vector3(), mid: new THREE.Vector3(), grip: new THREE.Vector3(),
-    barrel: new THREE.Vector3(), up: new THREE.Vector3(), side: new THREE.Vector3(), hand: new THREE.Vector3(), pole: new THREE.Vector3(),
-    world: new THREE.Vector3(), q: new THREE.Quaternion() }), []);
   useFrame((_, dt) => {
     const a = anim, step = animStep(dt);
     if (!a.idle) return;
@@ -294,63 +264,20 @@ function ImportedInfantry({ faction, unit, scale = 1 }: { faction: FactionId; un
       const k = Math.min(1, step * 6), proneNow = want === a.prone;
       pose.position.lerp(proneNow ? a.offset : ZERO, k);
     }
-    if (!rig) return;
-    if (shot) a.recoil = 1;
-    a.recoil *= Math.exp(-step * 16);
-    const dead = !!unit && !unit.alive;
-    if (dead && !rig.attached) {
-      // The rifle goes down with the soldier, in his right hand.
-      model.updateWorldMatrix(true, true);
-      rig.right[2].attach(rig.mount);
-      rig.attached = true;
-    }
-    a.ik = dead ? Math.max(0, a.ik - step * 4) : 1;
-    if (a.ik <= 0) return;
-    model.getWorldPosition(tmp.world);
-    // Arms are only posed where you can see them.
-    if (tmp.world.distanceToSquared(camera.position) > 45 * 45) return;
-    // Shouldered whenever he has a target, also on the move; across the chest when running.
-    const engaged = !!unit && (unit.aiming || unit.engaging || now - a.shotAt < 1.2);
-    const holdName = want === a.prone ? 'prone'
-      : want === a.aim || want === a.shoot || want === a.runShoot || (moving && engaged) ? 'aim'
-      : moving && a.running ? 'run' : 'ready';
-    const target = HOLDS[holdName], h = a.hold, k = 1 - Math.exp(-step * 10);
-    for (const key of ['grip', 'barrel', 'poleR', 'poleL'] as const) for (let i = 0; i < 3; i++) h[key][i] += (target[key][i] - h[key][i]) * k;
-    // Torso frame from the animated skeleton, in model space.
-    model.updateWorldMatrix(true, true);
-    const inv = tmp.inv.copy(model.matrixWorld).invert();
-    const sr = tmp.sr.setFromMatrixPosition(rig.right[0].matrixWorld).applyMatrix4(inv);
-    const sl = tmp.sl.setFromMatrixPosition(rig.left[0].matrixWorld).applyMatrix4(inv);
-    const hip = tmp.hip.setFromMatrixPosition(rig.hips.matrixWorld).applyMatrix4(inv);
-    const nk = tmp.nk.setFromMatrixPosition(rig.neck.matrixWorld).applyMatrix4(inv);
-    const r = tmp.r.subVectors(sr, sl).normalize();
-    const u = tmp.u.subVectors(nk, hip);
-    u.addScaledVector(r, -u.dot(r)).normalize();
-    const f = tmp.f.crossVectors(u, r).normalize();
-    const L = armLength(rig.right, inv, tmp);
-    const local = (t: Triple, out: THREE.Vector3) => out.set(0, 0, 0).addScaledVector(f, t[0]).addScaledVector(u, t[1]).addScaledVector(r, t[2]);
-    const mid = tmp.mid.addVectors(sr, sl).multiplyScalar(.5);
-    const barrel = local(h.barrel, tmp.barrel).addScaledVector(u, .25 * a.recoil).normalize();
-    const grip = local(h.grip, tmp.grip).multiplyScalar(L).add(mid).addScaledVector(f, -.1 * L * a.recoil);
-    const up = tmp.up.copy(u).addScaledVector(barrel, -u.dot(barrel)).normalize();
-    const side = tmp.side.crossVectors(barrel, up);
-    // Rifle in model space: barrel along +x, top along +y (in the hand once he falls).
-    if (!rig.attached) {
-      tmp.m.makeBasis(barrel, up, side);
-      rig.mount.quaternion.setFromRotationMatrix(tmp.m);
-      rig.mount.position.copy(grip).addScaledVector(barrel, -RIFLE_GRIP).addScaledVector(up, RIFLE_DROP);
-    }
-    const toWorld = (p: THREE.Vector3) => p.applyMatrix4(model.matrixWorld);
-    const pole = (t: Triple) => local(t, tmp.pole).transformDirection(model.matrixWorld);
-    reachFor(rig.right[0], rig.right[1], rig.right[2], toWorld(tmp.hand.copy(grip)), pole(h.poleR), a.ik);
-    const support = tmp.hand.copy(grip).addScaledVector(barrel, .4 * L).addScaledVector(up, .004);
-    reachFor(rig.left[0], rig.left[1], rig.left[2], toWorld(support), pole(h.poleL), a.ik);
+    // Each shot kicks the rifle back and up in the hands for a moment.
+    if (!mount || (!shot && a.recoil === 0)) return;
+    a.recoil = shot && unit?.alive ? 1 : a.recoil * Math.exp(-step * 18);
+    if (a.recoil < .01) a.recoil = 0;
+    KICK.set(-.007 * a.recoil, 0, 0).multiply(grip.scale).applyQuaternion(grip.quaternion);
+    mount.position.copy(grip.position).add(KICK);
+    mount.quaternion.copy(grip.quaternion).multiply(CLIMB.setFromAxisAngle(Z_AXIS, .14 * a.recoil));
   });
   return <group name={`faction-model-${faction}-infantry`} userData={{ faction, unitType: 'infantry', imported: true }} dispose={null}>
     <group ref={poseRef}><primitive object={model} /></group>
-    {rig && createPortal(<FactionWeapon faction={faction} />, rig.mount)}
+    {mount && createPortal(<FactionWeapon faction={faction} />, mount)}
   </group>;
 }
+const KICK = new THREE.Vector3(), CLIMB = new THREE.Quaternion(), Z_AXIS = new THREE.Vector3(0, 0, 1);
 const ZERO = new THREE.Vector3();
 
 /**
