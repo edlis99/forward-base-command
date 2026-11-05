@@ -182,6 +182,27 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
       float lum = dot(vColor.rgb, vec3(0.333));
       vec3 tint = mix(vec3(1.0), vColor.rgb / max(lum, 0.02), 0.25);
       diffuseColor.rgb = tex * tint * clamp(0.75 + lum * 1.3, 0.85, 1.3);
+      // Meadows: grassland is not one carpet. Broad patches of lush, sun-dried
+      // and damp darker grass, clumps at the scale of a few metres, and the
+      // wind running over it in slow bright waves (all weighted by how much of
+      // the ground here is grass, so roads, fields and woods keep their look).
+      float meadow = clamp(vSplatA.x + vSplatA.y * 0.35, 0.0, 1.0) * (1.0 - clamp(vSplatB.z * 2.0, 0.0, 1.0));
+      if (meadow > 0.01) {
+        vec2 mw = gUv / gTile;
+        float broad = cNoise(mw * 0.085 + 7.3) * 0.6 + cNoise(mw * 0.21 + 2.1) * 0.4;
+        float damp = cNoise(mw * 0.13 + vec2(4.7, 9.1));
+        vec3 lush = vec3(0.86, 1.12, 0.74), dried = vec3(1.16, 1.06, 0.74), moist = vec3(0.74, 0.92, 0.70);
+        vec3 shade = mix(lush, dried, smoothstep(0.42, 0.78, broad));
+        shade = mix(shade, moist, smoothstep(0.62, 0.86, damp) * 0.7);
+        float clumps = cNoise(mw * 1.9 + 3.7) * 0.6 + cNoise(mw * 4.3 + 1.1) * 0.4;
+        shade *= 0.9 + clumps * 0.2;
+        // Wind: long low waves crossing the meadow, a touch of sheen on the bent blades.
+        vec2 windDir = vec2(0.83, 0.56);
+        float wave = sin(dot(mw, windDir) * 0.9 - uTime * 1.6 + cNoise(mw * 0.15) * 4.0);
+        float gust = smoothstep(0.35, 1.0, wave) * smoothstep(0.25, 0.75, cNoise(mw * 0.05 + vec2(uTime * 0.05, 0.0)));
+        shade *= 1.0 + gust * 0.075;
+        diffuseColor.rgb *= mix(vec3(1.0), shade, meadow);
+      }
       ${roads ? `
       vec4 paving = texture2D(campaignRoads, campaignUv);
       vec3 roadColor = pow(paving.rgb, vec3(2.2));
@@ -194,6 +215,6 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
       diffuseColor.rgb *= 1.0 - smoothstep(0.52, 0.74, cloud) * 0.26;
     `);
   };
-  material.customProgramCacheKey = () => `polyhaven-landscape-v5-${roads ? 'r' : 'n'}`;
+  material.customProgramCacheKey = () => `polyhaven-landscape-v6-${roads ? 'r' : 'n'}`;
   return material;
 }

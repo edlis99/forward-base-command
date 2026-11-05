@@ -1,6 +1,7 @@
 import { TerrainCell, TerrainType } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
 import { geography } from '../game/maps/geography';
+import { deckWidth } from '../game/terrain';
 
 // The designed Leipalingis map carries real hills in its height map (they block
 // sight in the simulation), so show those, a little exaggerated for readability,
@@ -85,6 +86,35 @@ export function bridgeDeckAt(terrain: TerrainCell[][], bridge: BridgeInfo, gx: n
   return ha + (hb - ha) * t + BRIDGE_DECK_LIFT;
 }
 
+/** The road surface over a deck's slab (Bridges: slab top, then the running surface). */
+export const DECK_SURFACE = 0.01;
+
+/**
+ * The bridge whose deck covers a point (grid coordinates): within the deck's
+ * width, between its ends. A deck cell is mostly river: only this strip of it
+ * carries units, at the deck's own height, not a blend with the water beside it.
+ */
+export function deckAt(terrain: TerrainCell[][] | undefined, gx: number, gz: number): BridgeInfo | null {
+  if (!terrain) return null;
+  const cx = Math.floor(gx), cz = Math.floor(gz);
+  let seen: BridgeInfo | null = null;
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+    const b = terrain[cz + dz]?.[cx + dx]?.bridge;
+    if (!b || b === seen) continue;
+    seen = b;
+    const [ax, ay] = b.a, vx = b.b[0] - ax, vy = b.b[1] - ay, L = Math.hypot(vx, vy) || 1;
+    const px = gx - ax, py = gz - ay;
+    const along = (px * vx + py * vy) / L, across = (-px * vy + py * vx) / L;
+    if (along >= 0 && along <= L && Math.abs(across) <= deckWidth(b) / 2) return b;
+  }
+  return null;
+}
+
+/** Height of a deck's road surface at a point (grid coordinates). */
+export function deckSurfaceAt(terrain: TerrainCell[][], bridge: BridgeInfo, gx: number, gz: number): number {
+  return bridgeDeckAt(terrain, bridge, gx, gz) + DECK_SURFACE;
+}
+
 /**
  * Surface height (world Y, in cell units) at continuous grid coordinates.
  * Must stay identical to the vertex displacement used by GroundSurface.
@@ -98,6 +128,10 @@ export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number,
 /** `road` treats bridge cells as plain road (used only to find deck end heights). */
 function heightAt(terrain: TerrainCell[][] | undefined, gx: number, gz: number, mode: HeightMode): number {
   if (!terrain || terrain.length === 0) return 0;
+  if (mode === 'deck') {
+    const deck = deckAt(terrain, gx, gz);
+    if (deck) return deckSurfaceAt(terrain, deck, gx, gz);
+  }
   const cellAt = (cx: number, cy: number): TerrainCell => {
     const row = terrain[Math.max(0, Math.min(H - 1, cy))] ?? terrain[0];
     return row[Math.max(0, Math.min(W - 1, cx))] ?? row[0];
@@ -165,6 +199,18 @@ export function setActiveTerrain(t: TerrainCell[][] | undefined) {
 /** Surface Y at continuous grid coords, using the cached active terrain. */
 export function surfaceY(gx: number, gz: number): number {
   return groundHeightAt(activeTerrain, gx, gz, true);
+}
+
+/**
+ * Height sampler for a hull at a point: on a deck it is the deck's own plane
+ * (so a vehicle near the railing does not roll towards the river), elsewhere
+ * the ground. Also says whether the point is on a deck.
+ */
+export function hullSurface(gx: number, gz: number): { onDeck: boolean; at: (x: number, z: number) => number } {
+  const deck = activeTerrain ? deckAt(activeTerrain, gx, gz) : null;
+  return deck && activeTerrain
+    ? { onDeck: true, at: (x, z) => deckSurfaceAt(activeTerrain!, deck, x, z) }
+    : { onDeck: false, at: surfaceY };
 }
 
 /** Surface Y from engine world coordinates (pixels), given CELL_SIZE. */

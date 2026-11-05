@@ -11,6 +11,7 @@ import {
 } from './constants';
 import { getTerrainAt, hasLineOfSight, losInfo, isWorldFootprintPassable, findNearestPassableWorld, deckUnder, deckLane, railings, spanAxis, spanCoords, canStep, crossesRailing } from './terrain';
 import { alignBridgeCrossings, findPath } from './pathfinding';
+import { COMMITTED, crossingOf, deckFree, LANE_ZONE, lanesOf, laneSpeedFactor, laneSteer, outOfLane, waitingBay } from './bridgeTraffic';
 import { isVisibleTo } from './awareness';
 import { getUnitGrid, queryNeighbors } from './spatialGrid';
 import { spacingRadius, getSquad, cohesionSpeedFactor, catchUpFactor, ARRIVE_TOLERANCE } from './playerSquads';
@@ -281,13 +282,42 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
 
   const terrain = getTerrainAt(state.terrain, unit.pos.x, unit.pos.y);
 
-  const dx = unit.targetPos.x - unit.pos.x;
-  const dy = unit.targetPos.y - unit.pos.y;
+  // Rule M15: vehicles keep to a bridge's lanes (see bridgeTraffic). On the
+  // deck and lining up for it, a vehicle drives its lane, holds its interval
+  // behind the one ahead and, before a one-lane deck, waits pulled over while
+  // traffic comes the other way.
+  const crossing = veh && !heli ? crossingOf(unit, state) : null;
+  // Driving off the deck a vehicle is past the narrows: it passes the queue
+  // waiting there as on any road, but never backs up onto the deck.
+  const lane = !!crossing && !crossing.leaving && crossing.s > -LANE_ZONE;
+  let steerTo: Position = unit.targetPos, laneFactor = 1;
+  const waitingFor = !!crossing && lane && !crossing.onDeck && crossing.s < COMMITTED && !deckFree(unit, crossing, state);
+  if (!waitingFor) unit.bay = undefined;
+  if (crossing && lane) {
+    if (crossing.dir && (crossing.onDeck || lanesOf(crossing.span) === 2)) steerTo = laneSteer(unit, crossing);
+    if (waitingFor) {
+      const bay = waitingBay(unit, crossing, state);
+      if (bay) {
+        steerTo = bay;
+        laneFactor = Math.max(0, Math.min(1, (distance(unit.pos, bay) - 3) / (CELL_SIZE * .6)));
+      } else laneFactor = Math.max(0, Math.min(1, (-crossing.s - 1.1) / .5));
+    }
+    if (!unit.bay) laneFactor = Math.min(laneFactor, laneSpeedFactor(unit, crossing, state));
+    if (laneFactor < .03) {
+      // Holding the interval, or waiting for the deck: never backing away or squeezing past.
+      unit.vel.x *= .5; unit.vel.y *= .5; unit.waiting = 'traffic';
+      unit.lastProgressTime = state.time; unit.stuckTimer = 0;
+      return;
+    }
+  }
+
+  const dx = steerTo.x - unit.pos.x;
+  const dy = steerTo.y - unit.pos.y;
   const dlen = Math.hypot(dx, dy) || 1;
   const dirX = dx / dlen, dirY = dy / dlen;
 
-  // separation as small positional nudge, weaker close to final dest
-  const sep = separation(unit, state);
+  // separation as small positional nudge, weaker close to final dest (none in a bridge lane)
+  const sep = lane ? { x: 0, y: 0 } : separation(unit, state);
   const finalDist = unit.finalDest ? distance(unit.pos, unit.finalDest) : 999;
   const sepWeight = finalDist < CELL_SIZE * 1.2 ? 0.12 : 0.8;
 
@@ -296,7 +326,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   // backs up instead of turning round on the spot.
   const goal = unit.finalDest ?? unit.targetPos;
   const goalDist = distance(unit.pos, goal);
-  if (veh && !heli) {
+  if (veh && !heli && !lane) {
     const behind = Math.abs(normalizeAngle(travelAngle - unit.facing)) > REVERSE_BEHIND;
     if (!unit.reversing && behind && goalDist < REVERSE_MAX_DIST && unit.path.length <= 1 && unit.waypoints.length === 0) unit.reversing = true;
     else if (unit.reversing && (goalDist >= REVERSE_MAX_DIST * 1.3 || unit.path.length > 1)) unit.reversing = false;
@@ -317,7 +347,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const squad = getSquad(state, unit);
   // Never hold for the group on a bridge or just off its ends: a unit waiting
   // there blocks the deck for everyone behind it (rule M14).
-  const onCrossing = !heli && !!deckUnder(state.terrain, unit.pos.x, unit.pos.y, BRIDGE_CLEARANCE, 4);
+  const onCrossing = lane || (!heli && !!deckUnder(state.terrain, unit.pos.x, unit.pos.y, veh ? BRIDGE_CLEARANCE + 2 : BRIDGE_CLEARANCE, 6));
   const cohesionFactor = squad && !onCrossing ? cohesionSpeedFactor(unit, squad) : 1;
   const attainable = availableSpeed(unit, state);
   const catchUp = squad ? catchUpFactor(unit, squad) : 1;
@@ -349,7 +379,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
       }
     }
   }
-  const speed = pacedSpeed * alignFactor * cohesionFactor * arrivalFactor * convoyFactor * (unit.reversing ? REVERSE_SPEED : 1);
+  const speed = pacedSpeed * alignFactor * cohesionFactor * arrivalFactor * convoyFactor * laneFactor * (unit.reversing ? REVERSE_SPEED : 1);
 
 
   // Infantry can sidestep and should track the route directly. Driving them by
@@ -372,7 +402,8 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   const nextT = getTerrainAt(state.terrain, nextX, nextY);
   const stepOk = heli || canStep(state.terrain, unit.pos.x, unit.pos.y, nextX, nextY, veh);
   const neighbors = heli ? [] : queryNeighbors(getUnitGrid(state), nextX, nextY, 32, unit)
-    .filter(other => other.alive && !other.insideOf && other.team === unit.team && other.type !== 'helicopter' && unit.boardTarget !== other.id);
+    .filter(other => other.alive && !other.insideOf && other.team === unit.team && other.type !== 'helicopter' && unit.boardTarget !== other.id
+      && !(lane && crossing && outOfLane(other, crossing)));
   const trafficAt = (x: number, y: number) => neighbors.some(other => {
     const limit = (spacingRadius(unit) + spacingRadius(other)) * .6;
     const before = distance(unit.pos, other.pos), after = Math.hypot(x - other.pos.x, y - other.pos.y);
@@ -400,7 +431,7 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
   }
   // Rule M13: a vehicle blocked by a parked friendly vehicle drives round it:
   // a short detour point beside the blocker, on the side towards the goal.
-  if (veh && trafficAt(nextX, nextY) && state.time >= (unit.detourAt ?? 0)) {
+  if (veh && !lane && trafficAt(nextX, nextY) && state.time >= (unit.detourAt ?? 0)) {
     const blocker = neighbors.find(o => (o.type === 'tank' || o.type === 'apc') && !o.targetPos && o.team === unit.team &&
       Math.hypot(nextX - o.pos.x, nextY - o.pos.y) < (spacingRadius(unit) + spacingRadius(o)) * .6);
     if (blocker && unit.targetPos) {
@@ -425,8 +456,9 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     // Sidestep / reverse out of a bottleneck while keeping the same route.
     // Vehicles use a slow reverse; infantry may sidestep freely. This is a
     // continuous step, never a teleport or permission to cross another hull.
+    // In a bridge lane a vehicle only waits: there is no room to step aside.
     const step = speed * dt * (veh ? .35 : .7);
-    const offsets = veh ? [Math.PI, .35, -.35] : [Math.PI / 2, -Math.PI / 2, 2.1, -2.1, Math.PI];
+    const offsets = lane ? [] : crossing?.leaving ? [.35, -.35] : veh ? [Math.PI, .35, -.35] : [Math.PI / 2, -Math.PI / 2, 2.1, -2.1, Math.PI];
     for (const offset of offsets) {
       const angle = unit.facing + offset;
       const x = unit.pos.x + Math.cos(angle) * step, y = unit.pos.y + Math.sin(angle) * step;
@@ -475,7 +507,9 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     const perpX = -unit.vel.y, perpY = unit.vel.x;
     const plen = Math.hypot(perpX, perpY) || 1;
     let slid = false;
-    for (const sign of [1, -1]) {
+    // On a deck there is no sliding sideways (nor recovering) off it; lining up on land there is.
+    const onDeck = !!crossing?.onDeck;
+    for (const sign of onDeck ? [] : [1, -1]) {
       const sx = unit.pos.x + (perpX / plen) * speed * dt * sign;
       const sy = unit.pos.y + (perpY / plen) * speed * dt * sign;
       const ok = canStep(state.terrain, unit.pos.x, unit.pos.y, sx, sy, veh);
@@ -492,8 +526,8 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     if (unit.stuckTimer > 0.45) {
       // Recover from terrain changes or an invalid edge before rebuilding.
       const recovered = findNearestPassableWorld(state.terrain, unit.pos.x, unit.pos.y, veh, heli, 4);
-      // Never through a bridge railing: then the unit only plans afresh from where it is.
-      if (heli || !crossesRailing(state.terrain, unit.pos.x, unit.pos.y, recovered.x, recovered.y)) { unit.pos.x = recovered.x; unit.pos.y = recovered.y; }
+      // Never through a bridge railing, nor off a deck: then the unit only plans afresh from where it is.
+      if (heli || (!onDeck && !crossesRailing(state.terrain, unit.pos.x, unit.pos.y, recovered.x, recovered.y))) { unit.pos.x = recovered.x; unit.pos.y = recovered.y; }
       const dest = unit.finalDest ?? unit.targetPos;
       if (dest) setDestination(unit, state, dest, true);
       unit.stuckTimer = 0;

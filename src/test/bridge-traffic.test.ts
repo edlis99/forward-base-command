@@ -3,10 +3,11 @@ import { createInitialState } from '../game/engine';
 import { createUnit, moveUnit } from '../game/units';
 import { leipalingisMission } from '../game/missions';
 import { CELL_SIZE } from '../game/constants';
-import { GameState, UnitType } from '../game/types';
+import { GameState, Unit, UnitType } from '../game/types';
 import { issueSquadMove, updatePlayerSquads } from '../game/playerSquads';
 import { refreshUnitGrid } from '../game/spatialGrid';
 import { generateTerrain, crossesRailing, deckGate, deckLane, deckUnder, railings, spanAxis, spanCoords, walkableAt } from '../game/terrain';
+import { lanesOf } from '../game/bridgeTraffic';
 
 const terrain = generateTerrain('leipalingis_region', 1917);
 const base = createInitialState({ ...leipalingisMission, mapLayout: 'farmhouse_complex', init: () => ({}) });
@@ -100,5 +101,83 @@ describe('troops on bridges', () => {
     expect(state.time).toBeLessThan(120);
     expect(through).toBe(0);
     expect(Math.max(0, ...beside.values())).toBeLessThan(5);
+  }, 60000);
+});
+
+/**
+ * Vehicles started on the road before one end (or each end) of a span and
+ * ordered past the other; per vehicle: distance driven backwards against its
+ * hull, changes of sideways direction on the deck (weaving), largest offset
+ * from the deck's centre line, and where it ends up.
+ */
+function traffic(span: (typeof spans)[number], groups: { types: UnitType[]; from: 'a' | 'b' }[], seconds = 160) {
+  const { ax, ay, ux, uy, L } = spanAxis(span);
+  const units: Unit[] = [];
+  const state: GameState = { ...base, terrain, units, script: {}, time: 0, playerSquads: [], nextMoveGroupId: 1, selectionRoster: [], previewSelected: new Set(), eventLog: [] };
+  const plans = groups.map(g => {
+    const s = g.from === 'a' ? -7 : L + 7, e = g.from === 'a' ? L + 12 : -12, dir = g.from === 'a' ? 1 : -1;
+    const start = { x: (ax + ux * s) * CELL_SIZE, y: (ay + uy * s) * CELL_SIZE };
+    const dest = { x: (ax + ux * e) * CELL_SIZE, y: (ay + uy * e) * CELL_SIZE };
+    const group = g.types.map((t, i) => createUnit(t, 'player', start.x + (i % 2 - .5) * 30 - ux * dir * Math.floor(i / 2) * 36, start.y + (i % 2 - .5) * 30 - uy * dir * Math.floor(i / 2) * 36));
+    units.push(...group);
+    return { group, dest, dir };
+  });
+  plans.forEach(p => issueSquadMove(state, p.group, p.dest, {}));
+  const log = new Map(units.map(u => [u.id, { reversed: 0, weaves: 0, offset: 0, lastSide: 0, across: [] as number[] }]));
+  for (let f = 0; f < seconds / .05 && units.some(u => u.targetPos); f++) {
+    const before = units.map(u => ({ ...u.pos }));
+    state.time += .05; refreshUnitGrid(state); updatePlayerSquads(state, .05);
+    units.forEach(u => moveUnit(u, .05, state));
+    units.forEach((u, i) => {
+      const l = log.get(u.id)!, q = before[i];
+      if (deckUnder(terrain, u.pos.x, u.pos.y, 1.2) !== span) return;
+      const back = -((u.pos.x - q.x) * Math.cos(u.facing) + (u.pos.y - q.y) * Math.sin(u.facing)) / CELL_SIZE;
+      if (back > .002) l.reversed += back;
+      if (deckUnder(terrain, u.pos.x, u.pos.y) !== span) return;
+      const a = spanCoords(span, q.x, q.y).across, b = spanCoords(span, u.pos.x, u.pos.y).across;
+      l.offset = Math.max(l.offset, Math.abs(b));
+      l.across.push(b);
+      if (Math.abs(b - a) > .004) { const side = Math.sign(b - a); if (l.lastSide && side !== l.lastSide) l.weaves++; l.lastSide = side; }
+    });
+  }
+  const arrived = plans.map(p => p.group.filter(u => Math.hypot(u.pos.x - p.dest.x, u.pos.y - p.dest.y) / CELL_SIZE < 4).length);
+  return { time: state.time, arrived, plans, log };
+}
+const spanAt = (x: number, y: number) => spans.find(s => Math.abs(s.a[0] - x) < .5 && Math.abs(s.a[1] - y) < .5)!;
+
+describe('rule M15: vehicles keep to a bridge\'s lanes', () => {
+  it('a column crosses a one-lane bridge in single file: on the centre line, no weaving, never backing up', () => {
+    for (const span of [spanAt(56.2, 110.2), spanAt(103.3, 108.1)]) {
+      expect(lanesOf(span)).toBe(1);
+      const { arrived, log } = traffic(span, [{ types: ['tank', 'tank', 'apc', 'apc'], from: 'a' }]);
+      expect(arrived).toEqual([4]);
+      for (const l of log.values()) {
+        expect(l.reversed).toBeLessThan(.01);
+        expect(l.weaves).toBe(0);
+        expect(l.offset).toBeLessThan(.06);
+      }
+    }
+  }, 60000);
+  it('on a one-lane bridge oncoming vehicles take turns: one side pulls over and waits, everyone crosses', () => {
+    for (const span of [spanAt(56.2, 110.2), spanAt(103.3, 108.1), spanAt(173.6, 117.2)]) {
+      const { arrived, log, time } = traffic(span, [{ types: ['tank', 'apc'], from: 'a' }, { types: ['apc', 'tank'], from: 'b' }]);
+      expect(arrived).toEqual([2, 2]);
+      expect(time).toBeLessThan(150);
+      for (const l of log.values()) { expect(l.reversed).toBeLessThan(.01); expect(l.weaves).toBe(0); }
+    }
+  }, 60000);
+  it('a two-lane road bridge carries both directions at once, each keeping to its right', () => {
+    const span = spanAt(333.6, 114.5);
+    expect(lanesOf(span)).toBe(2);
+    const { arrived, log, time, plans } = traffic(span, [{ types: ['tank', 'apc'], from: 'a' }, { types: ['apc', 'tank'], from: 'b' }]);
+    expect(arrived).toEqual([2, 2]);
+    expect(time).toBeLessThan(80);
+    for (const p of plans) for (const u of p.group) {
+      const l = log.get(u.id)!;
+      expect(l.reversed).toBeLessThan(.01);
+      // Over the middle of the deck: in the lane on its own right of the centre line.
+      const mid = l.across.slice(Math.floor(l.across.length * .3), Math.ceil(l.across.length * .7));
+      for (const a of mid) expect(a * p.dir).toBeGreaterThan(.1);
+    }
   }, 60000);
 });

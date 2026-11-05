@@ -86,6 +86,8 @@ export interface Unit {
   reversing?: boolean;
   /** Seconds spent continuously yielding to friendly traffic. */
   trafficWait?: number;
+  /** Where a vehicle has pulled over to let oncoming traffic off a one-lane bridge (rule M15). */
+  bay?: Position;
   /** Consecutive re-paths that made no progress. */
   noProgressRepaths?: number;
   /** Group-move speed cap so a formation advances at its slowest member's pace. */
