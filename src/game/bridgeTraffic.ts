@@ -36,8 +36,8 @@ const BAY_SIDE = .62, BAY_GAP = 1.05;
 
 const isVehicle = (u: Unit) => u.type === 'tank' || u.type === 'apc';
 
-/** Two lanes where a tank fits each way inside the railings (a deck of 14 m or more), else one. */
-export const lanesOf = (span: BridgeSpan) => (deckLane(span) >= .345 ? 2 : 1);
+/** Two lanes where a vehicle fits each way inside the railings (a deck of about 10 m or more), else one. */
+export const lanesOf = (span: BridgeSpan) => (deckLane(span) >= .33 ? 2 : 1);
 /** Where a vehicle's lane runs, across the deck's centre line (cells): to the right of its travel on two lanes. */
 export const laneAcross = (span: BridgeSpan, dir: number) => (lanesOf(span) === 2 ? .2 * Math.sign(dir) : 0);
 

@@ -369,8 +369,10 @@ export function moveUnit(unit: Unit, dt: number, state: GameState) {
     const deploying = remaining < CONVOY_RELEASE;
     if (!ahead || !ahead.alive || ahead.insideOf || !ahead.targetPos || deploying) { unit.convoyAhead = undefined; unit.convoyGap = undefined; }
     // Keep moving on a crossing, and never wait for a leader that has fallen
-    // behind: on a narrow deck it can only come past once this unit moves on.
-    else if (!onCrossing && (ahead.pos.x - unit.pos.x) * dirX + (ahead.pos.y - unit.pos.y) * dirY > -CELL_SIZE * .25) {
+    // behind (on a narrow deck it can only come past once this unit moves on)
+    // or that is itself held up by traffic (often by this unit, standing on
+    // its way: both would wait for good).
+    else if (!onCrossing && ahead.waiting !== 'traffic' && (ahead.pos.x - unit.pos.x) * dirX + (ahead.pos.y - unit.pos.y) * dirY > -CELL_SIZE * .25) {
       const gap = unit.convoyGap ?? CELL_SIZE * 1.5, d = distance(unit.pos, ahead.pos);
       convoyFactor = Math.max(0, Math.min(1, (d - gap * .6) / (gap * .4)));
       if (convoyFactor < .05) {

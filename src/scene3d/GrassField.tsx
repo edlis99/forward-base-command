@@ -3,7 +3,8 @@ import { useFrame, useLoader, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { TerrainCell } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
-import { fbm, groundHeightAt, hash2 } from './terrainHeight';
+import { fbm, hash2 } from './terrainHeight';
+import { COVER_UV, meshHeight, trampleMap } from './groundCover';
 import { ambienceUniforms } from './ambienceUniforms';
 
 const CARD = `${import.meta.env.BASE_URL}assets/nature/grass/Textures/grass_card.png`;
@@ -21,30 +22,42 @@ const MAX_TUFTS = 52000;
  */
 function tuftsFor(c: TerrainCell | undefined): { count: number; low: number; high: number; dry: number } | null {
   if (!c || c.roadName || c.bridge || c.prop || c.blocksMovement || c.yard === 'courtyard') return null;
-  if (c.type === 'tall_grass') return { count: 150, low: .1, high: .15, dry: .55 };
-  if (c.type === 'open') return c.yard ? { count: 26, low: .055, high: .085, dry: .15 } : { count: 90, low: .065, high: .105, dry: .2 };
+  if (c.type === 'tall_grass') return { count: 90, low: .1, high: .15, dry: .55 };
+  if (c.type === 'open') return c.yard ? { count: 16, low: .055, high: .085, dry: .15 } : { count: 46, low: .065, high: .105, dry: .2 };
   return null;
 }
 
 /**
- * Ground height as the landscape mesh draws it: its vertices every half cell
- * (heights cached per map), blended between them. Much cheaper per tuft than
- * the full height function, and it follows the drawn surface more closely.
+ * The grass card, prepared for small tufts seen from above. Its seed heads are
+ * near white, and a tuft a few pixels tall turned each into a white speck:
+ * they are toned down to pale straw. Its transparent texels are black or
+ * white, which mipmaps bled into the blade edges: they take the grass's own
+ * colour (still transparent).
  */
-const SUB = 2, GW = MAP_COLS * SUB + 1, GH = MAP_ROWS * SUB + 1;
-const vertexHeights = new WeakMap<TerrainCell[][], Float32Array>();
-function meshHeight(terrain: TerrainCell[][], gx: number, gz: number) {
-  let grid = vertexHeights.get(terrain);
-  if (!grid) { grid = new Float32Array(GW * GH).fill(NaN); vertexHeights.set(terrain, grid); }
-  const u = Math.max(0, Math.min(GW - 1.001, gx * SUB)), v = Math.max(0, Math.min(GH - 1.001, gz * SUB));
-  const i = Math.floor(u), j = Math.floor(v), fx = u - i, fz = v - j;
-  const at = (ii: number, jj: number) => {
-    const k = jj * GW + ii;
-    let h = grid![k];
-    if (Number.isNaN(h)) { h = groundHeightAt(terrain, ii / SUB, jj / SUB); grid![k] = h; }
-    return h;
-  };
-  return (at(i, j) * (1 - fx) + at(i + 1, j) * fx) * (1 - fz) + (at(i, j + 1) * (1 - fx) + at(i + 1, j + 1) * fx) * fz;
+function meadowCard(source: THREE.Texture): THREE.Texture {
+  const image = source.image as HTMLImageElement;
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width; canvas.height = image.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return source;
+  ctx.drawImage(image, 0, 0);
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height), px = img.data;
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let i = 0; i < px.length; i += 4) if (px[i + 3] >= 128) { r += px[i]; g += px[i + 1]; b += px[i + 2]; n++; }
+  const avg = n ? [r / n, g / n, b / n] : [110, 120, 64];
+  const straw = [150, 140, 92], cap = 138;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] < 128) { px[i] = avg[0]; px[i + 1] = avg[1]; px[i + 2] = avg[2]; px[i + 3] = 0; continue; }
+    // Only the pale, washed-out seed heads and dry stems: green blades keep their sunlit colour.
+    const m = Math.max(px[i], px[i + 1], px[i + 2]), saturation = (m - Math.min(px[i], px[i + 1], px[i + 2])) / Math.max(m, 1);
+    if (m <= cap || saturation > .32) continue;
+    const k = cap / m, t = Math.min(1, (m - cap) / 80) * .45;
+    for (let c = 0; c < 3; c++) px[i + c] = px[i + c] * k * (1 - t) + straw[c] * t;
+  }
+  ctx.putImageData(img, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 4;
+  return texture;
 }
 
 /** Two crossed upright cards, base at the origin, one unit tall and wide; normals up, so tufts light like the meadow they grow in. */
@@ -78,13 +91,13 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
   const { camera } = useThree();
   const card = useLoader(THREE.TextureLoader, CARD);
   const geometry = useMemo(tuftGeometry, []);
-  const uniforms = useMemo(() => ({ uCentre: { value: new THREE.Vector2() }, uRadius: { value: 10 }, uFade: { value: 0 } }), []);
+  const uniforms = useMemo(() => ({ uCentre: { value: new THREE.Vector2() }, uRadius: { value: 10 }, uFade: { value: 0 },
+    uTrample: { value: trampleMap(terrain).texture }, uCoverUv: { value: COVER_UV } }), [terrain]);
   const material = useMemo(() => {
-    card.colorSpace = THREE.SRGBColorSpace; card.anisotropy = 4;
-    const m = new THREE.MeshLambertMaterial({ map: card, alphaTest: .42, side: THREE.DoubleSide, alphaToCoverage: true });
+    const m = new THREE.MeshLambertMaterial({ map: meadowCard(card), alphaTest: .42, side: THREE.DoubleSide, alphaToCoverage: true });
     m.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, uniforms, { uTime: ambienceUniforms.uTime });
-      shader.vertexShader = 'uniform float uTime;\nuniform vec2 uCentre;\nuniform float uRadius;\nuniform float uFade;\nvarying float vTip;\n'
+      shader.vertexShader = 'uniform float uTime;\nuniform vec2 uCentre;\nuniform float uRadius;\nuniform float uFade;\nuniform sampler2D uTrample;\nuniform vec2 uCoverUv;\nvarying float vTip;\n'
         + shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
           vec3 iPos = vec3(instanceMatrix[3]);
           float fade = uFade * (1.0 - smoothstep(uRadius * 0.7, uRadius, distance(iPos.xz, uCentre)));
@@ -95,17 +108,19 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
           mat3 frame = mat3(instanceMatrix);
           vec3 lean = vec3(0.83, 0.0, 0.56) * sway * 0.28 * length(frame[1]) * position.y * position.y;
           transformed += inverse(frame) * lean;
-          transformed *= fade;`);
+          transformed *= fade;
+          // Driven over or trodden down: the tuft lies nearly flat.
+          transformed.y *= 1.0 - texture2D(uTrample, iPos.xz * uCoverUv).r * 0.85;`);
       shader.fragmentShader = 'varying float vTip;\n' + shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
-          // Shaded at the root, sunlit and a little yellower at the tips.
-          diffuseColor.rgb *= mix(vec3(0.72, 0.74, 0.7), vec3(1.3, 1.3, 1.12), vTip);`)
+          // Shaded at the root, a little lighter at the tips.
+          diffuseColor.rgb *= mix(vec3(0.84, 0.86, 0.8), vec3(1.1, 1.1, 1.0), vTip);`)
         // Both faces of a card are lit as the meadow (normal up): the back face is not turned to the ground.
         .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n          normal = normalize( vNormal );');
     };
-    m.customProgramCacheKey = () => 'meadow-tufts-v3';
+    m.customProgramCacheKey = () => 'meadow-tufts-v7';
     return m;
   }, [card, uniforms]);
-  useEffect(() => () => { material.dispose(); geometry.dispose(); }, [material, geometry]);
+  useEffect(() => () => { material.map?.dispose(); material.dispose(); geometry.dispose(); }, [material, geometry]);
   const mesh = useMemo(() => {
     const im = new THREE.InstancedMesh(geometry, material, MAX_TUFTS);
     im.count = 0; im.frustumCulled = false; im.receiveShadow = true; im.castShadow = false;
@@ -139,7 +154,7 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
         const dry = Math.min(1, kind.dry + (fbm(px * .085 + 7.3, pz * .085 + 7.3) - .45) * .9);
         const bright = .95 + hash2(px * 5.7, pz * 9.1) * .3;
         // Fresh green to straw, a shade lighter than the photographed card so tufts catch the sun like the meadow.
-        colour.setRGB((.9 + dry * .38) * bright, (1.2 + dry * .02) * bright, (.66 + dry * .02) * bright);
+        colour.setRGB((1.17 + dry * .45) * bright, (1.52 + dry * .03) * bright, (.82 + dry * .02) * bright);
         mesh.setColorAt(n, colour);
         n++;
       }

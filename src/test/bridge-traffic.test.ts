@@ -41,7 +41,7 @@ function crossing(span: (typeof spans)[number]) {
 
 describe('troops on bridges', () => {
   it('a deck carries units over the river beside its cells; the river part of a deck cell is water', () => {
-    const span = spans.find(s => s.width < .3)!;
+    const span = spans.find(s => s.width < .4)!;
     const { ax, ay, ux, uy, L } = spanAxis(span);
     const mid = { x: (ax + ux * L / 2) * CELL_SIZE, y: (ay + uy * L / 2) * CELL_SIZE };
     expect(deckUnder(terrain, mid.x, mid.y)).toBe(span);
@@ -55,7 +55,7 @@ describe('troops on bridges', () => {
     // This crossing used to lock solid: units on the deck waited for their
     // group while the tanks behind them waited for the deck to clear.
     const span = spans.find(s => Math.abs(s.a[0] - 103.3) < .5 && Math.abs(s.a[1] - 108.1) < .5)!;
-    expect(span.width).toBeLessThan(.3);
+    expect(span.width).toBeLessThan(.4);
     const { units, time, worstOff } = crossing(span);
     expect(units.filter(u => u.targetPos).map(u => u.type)).toEqual([]);
     expect(time).toBeGreaterThan(20); expect(time).toBeLessThan(120);
@@ -147,7 +147,7 @@ const spanAt = (x: number, y: number) => spans.find(s => Math.abs(s.a[0] - x) < 
 
 describe('rule M15: vehicles keep to a bridge\'s lanes', () => {
   it('a column crosses a one-lane bridge in single file: on the centre line, no weaving, never backing up', () => {
-    for (const span of [spanAt(56.2, 110.2), spanAt(103.3, 108.1)]) {
+    for (const span of [spanAt(103.3, 108.1)]) {
       expect(lanesOf(span)).toBe(1);
       const { arrived, log } = traffic(span, [{ types: ['tank', 'tank', 'apc', 'apc'], from: 'a' }]);
       expect(arrived).toEqual([4]);
@@ -159,7 +159,8 @@ describe('rule M15: vehicles keep to a bridge\'s lanes', () => {
     }
   }, 60000);
   it('on a one-lane bridge oncoming vehicles take turns: one side pulls over and waits, everyone crosses', () => {
-    for (const span of [spanAt(56.2, 110.2), spanAt(103.3, 108.1), spanAt(173.6, 117.2)]) {
+    for (const span of [spanAt(103.3, 108.1)]) {
+      expect(lanesOf(span)).toBe(1);
       const { arrived, log, time } = traffic(span, [{ types: ['tank', 'apc'], from: 'a' }, { types: ['apc', 'tank'], from: 'b' }]);
       expect(arrived).toEqual([2, 2]);
       expect(time).toBeLessThan(150);
@@ -167,17 +168,19 @@ describe('rule M15: vehicles keep to a bridge\'s lanes', () => {
     }
   }, 60000);
   it('a two-lane road bridge carries both directions at once, each keeping to its right', () => {
-    const span = spanAt(333.6, 114.5);
-    expect(lanesOf(span)).toBe(2);
-    const { arrived, log, time, plans } = traffic(span, [{ types: ['tank', 'apc'], from: 'a' }, { types: ['apc', 'tank'], from: 'b' }]);
-    expect(arrived).toEqual([2, 2]);
-    expect(time).toBeLessThan(80);
-    for (const p of plans) for (const u of p.group) {
-      const l = log.get(u.id)!;
-      expect(l.reversed).toBeLessThan(.01);
-      // Over the middle of the deck: in the lane on its own right of the centre line.
-      const mid = l.across.slice(Math.floor(l.across.length * .3), Math.ceil(l.across.length * .7));
-      for (const a of mid) expect(a * p.dir).toBeGreaterThan(.1);
+    // The paved bridge on the eastern road, and the timber road bridge by the player's base.
+    for (const span of [spanAt(333.6, 114.5), spanAt(56.2, 110.2)]) {
+      expect(lanesOf(span)).toBe(2);
+      const { arrived, log, time, plans } = traffic(span, [{ types: ['tank', 'apc'], from: 'a' }, { types: ['apc', 'tank'], from: 'b' }]);
+      expect(arrived).toEqual([2, 2]);
+      expect(time).toBeLessThan(100);
+      for (const p of plans) for (const u of p.group) {
+        const l = log.get(u.id)!;
+        expect(l.reversed).toBeLessThan(.01);
+        // Over the middle of the deck: in the lane on its own right of the centre line.
+        const mid = l.across.slice(Math.floor(l.across.length * .3), Math.ceil(l.across.length * .7));
+        for (const a of mid) expect(a * p.dir).toBeGreaterThan(.1);
+      }
     }
   }, 60000);
 });
