@@ -166,6 +166,18 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
                + GS(gDiff3) * vSplatB.x + GS(gDiff4) * vSplatB.y + GS(gDiff5) * vSplatB.z;
       float wsum = dot(vSplatA, vec3(1.0)) + dot(vSplatB, vec3(1.0));
       tex = wsum > 0.001 ? tex / wsum : GS(gDiff0);
+      // Close up one tile (3.5 cells) is magnified past its texels: blend in a
+      // finer sample of the same ground (a tile every 0.8 cell), so grass and
+      // gravel keep their grain when the camera is zoomed right in.
+      float closeUp = 1.0 - smoothstep(3.0, 9.0, length(vViewPosition));
+      if (closeUp > 0.0) {
+        vec2 uvD = mat2(0.6, 0.8, -0.8, 0.6) * gUv * 4.3 + vec2(0.17, 0.53);
+        vec3 fine = texture2D(gDiff0, uvD).rgb * vec3(0.74, 1.02, 0.60) * vSplatA.x + texture2D(gDiff1, uvD).rgb * vec3(0.92, 1.0, 0.72) * vSplatA.y
+                  + texture2D(gDiff2, uvD).rgb * vec3(0.86, 0.98, 0.78) * vSplatA.z + texture2D(gDiff3, uvD).rgb * vSplatB.x
+                  + texture2D(gDiff4, uvD).rgb * vSplatB.y + texture2D(gDiff5, uvD).rgb * vSplatB.z;
+        fine = wsum > 0.001 ? fine / wsum : texture2D(gDiff0, uvD).rgb;
+        tex = mix(tex, fine, closeUp * 0.45);
+      }
       // Vertex colours keep the old patchiness as a gentle brightness/tint shift.
       float lum = dot(vColor.rgb, vec3(0.333));
       vec3 tint = mix(vec3(1.0), vColor.rgb / max(lum, 0.02), 0.25);
@@ -182,6 +194,6 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
       diffuseColor.rgb *= 1.0 - smoothstep(0.52, 0.74, cloud) * 0.26;
     `);
   };
-  material.customProgramCacheKey = () => `polyhaven-landscape-v4-${roads ? 'r' : 'n'}`;
+  material.customProgramCacheKey = () => `polyhaven-landscape-v5-${roads ? 'r' : 'n'}`;
   return material;
 }
