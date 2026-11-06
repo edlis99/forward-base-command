@@ -13,6 +13,7 @@ import { GrassField } from './GrassField';
 import { GrassShells } from './GrassShells';
 import { TrackMarks } from './TrackMarks';
 import { MAP_SECTIONS, MapSection } from './mapSections';
+import { meshHeight } from './groundCover';
 import { CampaignMap } from '../components/CampaignMap';
 import { cameraView } from './cameraView';
 import { SETTLEMENTS } from '../game/maps/settlements';
@@ -443,12 +444,37 @@ function HedgerowInstances({ terrain, section }: { terrain: TerrainCell[][]; sec
   );
 }
 
+/**
+ * Lay a unit's ring on the ground: every vertex at the height of the ground
+ * (or deck) under it, so no part of the ring sinks into a slope or a bank.
+ * The ring lies in its mesh's XY plane (turned flat), in the unit's group,
+ * which stands at (cx, baseY, cz) turned to the unit's facing.
+ */
+function drapeRing(ring: THREE.Mesh, cx: number, cz: number, baseY: number, facing: number, ground: (x: number, z: number) => number) {
+  const pos = ring.geometry.getAttribute('position') as THREE.BufferAttribute;
+  let flat = ring.userData.flat as Float32Array | undefined;
+  if (!flat) {
+    flat = new Float32Array(pos.count * 2);
+    for (let i = 0; i < pos.count; i++) { flat[i * 2] = pos.getX(i); flat[i * 2 + 1] = pos.getY(i); }
+    ring.userData.flat = flat;
+  }
+  const k = ring.scale.x, c = Math.cos(-facing), sn = Math.sin(-facing);
+  for (let i = 0; i < pos.count; i++) {
+    // In the group: x across, the ring's y is the group's -z; then turned by the facing.
+    const ox = flat[i * 2] * k, oz = -flat[i * 2 + 1] * k;
+    pos.setZ(i, (ground(cx + ox * c + oz * sn, cz - ox * sn + oz * c) - baseY) / k);
+  }
+  pos.needsUpdate = true;
+}
+
 // ---------- Units layer (with selection/preview/hover rings) ----------
 function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRefObject<GameState>; inputRef: React.MutableRefObject<InputState> }) {
   const { camera, size } = useThree();
   const hoverVector = useMemo(() => new THREE.Vector3(), []);
   const groupRef = useRef<THREE.Group>(null);
   const unitRefs = useRef<Map<string, THREE.Group>>(new Map());
+  // Each vehicle's hull (with its contact shadow), which alone pitches and rolls with the ground.
+  const tiltRefs = useRef<Map<string, THREE.Group>>(new Map());
   const selRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const previewRefs = useRef<Map<string, THREE.Mesh>>(new Map());
   const hoverRefs = useRef<Map<string, THREE.Mesh>>(new Map());
@@ -517,8 +543,11 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
           tilt.p += (Math.atan2(front - back, 2 * d) - tilt.p) * kt;
           tilt.r += (-Math.atan2(left - right, 2 * d) - tilt.r) * kt;
           tiltRef.current.set(u.id, tilt);
-          ref.rotation.order = 'YZX';
-          ref.rotation.set(tilt.r, -u.facing, tilt.p);
+          // Only the hull tilts: the rings round it stay on the ground (tilted
+          // with it on a bank, one side sank into the slope out of sight).
+          ref.rotation.set(0, -u.facing, 0);
+          const hull = tiltRefs.current.get(u.id);
+          if (hull) { hull.rotation.order = 'ZXY'; hull.rotation.set(tilt.r, 0, tilt.p); }
         } else ref.rotation.y = -u.facing;
         // Sink into trench when standing in a trench cell — smooth tween in/out (~0.4s).
         const gx = Math.floor(u.pos.x / S);
@@ -556,17 +585,22 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
       }
       // On a bridge the rings ride above the deck's kerbs instead of cutting
       // through them. (Grass never hides them: it is drawn without depth.)
-      const ringLift = hullSurface(u.pos.x / S, u.pos.y / S).onDeck ? DECK_RING_LIFT : 0;
+      const under = hullSurface(u.pos.x / S, u.pos.y / S);
+      const ringLift = under.onDeck ? DECK_RING_LIFT : 0;
+      // The rings lie on the ground as drawn (on a deck, on the deck), so none sinks into a slope or a bank.
+      const ground = under.onDeck ? under.at : (x: number, z: number) => meshHeight(state.terrain, x, z);
+      const lay = (ring: THREE.Mesh) => { if (ref) drapeRing(ring, u.pos.x / S, u.pos.y / S, ref.position.y, u.facing, ground); };
       const sel = selRefs.current.get(u.id);
       if (sel) {
         sel.visible = u.selected && (u.team === 'player' || u.spottedByEnemy);
         sel.scale.set(pulse, pulse, pulse);
         sel.position.y = .022 + ringLift;
+        if (sel.visible) lay(sel);
       }
       const pv = previewRefs.current.get(u.id);
-      if (pv) { pv.visible = state.previewSelected.has(u.id) && !u.selected; pv.position.y = .018 + ringLift; }
+      if (pv) { pv.visible = state.previewSelected.has(u.id) && !u.selected; pv.position.y = .018 + ringLift; if (pv.visible) lay(pv); }
       const hv = hoverRefs.current.get(u.id);
-      if (hv) { hv.visible = hoverId === u.id && !u.selected && !state.previewSelected.has(u.id); hv.position.y = .015 + ringLift; }
+      if (hv) { hv.visible = hoverId === u.id && !u.selected && !state.previewSelected.has(u.id); hv.position.y = .015 + ringLift; if (hv.visible) lay(hv); }
       const sr = suppRefs.current.get(u.id);
       if (sr) {
         const on = u.suppression > 0.35 && (u.team === 'player' || u.spottedByEnemy);
@@ -593,12 +627,15 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
           ref={(el) => { if (el) unitRefs.current.set(u.id, el); else unitRefs.current.delete(u.id); }}
           position={[u.pos.x / S, surfaceY(u.pos.x / S, u.pos.y / S), u.pos.y / S]}
         >
-          <group scale={UNIT_SCALE[u.type]}>
-            <FactionUnitModel faction={factionFor(gameStateRef.current, u.team).id} type={u.type} unit={u}
-              aimAt={aimAt} scale={UNIT_SCALE[u.type]} wrecked={!u.alive} />
+          {/* The hull and its contact shadow pitch and roll with the ground; the rings stay on it. */}
+          <group ref={(el) => { if (el) tiltRefs.current.set(u.id, el); else tiltRefs.current.delete(u.id); }}>
+            <group scale={UNIT_SCALE[u.type]}>
+              <FactionUnitModel faction={factionFor(gameStateRef.current, u.team).id} type={u.type} unit={u}
+                aimAt={aimAt} scale={UNIT_SCALE[u.type]} wrecked={!u.alive} />
+            </group>
+            <mesh geometry={contactShadowGeometry} material={contactShadowMaterials[u.type]} position={[0, .006, 0]} renderOrder={-1}
+              scale={[CONTACT[u.type].length, 1, CONTACT[u.type].width]} raycast={() => null} />
           </group>
-          <mesh geometry={contactShadowGeometry} material={contactShadowMaterials[u.type]} position={[0, .006, 0]} renderOrder={-1}
-            scale={[CONTACT[u.type].length, 1, CONTACT[u.type].width]} raycast={() => null} />
 
           {/* hover ring (under selection/preview) */}
           <mesh
