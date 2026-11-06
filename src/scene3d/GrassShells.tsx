@@ -82,8 +82,8 @@ export function GrassShells({ terrain, highQuality, regional }: { terrain: Terra
           vec2 cuv = position.xz * uCoverUv;
           vec2 grass = texture2D(uMask, cuv).rg;
           float flattened = texture2D(uTrample, cuv).r;
-          vec2 off = abs(position.xz - uCentre);
-          float edge = 1.0 - smoothstep(uRadius * 0.78, uRadius, max(off.x, off.y));
+          // Fades out round the patch's edge (a circle: a square's straight edges showed).
+          float edge = 1.0 - smoothstep(uRadius * 0.6, uRadius, length(position.xz - uCentre));
           float h = mix(uPasture, uMeadow, grass.g) * uFade * edge * (1.0 - flattened * 0.88);
           vLevel = aShell;
           vGround = position;
@@ -112,6 +112,8 @@ export function GrassShells({ terrain, highQuality, regional }: { terrain: Terra
           vec2 gUv = p * gTile, uvB = mat2(0.8, -0.6, 0.6, 0.8) * gUv * 0.37 + 0.31;
           vec3 pasture = (texture2D(gGrass, gUv).rgb * 0.65 + texture2D(gGrass, uvB).rgb * 0.35) * vec3(0.74, 1.02, 0.60);
           vec3 meadow = (texture2D(gField, gUv).rgb * 0.65 + texture2D(gField, uvB).rgb * 0.35) * vec3(0.92, 1.0, 0.72);
+          // As bright on average as the bare ground drawn where the layers fade out
+          // (the edge of the patch, zooming out): no lighter patches or bands there.
           vec3 col = mix(pasture, meadow, grass.g) * 1.15;
           float broad = sNoise(p * 0.085 + 7.3) * 0.6 + sNoise(p * 0.21 + 2.1) * 0.4;
           float damp = sNoise(p * 0.13 + vec2(4.7, 9.1));
@@ -122,9 +124,9 @@ export function GrassShells({ terrain, highQuality, regional }: { terrain: Terra
           shade *= 1.0 + smoothstep(0.35, 1.0, wave) * smoothstep(0.25, 0.75, sNoise(p * 0.05 + vec2(uTime * 0.05, 0.0))) * 0.075;
           // Flattened grass (tracks, trodden paths) shows its paler, bent stalks.
           col *= mix(vec3(1.0), vec3(1.2, 1.12, 0.9), smoothstep(0.15, 0.7, flattened));
-          diffuseColor.rgb = col * shade * mix(0.52 + flattened * 0.3, 1.1, vLevel);`);
+          diffuseColor.rgb = col * shade * mix(0.6 + flattened * 0.25, 1.1, vLevel);`);
     };
-    m.customProgramCacheKey = () => 'grass-shells-v2';
+    m.customProgramCacheKey = () => 'grass-shells-v3';
     return m;
   }, [uniforms]);
   useEffect(() => () => { material.dispose(); blades.dispose(); }, [material, blades]);

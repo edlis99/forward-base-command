@@ -4,7 +4,8 @@ import * as THREE from 'three';
 import type { TerrainCell } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
 import { fbm, hash2 } from './terrainHeight';
-import { COVER_UV, meshHeight, trampleMap } from './groundCover';
+import { COVER_UV, meshHeight, ROAD_CLEARING, roadCell, trampleMap } from './groundCover';
+import { roadEdgeAt } from './roadMaterial';
 import { ambienceUniforms } from './ambienceUniforms';
 
 const CARD = `${import.meta.env.BASE_URL}assets/nature/grass/Textures/grass_card.png`;
@@ -18,45 +19,59 @@ const MAX_TUFTS = 52000;
  * cells (one cell is about 12 m; a soldier stands 0.15): knee-high tufts in
  * pasture, waist-high in the tall meadow grass, a little drawn up so they read
  * from the tactical camera. Roads, yards, buildings, woods, water and bridges
- * get none.
+ * get none; a campaign road's cells grow pasture tufts up to its drawn verge.
  */
 function tuftsFor(c: TerrainCell | undefined): { count: number; low: number; high: number; dry: number } | null {
-  if (!c || c.roadName || c.bridge || c.prop || c.blocksMovement || c.yard === 'courtyard') return null;
+  // (The scenery border round the map is out of bounds, but its fields have tufts like any other.)
+  if (!c || c.bridge || c.prop || c.yard === 'courtyard') return null;
+  // Its verge is pasture; its carriageway and shoulder cells too, beside the drawn road (checked tuft by tuft).
+  if (c.roadName) return c.type === 'open' || roadCell(c) ? PASTURE_TUFTS : null;
   if (c.type === 'tall_grass') return { count: 90, low: .1, high: .15, dry: .55 };
-  if (c.type === 'open') return c.yard ? { count: 16, low: .055, high: .085, dry: .15 } : { count: 46, low: .065, high: .105, dry: .2 };
+  if (c.type === 'open') return c.yard ? { count: 16, low: .055, high: .085, dry: .15 } : PASTURE_TUFTS;
   return null;
 }
+const PASTURE_TUFTS = { count: 46, low: .065, high: .105, dry: .2 };
 
 /**
  * The grass card, prepared for small tufts seen from above. Its seed heads are
  * near white, and a tuft a few pixels tall turned each into a white speck:
- * they are toned down to pale straw. Its transparent texels are black or
- * white, which mipmaps bled into the blade edges: they take the grass's own
- * colour (still transparent).
+ * they are toned down to straw. Its transparent texels take the grass's own
+ * colour (still transparent), so filtering blends nothing pale or dark into
+ * the blades' edges.
  */
 function meadowCard(source: THREE.Texture): THREE.Texture {
   const image = source.image as HTMLImageElement;
+  const w = image.width, h = image.height;
   const canvas = document.createElement('canvas');
-  canvas.width = image.width; canvas.height = image.height;
+  canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return source;
   ctx.drawImage(image, 0, 0);
-  const img = ctx.getImageData(0, 0, canvas.width, canvas.height), px = img.data;
+  const px = ctx.getImageData(0, 0, w, h).data;
   let r = 0, g = 0, b = 0, n = 0;
   for (let i = 0; i < px.length; i += 4) if (px[i + 3] >= 128) { r += px[i]; g += px[i + 1]; b += px[i + 2]; n++; }
   const avg = n ? [r / n, g / n, b / n] : [110, 120, 64];
-  const straw = [150, 140, 92], cap = 138;
-  for (let i = 0; i < px.length; i += 4) {
-    if (px[i + 3] < 128) { px[i] = avg[0]; px[i + 1] = avg[1]; px[i + 2] = avg[2]; px[i + 3] = 0; continue; }
+  const straw = [128, 120, 78], cap = 118;
+  // Raw texels, not a canvas: a canvas keeps no colour where it is fully
+  // transparent, and the browser filled those texels white or black as it
+  // uploaded them, which the mipmaps then blended into every blade's edge
+  // (tufts outlined in white specks, or in black). Rows run bottom up, as
+  // the card's texture coordinates expect.
+  const data = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4, o = ((h - 1 - y) * w + x) * 4;
+    if (px[i + 3] < 128) { data[o] = avg[0]; data[o + 1] = avg[1]; data[o + 2] = avg[2]; data[o + 3] = 0; continue; }
+    data[o] = px[i]; data[o + 1] = px[i + 1]; data[o + 2] = px[i + 2]; data[o + 3] = 255;
     // Only the pale, washed-out seed heads and dry stems: green blades keep their sunlit colour.
     const m = Math.max(px[i], px[i + 1], px[i + 2]), saturation = (m - Math.min(px[i], px[i + 1], px[i + 2])) / Math.max(m, 1);
     if (m <= cap || saturation > .32) continue;
-    const k = cap / m, t = Math.min(1, (m - cap) / 80) * .45;
-    for (let c = 0; c < 3; c++) px[i + c] = px[i + c] * k * (1 - t) + straw[c] * t;
+    const k = cap / m, t = Math.min(1, (m - cap) / 70) * .6;
+    for (let c = 0; c < 3; c++) data[o + c] = px[i + c] * k * (1 - t) + straw[c] * t;
   }
-  ctx.putImageData(img, 0, 0);
-  const texture = new THREE.CanvasTexture(canvas);
+  const texture = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
   texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 4;
+  texture.minFilter = THREE.LinearMipmapLinearFilter; texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true; texture.needsUpdate = true;
   return texture;
 }
 
@@ -117,7 +132,7 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
         // Both faces of a card are lit as the meadow (normal up): the back face is not turned to the ground.
         .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n          normal = normalize( vNormal );');
     };
-    m.customProgramCacheKey = () => 'meadow-tufts-v7';
+    m.customProgramCacheKey = () => 'meadow-tufts-v8';
     return m;
   }, [card, uniforms]);
   useEffect(() => () => { material.map?.dispose(); material.dispose(); geometry.dispose(); }, [material, geometry]);
@@ -139,13 +154,15 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
     const z0 = Math.max(0, Math.floor(cz - r)), z1 = Math.min(MAP_ROWS - 1, Math.ceil(cz + r));
     for (let z = z0; z <= z1 && n < MAX_TUFTS; z++) for (let x = x0; x <= x1 && n < MAX_TUFTS; x++) {
       if (Math.hypot(x + .5 - cx, z + .5 - cz) > r + .8) continue;
-      const kind = tuftsFor(terrain[z]?.[x]);
+      const cell = terrain[z]?.[x], kind = tuftsFor(cell), onRoadCell = !!cell?.roadName;
       if (!kind) continue;
       // Clumpy: some patches thick, some thin.
       const patchiness = .45 + fbm(x * .23 + 5.1, z * .23 + 1.7) * 1.1;
       const count = Math.round(kind.count * density * patchiness);
       for (let k = 0; k < count && n < MAX_TUFTS; k++) {
         const px = x + hash2(x * 7.13 + k * 1.31, z * 3.71 + k * .77), pz = z + hash2(x * 2.27 + k * .93, z * 5.19 + k * 1.57);
+        // Nothing on the drawn road or its shoulder (a tuft is a few metres across).
+        if (onRoadCell && roadEdgeAt(px, pz) > -ROAD_CLEARING - .03) continue;
         const h = kind.low + (kind.high - kind.low) * hash2(px * 11.3, pz * 7.9), w = h * (.9 + .35 * hash2(px * 3.1, pz * 13.7));
         const a = hash2(px * 17.1, pz * 4.3) * Math.PI, c = Math.cos(a), s = Math.sin(a);
         const y = meshHeight(terrain, px, pz) - .004;

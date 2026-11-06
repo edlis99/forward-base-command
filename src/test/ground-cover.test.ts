@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { generateTerrain } from '../game/terrain';
-import { COVER_RES, grassHeightAt, grassMask, grassOf, MEADOW_HEIGHT, PASTURE_HEIGHT, softGround, TrampleMap, trampleMap } from '../scene3d/groundCover';
+import { COVER_RES, grassHeightAt, grassMask, grassOf, MEADOW_HEIGHT, PASTURE_HEIGHT, ROAD_CLEARING, roadCell, softGround, TrampleMap, trampleMap } from '../scene3d/groundCover';
+import { roadEdgeAt } from '../scene3d/roadMaterial';
+import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
 
 const terrain = generateTerrain('leipalingis_region', 1917);
 const cells = terrain.flat();
@@ -15,6 +17,8 @@ describe('grass and the tracks in it', () => {
     expect(grassOf(meadow)).toEqual({ cover: 1, tall: 1 });
     for (const c of [find(c => c.type === 'road'), find(c => c.type === 'forest'), find(c => c.type === 'water'), find(c => !!c.bridge), find(c => c.type === 'urban')])
       expect(grassOf(c).cover).toBe(0);
+    // A field's stone wall, boulder, hay or logs stand in the grass: no bare square under each.
+    expect(grassOf(find(c => !!c.prop && c.type === 'sandbag'))).toEqual({ cover: 1, tall: .12 });
     // The map-wide texture follows the cells (four texels a cell).
     const mask = grassMask(terrain), data = mask.image.data as Uint8Array, width = mask.image.width;
     const texel = (c: (typeof cells)[number]) => (Math.floor(c.y / 32) * COVER_RES + 2) * width + Math.floor(c.x / 32) * COVER_RES + 2;
@@ -54,8 +58,13 @@ describe('grass and the tracks in it', () => {
     expect(grassHeightAt(terrain, gx, gz)).toBeCloseTo(MEADOW_HEIGHT, 3);
     trampleMap(terrain).stroke(gx - .5, gz, gx + .5, gz, .2, 1);
     expect(grassHeightAt(terrain, gx, gz)).toBeLessThan(MEADOW_HEIGHT * .2);
-    const road = find(c => c.type === 'road');
-    expect(grassHeightAt(terrain, road.x / 32 + .5, road.y / 32 + .5)).toBe(0);
+    // On a road, none; on its cells beside the drawn road and its shoulder, the pasture round it.
+    const road = LEIPALINGIS_ROADS.find(r => r.paved && r.points.length > 1 && r.points[0][0] > 20 && r.points[0][1] > 20)!;
+    const [ax, az] = road.points[0], [bx, bz] = road.points[1];
+    expect(grassHeightAt(terrain, (ax + bx) / 2, (az + bz) / 2)).toBe(0);
+    const verge = find(c => roadCell(c) && roadEdgeAt(c.x / 32 + .5, c.y / 32 + .5) < -ROAD_CLEARING - .05);
+    expect(roadCell(verge)).toBe(true);
+    expect(grassHeightAt(terrain, verge.x / 32 + .5, verge.y / 32 + .5)).toBeCloseTo(PASTURE_HEIGHT + (MEADOW_HEIGHT - PASTURE_HEIGHT) * .12, 3);
     expect(PASTURE_HEIGHT).toBeLessThan(MEADOW_HEIGHT);
   });
 });

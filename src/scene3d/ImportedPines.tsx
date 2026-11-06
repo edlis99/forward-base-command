@@ -56,13 +56,12 @@ function prepared(source: THREE.Group) {
   normalized.set(source, result);
   return result;
 }
-function PinePart({ trees, geometry, material, width, height, foliage }: {
+function PinePart({ trees, geometry, material, width, height }: {
   trees: TreePlacement[];
   geometry: THREE.BufferGeometry;
   material: THREE.MeshStandardMaterial;
   width: number;
   height: number;
-  foliage: boolean;
 }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   useLayoutEffect(() => {
@@ -82,8 +81,9 @@ function PinePart({ trees, geometry, material, width, height, foliage }: {
     if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
     ref.current.computeBoundingSphere();
   }, [trees, width, height]);
+  // Needles cast shadows too, cut out sprig by sprig (these pines are only used on High graphics).
   return <instancedMesh ref={ref} args={[geometry, material, trees.length]}
-    castShadow={!foliage} receiveShadow={false} frustumCulled raycast={() => null} dispose={null} />;
+    castShadow receiveShadow={false} frustumCulled raycast={() => null} dispose={null} />;
 }
 function LoadedPines({ trees, materials }: {
   trees: TreePlacement[];
@@ -96,7 +96,7 @@ function LoadedPines({ trees, materials }: {
     {model.meshes.map(({ geometry, foliage }, i) =>
       <PinePart key={i} trees={trees} geometry={geometry}
         material={foliage ? materials.foliage : materials.wood}
-        width={model.width} height={model.height} foliage={foliage} />)}
+        width={model.width} height={model.height} />)}
   </group>;
 }
 class PineBoundary extends React.Component<{ children: React.ReactNode; fallback: React.ReactNode }, { broken: boolean }> {
