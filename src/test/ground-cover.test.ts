@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { generateTerrain } from '../game/terrain';
-import { COVER_RES, grassMask, grassOf, softGround, TrampleMap } from '../scene3d/groundCover';
+import { COVER_RES, grassMask, grassOf, meshHeight, softGround, TrampleMap } from '../scene3d/groundCover';
+import { buildGroundGeometry } from '../scene3d/groundGeometry';
+import { MAP_SECTIONS } from '../scene3d/mapSections';
 
 const terrain = generateTerrain('leipalingis_region', 1917);
 const cells = terrain.flat();
@@ -23,6 +26,19 @@ describe('grass and the tracks in it', () => {
     expect(data[texel(meadow) * 2]).toBeGreaterThan(200);
     expect(data[texel(meadow) * 2 + 1]).toBeGreaterThan(200);
     expect(data[texel(find(c => c.type === 'water' && !c.bridge)) * 2]).toBe(0);
+  });
+  it('knows the ground exactly as it is drawn, triangle by triangle (rings, grass and tracks sit on it)', () => {
+    // A steep river bank by the start, where the corners' blend was 0.04 cell under the drawn ground.
+    const section = MAP_SECTIONS.find(s => s.x <= 28 && 28 < s.x + s.width && s.y <= 110 && 110 < s.y + s.height)!;
+    const mesh = new THREE.Mesh(buildGroundGeometry(terrain, section, true), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+    const ray = new THREE.Raycaster();
+    let worst = 0;
+    for (let k = 0; k < 100; k++) {
+      const x = 27.013 + (k % 10) * .2, z = 109.507 + Math.floor(k / 10) * .2;
+      ray.set(new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0));
+      worst = Math.max(worst, Math.abs(ray.intersectObject(mesh)[0].point.y - meshHeight(terrain, x, z)));
+    }
+    expect(worst).toBeLessThan(1e-5);
   });
   it('takes tracks on soft ground only: not on a road or a bridge deck', () => {
     expect(softGround(find(c => c.type === 'tall_grass'))).toBe(true);

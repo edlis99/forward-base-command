@@ -14,8 +14,11 @@ import { drivewaysIn, roadHalfWidth } from './roadMaterial';
 
 /**
  * Ground height as the landscape mesh draws it: its vertices every half cell
- * (heights cached per map), blended between them. Much cheaper than the full
- * height function, and it follows the drawn surface more closely.
+ * (heights cached per map) and the very triangles between them (each quad
+ * split along the diagonal buildGroundGeometry uses, alternating). Blending
+ * the four corners instead put things up to 0.04 cell under the drawn ground
+ * on steep banks, where they vanished (a ring's side, grass, track marks).
+ * Much cheaper than the full height function.
  */
 const SUB = 2, GW = MAP_COLS * SUB + 1, GH = MAP_ROWS * SUB + 1;
 const vertexHeights = new WeakMap<TerrainCell[][], Float32Array>();
@@ -30,7 +33,10 @@ export function meshHeight(terrain: TerrainCell[][], gx: number, gz: number) {
     if (Number.isNaN(h)) { h = groundHeightAt(terrain, ii / SUB, jj / SUB); grid![k] = h; }
     return h;
   };
-  return (at(i, j) * (1 - fx) + at(i + 1, j) * fx) * (1 - fz) + (at(i, j + 1) * (1 - fx) + at(i + 1, j + 1) * fx) * fz;
+  const a = at(i, j), b = at(i + 1, j), c = at(i, j + 1), d = at(i + 1, j + 1);
+  // Even quads are split from (i + 1, j) to (i, j + 1), odd ones from (i, j) to (i + 1, j + 1).
+  if ((i + j) % 2 === 0) return fx + fz <= 1 ? a + (b - a) * fx + (c - a) * fz : d + (c - d) * (1 - fx) + (b - d) * (1 - fz);
+  return fx >= fz ? a + (b - a) * fx + (d - b) * fz : a + (d - c) * fx + (c - a) * fz;
 }
 
 /**
