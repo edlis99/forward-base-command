@@ -1,12 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
 import { MAP_SECTIONS } from '../scene3d/mapSections';
-import { createRoadData, roadEdgeAt, roadHalfWidth, ROAD_GUTTER } from '../scene3d/roadMaterial';
+import { createRoadData, roadEdgeAt, roadHalfWidth, roadKind, ROAD_GUTTER } from '../scene3d/roadMaterial';
 import { roadRank, trafficPlan, type SignPost } from '../scene3d/roadRules';
 
 const plan = trafficPlan();
 const near = (a: { x: number; y: number }, b: { x: number; y: number }, r: number) => Math.hypot(a.x - b.x, a.y - b.y) < r;
 const has = (post: SignPost, type: string) => post.plates.some(p => p.type === type);
+
+/** The centre line's dash value baked at a point (1: no line there, 0: continuous). */
+const baked = new Map<(typeof MAP_SECTIONS)[number], { data: Uint8Array; width: number }>();
+function dashAtPoint(x: number, y: number) {
+  const section = MAP_SECTIONS.find(s => x >= s.x && x < s.x + s.width && y >= s.y && y < s.y + s.height)!;
+  if (!baked.has(section)) baked.set(section, createRoadData(section).image as { data: Uint8Array; width: number });
+  const { data, width } = baked.get(section)!, res = width / (section.width + ROAD_GUTTER * 2);
+  return data[(Math.floor((y - section.y + ROAD_GUTTER) * res) * width + Math.floor((x - section.x + ROAD_GUTTER) * res)) * 4 + 3] / 255;
+}
+
+/** The point `s` cells along a path. */
+function pointAlong(path: [number, number][], s: number) {
+  for (let i = 1; i < path.length; i++) {
+    const [ax, ay] = path[i - 1], [bx, by] = path[i], l = Math.hypot(bx - ax, by - ay);
+    if (s <= l || i === path.length - 1) return { x: ax + (bx - ax) * Math.min(1, s / (l || 1)), y: ay + (by - ay) * Math.min(1, s / (l || 1)) };
+    s -= l;
+  }
+  return { x: path[0][0], y: path[0][1] };
+}
 
 /** The nearest point on any road's centre line. */
 function nearestCentre(x: number, y: number) {
@@ -123,5 +142,22 @@ describe('roads by the Lithuanian traffic rules', () => {
     }
     expect(samples.length).toBeGreaterThan(2);
     expect(Math.max(...samples)).toBeLessThan(.05);
+  });
+
+  it('ends the centre line at the stop line (none runs on into the junction) and paints none over crossings', () => {
+    const j = plan.junctions.find(k => k.control === 'signals')!;
+    let checked = 0;
+    for (const leg of j.legs.filter(l => roadKind(l.road) === 4)) {
+      // This approach's stop line, and how far out along the leg it lies.
+      const line = plan.markings.filter(m => m.type === 'stop-line' && near(m, j, 2.2))
+        .sort((a, b) => ((b.x - j.x) * leg.dir[0] + (b.y - j.y) * leg.dir[1]) - ((a.x - j.x) * leg.dir[0] + (a.y - j.y) * leg.dir[1]))[0];
+      const at = (line.x - j.x) * leg.dir[0] + (line.y - j.y) * leg.dir[1];
+      // Over the crossing and up to the stop line: no line. Behind it: continuous.
+      for (let s = .5; s < at - .06; s += .05) { const p = pointAlong(leg.path, s); expect(dashAtPoint(p.x, p.y)).toBe(1); }
+      for (let s = at + .1; s < at + .5; s += .05) { const p = pointAlong(leg.path, s); expect(dashAtPoint(p.x, p.y)).toBeLessThan(.05); }
+      checked++;
+    }
+    expect(checked).toBeGreaterThanOrEqual(2);
+    for (const c of plan.markings.filter(m => m.type === 'zebra' || m.type === 'signal-crossing')) expect(dashAtPoint(c.x, c.y)).toBe(1);
   });
 });

@@ -51,6 +51,11 @@ export interface TrafficPlan {
   junctions: Junction[]; posts: SignPost[]; markings: Marking[]; signals: SignalHead[]; roundabouts: Roundabout[];
   /** Where marked roads' centre lines run continuous (before junctions and crossings). */
   solidLines: { x: number; y: number; r: number }[];
+  /**
+   * Where they stop: at stop and give-way lines (none runs on into the junction) and over
+   * crossings. Rectangles: centre, the road's direction, half their size along and across it.
+   */
+  lineGaps: { x: number; y: number; angle: number; along: number; across: number }[];
 }
 
 /** A road's standing at a junction: the main road is the one ranked highest. */
@@ -186,7 +191,7 @@ const onBridge = (p: Pt) => ROAD_CROSSINGS.some(c => distToPath(p, c.path as Pt[
 export function planTraffic(roads: MapRoad[] = LEIPALINGIS_ROADS): TrafficPlan {
   const junctions = findJunctions(roads);
   const posts: SignPost[] = [], markings: Marking[] = [], signals: SignalHead[] = [], roundabouts: Roundabout[] = [];
-  const solidLines: TrafficPlan['solidLines'] = [];
+  const solidLines: TrafficPlan['solidLines'] = [], lineGaps: TrafficPlan['lineGaps'] = [];
   const signals0 = centreJunction(junctions, 'leipalingis'), ring0 = centreJunction(junctions, 'seirijai');
   if (signals0) signals0.control = 'signals';
   if (ring0) ring0.control = 'roundabout';
@@ -211,12 +216,17 @@ export function planTraffic(roads: MapRoad[] = LEIPALINGIS_ROADS): TrafficPlan {
     const { p, dir } = along(leg.path, s), inbound: Pt = [-dir[0], -dir[1]], r = rightOf(inbound);
     const twoLanes = roadKind(leg.road) === 4, w = twoLanes ? leg.hw : leg.hw * 2, o = twoLanes ? leg.hw / 2 : 0;
     markings.push({ type, x: p[0] + r[0] * o, y: p[1] + r[1] * o, angle: Math.atan2(dir[1], dir[0]), along: length, across: w - .02 });
+    // The centre line ends at it: from here to the junction there is none.
+    const from = leg.path[0], chord = sub(p, from);
+    lineGaps.push({ x: (from[0] + p[0]) / 2, y: (from[1] + p[1]) / 2, angle: Math.atan2(chord[1], chord[0]), along: len(chord) / 2, across: leg.hw + .05 });
   };
   /** A crossing over a leg, its signs on both sides facing both ways. */
   const crossingOn = (leg: Leg, s: number, signalled: boolean) => {
     const { p, dir } = along(leg.path, s);
     markings.push({ type: signalled ? 'signal-crossing' : 'zebra', x: p[0], y: p[1], angle: Math.atan2(dir[1], dir[0]), along: CROSSING_LENGTH, across: leg.hw * 2 - .02 });
     solidLines.push({ x: p[0], y: p[1], r: 1.6 });
+    // Continuous up to the crossing on either side, and not painted over it.
+    lineGaps.push({ x: p[0], y: p[1], angle: Math.atan2(dir[1], dir[0]), along: CROSSING_LENGTH / 2 + .04, across: leg.hw + .05 });
     for (const sign of [1, -1]) {
       // For drivers coming in (towards the junction) and going out: each sees one on their right,
       // by the crossing (a little before it where another road runs close by).
@@ -343,7 +353,7 @@ export function planTraffic(roads: MapRoad[] = LEIPALINGIS_ROADS): TrafficPlan {
       }
     }
   }
-  return { junctions, posts, markings, signals, roundabouts, solidLines };
+  return { junctions, posts, markings, signals, roundabouts, solidLines, lineGaps };
 }
 
 let campaignPlan: TrafficPlan | null = null;

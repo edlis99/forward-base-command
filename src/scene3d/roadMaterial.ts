@@ -242,9 +242,13 @@ export function createRoadData(section: MapSection, terrain?: TerrainCell[][]): 
   });
   // No centre line where another road joins or crosses (its own pieces running on do not count).
   for (const line of lines) visit(line, (i, e, _d, _side, _k, _t, ux, uz) => {
-    // (Nor any lane wear: across the overlap its place across the road jumps from one road to the other,
-    // which drew the wheel paths and cracks as streaks; near the edge there are none.)
-    if (e > -.04 && owner[i] !== line.id && Math.abs(dirX[i] * ux + dirZ[i] * uz) < .85) { dash[i] = 1; across[i] = across[i] < 0 ? -.92 : .92; junction[i] = 1; }
+    // (Nor any ruts in gravel and tracks: across the overlap the place across the road jumps from one
+    // road to the other, which drew them as streaks; near the edge there are none. Marked roads keep
+    // theirs, so their centre lines end straight; the overlap mask fades their wear out instead.)
+    if (e > -.04 && owner[i] !== line.id && Math.abs(dirX[i] * ux + dirZ[i] * uz) < .85) {
+      dash[i] = 1; junction[i] = 1;
+      if (kind[i] < 4) across[i] = across[i] < 0 ? -.92 : .92;
+    }
     if (e > second[i] && edgeLine[i] !== line.id && Math.abs(edgeDX[i] * ux + edgeDZ[i] * uz) < .85) second[i] = e;
   });
   // Junction corners rounded (a smooth union of the roads meeting there, about 4 m in radius):
@@ -262,6 +266,17 @@ export function createRoadData(section: MapSection, terrain?: TerrainCell[][]): 
     for (let tz = tz0; tz <= tz1; tz++) for (let tx = tx0; tx <= tx1; tx++) {
       const i = tz * W + tx;
       if (kind[i] === 4 && dash[i] < .999 && Math.hypot(ox + (tx + .5) / ROAD_RES - zone.x, oz + (tz + .5) / ROAD_RES - zone.y) < zone.r) dash[i] = 0;
+    }
+  }
+  // It stops at stop and give-way lines, and is not painted over crossings.
+  for (const gap of trafficPlan().lineGaps) {
+    const reach = Math.hypot(gap.along, gap.across), c = Math.cos(gap.angle), sn = Math.sin(gap.angle);
+    if (gap.x + reach < ox || gap.x - reach > x1 || gap.y + reach < oz || gap.y - reach > z1) continue;
+    const tx0 = Math.max(0, Math.floor((gap.x - reach - ox) * ROAD_RES)), tx1 = Math.min(W - 1, Math.ceil((gap.x + reach - ox) * ROAD_RES));
+    const tz0 = Math.max(0, Math.floor((gap.y - reach - oz) * ROAD_RES)), tz1 = Math.min(H - 1, Math.ceil((gap.y + reach - oz) * ROAD_RES));
+    for (let tz = tz0; tz <= tz1; tz++) for (let tx = tx0; tx <= tx1; tx++) {
+      const dx = ox + (tx + .5) / ROAD_RES - gap.x, dz = oz + (tz + .5) / ROAD_RES - gap.y;
+      if (Math.abs(dx * c + dz * sn) < gap.along && Math.abs(dz * c - dx * sn) < gap.across) dash[tz * W + tx] = 1;
     }
   }
   // The overlap, blurred over a few metres so wear fades out smoothly into it (a sharp
@@ -480,7 +495,7 @@ const ROAD_SURFACE_GLSL = `
         vec3 asphalt = vec3(0.118, 0.12, 0.117) * mix(0.82, 1.12, age) * mix(1.0, aL, 0.55);
         // Wheels polish two paths in each lane; oil drips darken the middle of it. Fading out
         // where roads overlap or go round: there is no one lane there.
-        float lanes = 1.0 - texture2D(roadOverlap, campaignUv).r;
+        float lanes = 1.0 - smoothstep(0.0, 0.2, texture2D(roadOverlap, campaignUv).r);
         float wheels = mix(rGauss((a - 0.45) / 0.15), rGauss((a - 0.29) / 0.09) + rGauss((a - 0.71) / 0.09), marked) * lanes;
         asphalt *= 1.0 + wheels * 0.11;
         float oil = mix(rGauss(a / 0.12), rGauss((a - 0.5) / 0.07), marked) * (0.5 + 0.5 * n1) * lanes;
@@ -489,7 +504,7 @@ const ROAD_SURFACE_GLSL = `
         // stretches, and across the road here and there (placed by the centre
         // line's rhythm along the road, so they run straight across it).
         float crackW = 0.006 + rPx * 0.35;
-        float edgeOff = abs(fromCentre) - hw + 0.06 + (cNoise(rw * 2.3) - 0.5) * 0.05;
+        float edgeOff = 0.06 - rE + (cNoise(rw * 2.3) - 0.5) * 0.05;
         float longC = (1.0 - smoothstep(crackW * 0.5, crackW, abs(edgeOff))) * smoothstep(0.55, 0.7, cNoise(rw * 0.35 + 5.0));
         float jointC = (1.0 - smoothstep(crackW * 0.5, crackW, abs(fromCentre + (cNoise(rw * 1.7 + 2.0) - 0.5) * 0.06)))
           * smoothstep(0.6, 0.75, cNoise(rw * 0.3 + 8.0)) * marked;
