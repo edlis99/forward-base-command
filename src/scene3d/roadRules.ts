@@ -117,8 +117,54 @@ function distToPath(p: Pt, path: Pt[]) {
 /** Whether a point is on, or right at the edge of, any road's carriageway. */
 const onAnyRoad = (p: Pt) => roadEdgeAt(p[0], p[1], 1.5) > -.06;
 
+/**
+ * The roads with a vertex added wherever another road ends part-way along one of their
+ * segments: the map data does not always share a vertex there, and those junctions were missed.
+ */
+function withTees(roads: MapRoad[]): MapRoad[] {
+  const key = (q: number[]) => `${Math.round(q[0] * 10)},${Math.round(q[1] * 10)}`;
+  const vertices = new Map<string, number>();
+  for (const road of roads) for (const q of road.points) vertices.set(key(q), (vertices.get(key(q)) ?? 0) + 1);
+  const boxes = roads.map(r => {
+    const xs = r.points.map(q => q[0]), ys = r.points.map(q => q[1]);
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  });
+  const added = new Map<MapRoad, { seg: number; t: number; p: [number, number] }[]>();
+  for (const road of roads) for (const atStart of [true, false]) {
+    const pts = road.points, end = atStart ? pts[0] : pts[pts.length - 1], prev = atStart ? pts[1] : pts[pts.length - 2];
+    if (!prev || (vertices.get(key(end)) ?? 0) > 1) continue;
+    const own = unit(sub(end as Pt, prev as Pt));
+    let best: { road: MapRoad; seg: number; t: number; d: number } | null = null;
+    for (let n = 0; n < roads.length; n++) {
+      const other = roads[n], [x0, y0, x1, y1] = boxes[n];
+      if (other === road || end[0] < x0 - .1 || end[0] > x1 + .1 || end[1] < y0 - .1 || end[1] > y1 + .1) continue;
+      for (let i = 1; i < other.points.length; i++) {
+        const a = other.points[i - 1], b = other.points[i], v = sub(b as Pt, a as Pt), l2 = dot(v, v);
+        if (l2 < 1e-8) continue;
+        const t = dot(sub(end as Pt, a as Pt), v) / l2;
+        if (t <= 0 || t >= 1) continue;
+        const d = len(sub(end as Pt, [a[0] + v[0] * t, a[1] + v[1] * t]));
+        // Joining it, not running on alongside it (overlapping pieces of one road).
+        if (d < .06 && Math.abs(dot(own, unit(v))) < .95 && (!best || d < best.d)) best = { road: other, seg: i, t, d };
+      }
+    }
+    if (best) added.set(best.road, [...(added.get(best.road) ?? []), { seg: best.seg, t: best.t, p: [end[0], end[1]] }]);
+  }
+  return roads.map(road => {
+    const list = added.get(road);
+    if (!list) return road;
+    const points: MapRoad['points'] = [];
+    road.points.forEach((q, i) => {
+      for (const v of list.filter(x => x.seg === i).sort((a, b) => a.t - b.t)) points.push(v.p);
+      points.push(q);
+    });
+    return { ...road, points };
+  });
+}
+
 /** Junctions: points where two or more roads share a vertex and at least three legs meet. */
-function findJunctions(roads: MapRoad[]): Junction[] {
+function findJunctions(mapRoads: MapRoad[]): Junction[] {
+  const roads = withTees(mapRoads);
   const at = new Map<string, { p: Pt; road: MapRoad; i: number }[]>();
   for (const road of roads) road.points.forEach((q, i) => {
     const k = `${Math.round(q[0] * 10)},${Math.round(q[1] * 10)}`;
@@ -195,6 +241,17 @@ export function planTraffic(roads: MapRoad[] = LEIPALINGIS_ROADS): TrafficPlan {
   const signals0 = centreJunction(junctions, 'leipalingis'), ring0 = centreJunction(junctions, 'seirijai');
   if (signals0) signals0.control = 'signals';
   if (ring0) ring0.control = 'roundabout';
+  // A side street joining one of the lit junction's roads right by it comes under the lights too:
+  // its own approach, stop line and light where it joins (that junction gets no signs of its own).
+  if (signals0) for (const k of junctions.filter(o => o !== signals0 && Math.hypot(o.x - signals0.x, o.y - signals0.y) < 1.8)) {
+    const toward = unit([signals0.x - k.x, signals0.y - k.y]), back = k.legs.find(l => dot(l.dir, toward) > .8);
+    if (!back) continue;
+    for (const leg of k.legs) {
+      if (leg === back || leg.road.class === back.road.class && dot(leg.dir, back.dir) < -.7) continue;
+      signals0.legs.push(leg);
+    }
+    k.control = 'equal';
+  }
 
   /**
    * A post on the right of an approach leg, `s` cells out from the junction,
@@ -202,11 +259,15 @@ export function planTraffic(roads: MapRoad[] = LEIPALINGIS_ROADS): TrafficPlan {
    * close together it moves a little further out) nor on a bridge deck.
    */
   const postOn = (leg: Leg, s: number, plates: SignPost['plates']) => {
+    const warning = plates.length === 1 && plates[0].type.startsWith('warn-');
     for (const extra of [0, .25, .5, .8]) {
       if (s + extra > pathLength(leg.path) - .05) return;
       const { p, dir } = along(leg.path, s + extra), inbound: Pt = [-dir[0], -dir[1]], r = rightOf(inbound), off = leg.hw + VERGE;
       const at: Pt = [p[0] + r[0] * off, p[1] + r[1] * off];
       if (onAnyRoad(at) || onBridge(at)) continue;
+      // One warning covers junctions in quick succession: none where the same one already stands just ahead.
+      const facing = Math.atan2(dir[1], dir[0]);
+      if (warning && posts.some(q => q.plates[0].type === plates[0].type && Math.cos(q.facing - facing) > .8 && Math.hypot(q.x - at[0], q.y - at[1]) < 3)) return;
       posts.push({ x: at[0], y: at[1], facing: Math.atan2(dir[1], dir[0]), plates });
       return;
     }
@@ -239,8 +300,11 @@ export function planTraffic(roads: MapRoad[] = LEIPALINGIS_ROADS): TrafficPlan {
       }
     }
   };
-  /** How far from a junction's centre its other roads' edges reach along a leg. */
-  const mouth = (j: Junction, leg: Leg) => Math.max(...j.legs.filter(l => l !== leg).map(l => l.hw)) + .1;
+  /** How far from a junction's centre its other roads' edges reach along a leg (past a side street joining it a little way out). */
+  const mouth = (j: Junction, leg: Leg) => Math.max(...j.legs.filter(l => l !== leg).map(l => {
+    const off = Math.hypot(l.path[0][0] - j.x, l.path[0][1] - j.y);
+    return (off > .05 && distToPath(l.path[0], leg.path) < .05 ? off : 0) + l.hw + .1;
+  }));
 
   for (const j of junctions) {
     const inTown = !!j.settlement && j.settlement.size !== 'hamlet';
@@ -280,8 +344,9 @@ export function planTraffic(roads: MapRoad[] = LEIPALINGIS_ROADS): TrafficPlan {
     if (roadKind(j.main[0].road) === 4) solidLines.push({ x: j.x, y: j.y, r: 2.2 });
     for (const leg of j.main) {
       postOn(leg, mouth(j, leg) + .55, [{ type: 'main-road' }]);
-      // Warned of the side road ahead where the main road is paved and the side road is too.
-      if (roadKind(leg.road) >= 3 && minors.some(m => roadKind(m.road) >= 2)) postOn(leg, inTown ? WARN_IN_TOWN : WARN_OUTSIDE, [{ type: 'warn-junction' }]);
+      // Warned of the side road ahead where the main road is paved and the side road is too: out of
+      // town (in towns 201 marks the main road, and a warning at every side street is clutter).
+      if (!inTown && roadKind(leg.road) >= 3 && minors.some(m => roadKind(m.road) >= 2)) postOn(leg, WARN_OUTSIDE, [{ type: 'warn-junction' }]);
     }
     for (const leg of minors) {
       // STOP where a side road joins a main state road out in the country; elsewhere give way.

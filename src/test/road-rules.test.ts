@@ -27,15 +27,31 @@ function pointAlong(path: [number, number][], s: number) {
   return { x: path[0][0], y: path[0][1] };
 }
 
-/** The nearest point on any road's centre line. */
-function nearestCentre(x: number, y: number) {
-  let best = { d: Infinity, x: 0, y: 0 };
-  for (const road of LEIPALINGIS_ROADS) for (let i = 1; i < road.points.length; i++) {
-    const [ax, ay] = road.points[i - 1], [bx, by] = road.points[i], vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy || 1;
-    const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / l2)), qx = ax + vx * t, qy = ay + vy * t, d = Math.hypot(x - qx, y - qy);
-    if (d < best.d) best = { d, x: qx, y: qy };
+/** How far along a path the point nearest (x, y) lies, and how far off the path that is. */
+function alongPath(path: [number, number][], x: number, y: number) {
+  let best = { s: 0, off: Infinity }, run = 0;
+  for (let i = 1; i < path.length; i++) {
+    const [ax, ay] = path[i - 1], [bx, by] = path[i], vx = bx - ax, vy = by - ay, l = Math.hypot(vx, vy) || 1e-9;
+    const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / (l * l))), off = Math.hypot(ax + vx * t - x, ay + vy * t - y);
+    if (off < best.off) best = { s: run + t * l, off };
+    run += l;
   }
   return best;
+}
+
+/** The nearest point on any road's centre line, and how far the nearest other road's is. */
+function nearestCentre(x: number, y: number) {
+  let best = { d: Infinity, x: 0, y: 0, road: -1 }, other = Infinity;
+  LEIPALINGIS_ROADS.forEach((road, n) => {
+    let d0 = Infinity, q0 = [0, 0];
+    for (let i = 1; i < road.points.length; i++) {
+      const [ax, ay] = road.points[i - 1], [bx, by] = road.points[i], vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy || 1;
+      const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / l2)), qx = ax + vx * t, qy = ay + vy * t, d = Math.hypot(x - qx, y - qy);
+      if (d < d0) { d0 = d; q0 = [qx, qy]; }
+    }
+    if (d0 < best.d) { other = best.d; best = { d: d0, x: q0[0], y: q0[1], road: n }; } else other = Math.min(other, d0);
+  });
+  return { ...best, other };
 }
 
 describe('roads by the Lithuanian traffic rules', () => {
@@ -46,8 +62,34 @@ describe('roads by the Lithuanian traffic rules', () => {
     expect(lights.length).toBe(j.legs.length);
     // The main road and the side roads take turns.
     expect(new Set(lights.map(l => l.group)).size).toBe(2);
-    expect(plan.markings.filter(m => m.type === 'stop-line' && near(m, j, 2.2)).length).toBe(j.legs.length);
+    expect(plan.markings.filter(m => m.type === 'stop-line' && near(m, j, 2.6)).length).toBe(j.legs.length);
     expect(plan.markings.filter(m => m.type === 'signal-crossing' && near(m, j, 2)).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('brings the side street joining right by the lights (Seirijų g.) under them, with its own stop line and light', () => {
+    const j = plan.junctions.find(k => k.control === 'signals')!;
+    const street = j.legs.find(l => l.road.name === 'Seirijų g.');
+    expect(street).toBeDefined();
+    expect(plan.signals.filter(s => s.junction === j.id && near(s, { x: street!.path[0][0], y: street!.path[0][1] }, 2)).length).toBeGreaterThan(0);
+  });
+
+  it('finds the junctions where a road joins another part-way along it, with no vertex shared', () => {
+    const key = (q: number[]) => `${Math.round(q[0] * 10)},${Math.round(q[1] * 10)}`, shared = new Map<string, number>();
+    for (const r of LEIPALINGIS_ROADS) for (const q of r.points) shared.set(key(q), (shared.get(key(q)) ?? 0) + 1);
+    let tees = 0, found = 0;
+    for (const r of LEIPALINGIS_ROADS.filter(r => r.class !== 'track')) for (const end of [r.points[0], r.points[r.points.length - 1]]) {
+      if (shared.get(key(end))! > 1) continue;
+      const onto = LEIPALINGIS_ROADS.some(o => o !== r && o.class !== 'track' && o.points.slice(1).some((b, i) => {
+        const a = o.points[i], vx = b[0] - a[0], vy = b[1] - a[1], l2 = vx * vx + vy * vy || 1;
+        const t = ((end[0] - a[0]) * vx + (end[1] - a[1]) * vy) / l2;
+        return t > .02 && t < .98 && Math.hypot(a[0] + vx * t - end[0], a[1] + vy * t - end[1]) < .02;
+      }));
+      if (!onto) continue;
+      tees++;
+      if (plan.junctions.some(j => near(j, { x: end[0], y: end[1] }, .05))) found++;
+    }
+    expect(tees).toBeGreaterThan(50);
+    expect(found / tees).toBeGreaterThan(.95);
   });
 
   it("makes Seirijai's market square a roundabout: the round sign and 203 at every entry, with give-way triangles", () => {
@@ -90,15 +132,20 @@ describe('roads by the Lithuanian traffic rules', () => {
   });
 
   it('stands every sign off the carriageway, on the right for the drivers it faces', () => {
-    let right = 0;
+    let right = 0, clear = 0;
     for (const post of plan.posts) {
       expect(roadEdgeAt(post.x, post.y, 1.5)).toBeLessThan(-.05);
-      // Drivers it is for come towards its face: heading the other way to its facing.
+      // Drivers it is for come towards its face: heading the other way to its facing. Judged by the
+      // road it stands by (where two roads run about as near, as between close parallel streets, it
+      // could be either).
       const c = nearestCentre(post.x, post.y), hx = -Math.cos(post.facing), hy = -Math.sin(post.facing);
+      if (c.other - c.d < .25) continue;
+      clear++;
       if ((post.x - c.x) * -hy + (post.y - c.y) * hx > 0) right++;
     }
     expect(plan.posts.length).toBeGreaterThan(300);
-    expect(right / plan.posts.length).toBeGreaterThan(.95);
+    expect(clear / plan.posts.length).toBeGreaterThan(.55);
+    expect(right / clear).toBeGreaterThan(.97);
   });
 
   it('signs every town and village on the public roads into it, its end sign leaving it; hamlets have the blue name sign', () => {
@@ -148,10 +195,9 @@ describe('roads by the Lithuanian traffic rules', () => {
     const j = plan.junctions.find(k => k.control === 'signals')!;
     let checked = 0;
     for (const leg of j.legs.filter(l => roadKind(l.road) === 4)) {
-      // This approach's stop line, and how far out along the leg it lies.
-      const line = plan.markings.filter(m => m.type === 'stop-line' && near(m, j, 2.2))
-        .sort((a, b) => ((b.x - j.x) * leg.dir[0] + (b.y - j.y) * leg.dir[1]) - ((a.x - j.x) * leg.dir[0] + (a.y - j.y) * leg.dir[1]))[0];
-      const at = (line.x - j.x) * leg.dir[0] + (line.y - j.y) * leg.dir[1];
+      // This approach's stop line (across its incoming half), and how far out along the leg it lies.
+      const lines = plan.markings.filter(m => m.type === 'stop-line' && near(m, j, 2.6)).map(m => ({ m, ...alongPath(leg.path, m.x, m.y) }));
+      const at = lines.filter(l => l.off < leg.hw && l.s > .3).sort((a, b) => a.s - b.s)[0].s;
       // Over the crossing and up to the stop line: no line. Behind it: continuous.
       for (let s = .5; s < at - .06; s += .05) { const p = pointAlong(leg.path, s); expect(dashAtPoint(p.x, p.y)).toBe(1); }
       for (let s = at + .1; s < at + .5; s += .05) { const p = pointAlong(leg.path, s); expect(dashAtPoint(p.x, p.y)).toBeLessThan(.05); }

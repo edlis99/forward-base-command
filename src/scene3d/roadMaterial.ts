@@ -205,13 +205,14 @@ export function createRoadData(section: MapSection, terrain?: TerrainCell[][]): 
   const edge = new Float32Array(n).fill(-ROAD_E_MAX), score = new Float32Array(n).fill(-Infinity);
   const across = new Float32Array(n), dash = new Float32Array(n).fill(1), kind = new Uint8Array(n);
   const owner = new Int32Array(n).fill(0x7fffffff), dirX = new Float32Array(n), dirZ = new Float32Array(n);
-  // The road whose edge each texel lies nearest inside (or closest outside), and the next one met at an angle.
-  const edgeLine = new Int32Array(n).fill(0x7fffffff), edgeDX = new Float32Array(n), edgeDZ = new Float32Array(n);
-  const second = new Float32Array(n).fill(-Infinity);
+  // The road whose edge each texel lies nearest inside (or closest outside), the way towards it,
+  // and how much the corners between roads are filled out (see below).
+  const edgeLine = new Int32Array(n).fill(0x7fffffff), edgeGX = new Float32Array(n), edgeGZ = new Float32Array(n);
+  const fillet = new Float32Array(n);
   // Where roads overlap (junctions) or go round (roundabouts): lane wear has no sense there.
   const junction = new Float32Array(n);
   /** Every texel within reach of a line's segment: (texel, edge distance, distance, side, segment). */
-  const visit = (line: RoadLine, fn: (i: number, e: number, d: number, side: number, k: number, t: number, ux: number, uz: number) => void) => {
+  const visit = (line: RoadLine, fn: (i: number, e: number, d: number, side: number, k: number, t: number, ux: number, uz: number, gx: number, gz: number) => void) => {
     const reach = line.hw + ROAD_E_MAX;
     for (let k = 1; k < line.pts.length; k++) {
       const [ax, az] = line.pts[k - 1], [bx, bz] = line.pts[k], vx = bx - ax, vz = bz - az, l2 = vx * vx + vz * vz;
@@ -225,13 +226,14 @@ export function createRoadData(section: MapSection, terrain?: TerrainCell[][]): 
           const wx = ox + (tx + .5) / ROAD_RES - ax;
           const t = Math.max(0, Math.min(1, (wx * vx + wz * vz) / l2));
           const d = Math.hypot(wx - vx * t, wz - vz * t), e = line.hw - d;
-          if (e > -ROAD_E_MAX) fn(tz * W + tx, e, d, ux * wz - uz * wx, k, t, ux, uz);
+          // (gx, gz): the way to the centre line, which the edge distance grows along.
+          if (e > -ROAD_E_MAX) fn(tz * W + tx, e, d, ux * wz - uz * wx, k, t, ux, uz, d > 1e-6 ? (vx * t - wx) / d : 0, d > 1e-6 ? (vz * t - wz) / d : 0);
         }
       }
     }
   };
-  for (const line of lines) visit(line, (i, e, d, side, k, t, ux, uz) => {
-    if (e > edge[i]) { edge[i] = e; edgeLine[i] = line.id; edgeDX[i] = ux; edgeDZ[i] = uz; }
+  for (const line of lines) visit(line, (i, e, d, side, k, t, ux, uz, gx, gz) => {
+    if (e > edge[i]) { edge[i] = e; edgeLine[i] = line.id; edgeGX[i] = gx; edgeGZ[i] = gz; }
     // Which road a point belongs to: the nearest centre line, but asphalt first.
     const sc = e + (line.kind >= 3 && e > 0 ? 4 : 0);
     if (sc <= score[i]) return;
@@ -241,7 +243,7 @@ export function createRoadData(section: MapSection, terrain?: TerrainCell[][]): 
     dash[i] = Math.abs(2 * (s - Math.floor(s)) - 1);
   });
   // No centre line where another road joins or crosses (its own pieces running on do not count).
-  for (const line of lines) visit(line, (i, e, _d, _side, _k, _t, ux, uz) => {
+  for (const line of lines) visit(line, (i, e, _d, _side, _k, _t, ux, uz, gx, gz) => {
     // (Nor any ruts in gravel and tracks: across the overlap the place across the road jumps from one
     // road to the other, which drew them as streaks; near the edge there are none. Marked roads keep
     // theirs, so their centre lines end straight; the overlap mask fades their wear out instead.)
@@ -249,15 +251,17 @@ export function createRoadData(section: MapSection, terrain?: TerrainCell[][]): 
       dash[i] = 1; junction[i] = 1;
       if (kind[i] < 4) across[i] = across[i] < 0 ? -.92 : .92;
     }
-    if (e > second[i] && edgeLine[i] !== line.id && Math.abs(edgeDX[i] * ux + edgeDZ[i] * uz) < .85) second[i] = e;
+    // Junction corners rounded (a smooth union of the roads meeting there, about 6 m in radius):
+    // sharp corners and narrow gravel gores between roads meeting at a shallow angle looked unmade.
+    // Only in the corners between roads, where the ways to their centre lines part: on the outside
+    // of a bend they run together, and filling out there drew a lump. It fades in with the angle
+    // between them (switched on at a set angle, it drew slivers of edge line where it began).
+    if (edgeLine[i] === line.id) return;
+    const h = Math.max(JUNCTION_FILLET - Math.abs(edge[i] - e), 0) / JUNCTION_FILLET;
+    const apart = 1 - (edgeGX[i] * gx + edgeGZ[i] * gz), w = Math.min(1, Math.max(0, (apart - .25) / .5));
+    fillet[i] = Math.max(fillet[i], w * w * (3 - 2 * w) * h * h * JUNCTION_FILLET * .25);
   });
-  // Junction corners rounded (a smooth union of the roads meeting there, about 4 m in radius):
-  // sharp corners and narrow gravel gores between roads meeting at a shallow angle looked unmade.
-  for (let i = 0; i < n; i++) {
-    if (second[i] === -Infinity) continue;
-    const h = Math.max(JUNCTION_FILLET - Math.abs(edge[i] - second[i]), 0) / JUNCTION_FILLET;
-    edge[i] = Math.max(edge[i], second[i]) + h * h * JUNCTION_FILLET * .25;
-  }
+  for (let i = 0; i < n; i++) edge[i] += fillet[i];
   // The centre line runs continuous (1.1) before junctions, roundabouts and crossings.
   for (const zone of trafficPlan().solidLines) {
     if (zone.x + zone.r < ox || zone.x - zone.r > x1 || zone.y + zone.r < oz || zone.y - zone.r > z1) continue;
