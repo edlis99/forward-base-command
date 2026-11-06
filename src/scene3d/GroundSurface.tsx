@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { TerrainCell } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
 import { MapSection } from './mapSections';
-import { createRoadTexture, landscapeMaterial } from './roadMaterial';
+import { createRoadData, landscapeMaterial } from './roadMaterial';
 import { makeGrainTexture } from './materials';
 import { buildGroundGeometry } from './groundGeometry';
 import { groundHeightAt, hash2, waterBedHeightAt } from './terrainHeight';
@@ -26,7 +26,7 @@ export function GroundSurface({ terrain, section, regional = false }: { terrain:
   const geometry = useMemo(() => buildGroundGeometry(terrain, section, regional), [terrain, regional, section]);
 
   const grain = useMemo(() => makeGrainTexture(1.6), []);
-  const roads = useMemo(() => regional ? createRoadTexture(section, terrain) : undefined, [regional, section, terrain]);
+  const roads = useMemo(() => regional ? createRoadData(section, terrain) : undefined, [regional, section, terrain]);
   const material = useMemo(() => landscapeMaterial(grain, roads, section), [grain, roads, section]);
   useEffect(() => () => { material.dispose(); }, [material]);
   useEffect(() => () => { roads?.dispose(); }, [roads]);

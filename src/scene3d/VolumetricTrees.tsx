@@ -80,11 +80,13 @@ function distribute(pine: TreePlacement[], broadleaf: TreePlacement[]): SpeciesG
   });
   return result;
 }
-function InstanceGeometry({ trees, geometry, material, wood }: {
+function InstanceGeometry({ trees, geometry, material, wood, leafShadows }: {
   trees: TreePlacement[];
   geometry: THREE.BufferGeometry;
   material: THREE.MeshStandardMaterial;
   wood: boolean;
+  /** Leaves cast shadows too (High graphics): cut out leaf by leaf, as the crown is drawn. */
+  leafShadows: boolean;
 }) {
   const mesh = useRef<THREE.InstancedMesh>(null);
   useLayoutEffect(() => {
@@ -111,21 +113,22 @@ function InstanceGeometry({ trees, geometry, material, wood }: {
   }, [trees, wood]);
   if (!trees.length) return null;
   return <instancedMesh ref={mesh} args={[geometry, material, trees.length]}
-    castShadow={wood} receiveShadow={false} frustumCulled raycast={() => null} dispose={null} />;
+    castShadow={wood || leafShadows} receiveShadow={false} frustumCulled raycast={() => null} dispose={null} />;
 }
 
-function MeshBatch({ species, detail, variant, trees, materials }: {
+function MeshBatch({ species, detail, variant, trees, materials, leafShadows }: {
   species: ForestSpecies;
   detail: ForestDetail;
   variant: number;
   trees: TreePlacement[];
   materials: TreeMaterials;
+  leafShadows: boolean;
 }) {
   const mesh = forestGeometry(species, variant, detail);
   if (!trees.length) return null;
   return <group name={`${species}-${detail}-mesh-${variant}`}>
-    <InstanceGeometry geometry={mesh.wood} material={materials.wood} trees={trees} wood />
-    <InstanceGeometry geometry={mesh.leaves} material={materials.foliage} trees={trees} wood={false} />
+    <InstanceGeometry geometry={mesh.wood} material={materials.wood} trees={trees} wood leafShadows={leafShadows} />
+    <InstanceGeometry geometry={mesh.leaves} material={materials.foliage} trees={trees} wood={false} leafShadows={leafShadows} />
   </group>;
 }
 
@@ -186,7 +189,7 @@ function LoadedForest({ pine, broadleaf, highQuality }: {
   const naturalPines = nearPines.flatMap(batch => batch.trees);
   const pineFallback = <group name="imported-pine-fallback">
     {nearPines.filter(batch => batch.trees.length).map(batch =>
-      <MeshBatch key={`pine-fallback-${batch.variant}`} {...batch} materials={materials.pine} />)}
+      <MeshBatch key={`pine-fallback-${batch.variant}`} {...batch} materials={materials.pine} leafShadows={highQuality} />)}
   </group>;
   // Near pines beyond the imported few use the procedural near mesh.
   const drawn = batches.map(batch => batch.species === 'pine' && batch.detail === 'near'
@@ -195,7 +198,7 @@ function LoadedForest({ pine, broadleaf, highQuality }: {
     {drawn.filter(batch => batch.trees.length > 0)
       .map(batch =>
         <MeshBatch key={`${batch.species}-${batch.detail}-${batch.variant}`}
-          {...batch} materials={materials[batch.species]} />)}
+          {...batch} materials={materials[batch.species]} leafShadows={highQuality} />)}
     {/* Only the nearest pines use the actual licensed 3D OBJ; the rest of the
         forest uses lighter branching 3D LODs, never full-tree billboards. */}
     {highQuality && naturalPines.length > 0
