@@ -63,12 +63,14 @@ const TW = MAP_COLS * COVER_RES, TH = MAP_ROWS * COVER_RES;
  * tall meadow grass). Woods have their own undergrowth; yards, streets,
  * buildings, water and bridges have none. A field's stone wall, boulder, hay
  * or logs stand in the grass: it grows round them (a bare cell under each
- * left light squares all over the fields).
+ * left light squares all over the fields). Whether units may enter does not
+ * matter: the scenery border round the map is out of bounds, and its fields
+ * were bare, a lighter strip along the edge of the view.
  */
 export function grassOf(c: TerrainCell | undefined): { cover: number; tall: number } {
   if (!c || c.bridge || c.yard === 'courtyard') return { cover: 0, tall: 0 };
-  if (c.prop && c.type === 'sandbag' && !c.blocksMovement) return { cover: 1, tall: .12 };
-  if (c.prop || c.blocksMovement) return { cover: 0, tall: 0 };
+  if (c.type === 'sandbag' && (c.prop || c.blocksMovement)) return { cover: 1, tall: .12 };
+  if (c.prop) return { cover: 0, tall: 0 };
   if (c.type === 'tall_grass') return { cover: 1, tall: 1 };
   if (c.type === 'open') return { cover: c.yard ? .7 : 1, tall: c.yard ? 0 : .12 };
   if (c.type === 'hedgerow') return { cover: .55, tall: .4 };

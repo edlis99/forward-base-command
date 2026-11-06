@@ -243,7 +243,8 @@ export function createRoadData(section: MapSection, terrain?: TerrainCell[][]): 
  * via splatA/splatB weights; normal/roughness come from a shared set, tiled
  * in world space so every map section lines up seamlessly.
  */
-export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | undefined, section: MapSection) {
+export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | undefined, section: MapSection,
+  grass?: { mask: THREE.Texture; uv: THREE.Vector2 }) {
   const normal = groundTex('grass', 'normal');
   const rough = groundTex('dirt', 'roughness');
   normal.repeat.set(1 / TILE_CELLS, 1 / TILE_CELLS);
@@ -257,6 +258,7 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
   material.onBeforeCompile = shader => {
     SURFACES.forEach((_, i) => { shader.uniforms[`gDiff${i}`] = { value: diffuse[i] }; });
     shader.uniforms.gTile = { value: 1 / TILE_CELLS };
+    if (grass) { shader.uniforms.gCover = { value: grass.mask }; shader.uniforms.gCoverUv = { value: grass.uv }; }
     shader.uniforms.asphaltTex = { value: diffuse[5] };
     shader.uniforms.uTime = ambienceUniforms.uTime;
     shader.vertexShader = 'attribute vec3 splatA;\nattribute vec3 splatB;\nuniform float gTile;\nvarying vec3 vSplatA;\nvarying vec3 vSplatB;\nvarying vec2 gUv;\n' + shader.vertexShader;
@@ -278,6 +280,7 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
       + 'float cNoise(vec2 p) { vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);\n'
       + '  return mix(mix(cHash(i), cHash(i + vec2(1.0, 0.0)), u.x), mix(cHash(i + vec2(0.0, 1.0)), cHash(i + vec2(1.0, 1.0)), u.x), u.y); }\n'
       + (roads ? 'uniform sampler2D roadData;\nuniform sampler2D asphaltNormal;\nuniform sampler2D gravelNormal;\nvarying vec2 campaignUv;\n' : '')
+      + (grass ? 'uniform sampler2D gCover;\nuniform vec2 gCoverUv;\n' : '')
       + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `
       // Second, rotated sample breaks up visible tile repetition.
@@ -326,6 +329,11 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
         shade *= 1.0 + gust * 0.075;
         diffuseColor.rgb *= mix(vec3(1.0), shade, meadow);
       }
+      ${grass ? `
+      // Grass grows here (the layered grass when zoomed in): the bare ground
+      // takes the sward's depth, so where the layers fade out (the edge of
+      // their patch, zooming out) no lighter patch shows.
+      diffuseColor.rgb *= mix(1.0, 0.88, texture2D(gCover, gUv / gTile * gCoverUv).r);` : ''}
       ${roads ? ROAD_SURFACE_GLSL : ''}
       // Drifting cloud shadows: big soft patches sliding slowly across the land.
       vec2 cw = gUv / gTile;
@@ -346,7 +354,7 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
         }`);
     }
   };
-  material.customProgramCacheKey = () => `polyhaven-landscape-v7-${roads ? 'r' : 'n'}`;
+  material.customProgramCacheKey = () => `polyhaven-landscape-v8-${roads ? 'r' : 'n'}${grass ? 'g' : ''}`;
   return material;
 }
 
@@ -378,7 +386,7 @@ const ROAD_SURFACE_GLSL = `
         float kind = rd.b * 4.0;
         float paved = smoothstep(2.4, 2.9, kind), marked = smoothstep(3.4, 3.9, kind);
         float track = 1.0 - smoothstep(1.4, 1.9, kind), gravel = clamp(1.0 - paved - track, 0.0, 1.0);
-        float fine = 1.0 - smoothstep(0.035, 0.09, rPx);
+        float fine = 1.0 - smoothstep(0.012, 0.035, rPx);
         float n1 = cNoise(rw * 4.1 + 1.3), n2 = cNoise(rw * 11.7 + 5.9), n3 = cNoise(rw * 29.0 + 2.2);
         float fray = n1 * 0.55 + n2 * 0.3 + n3 * 0.15 - 0.5;
         // Asphalt crumbles a little at its edge; gravel and tracks fray into the grass.
@@ -409,9 +417,9 @@ const ROAD_SURFACE_GLSL = `
         float jointC = (1.0 - smoothstep(crackW * 0.5, crackW, abs(fromCentre + (cNoise(rw * 1.7 + 2.0) - 0.5) * 0.06)))
           * smoothstep(0.6, 0.75, cNoise(rw * 0.3 + 8.0)) * marked;
         float alongCrack = abs(rd.a - 0.68 + (cNoise(rw * 6.0) - 0.5) * 0.03) * 0.5;
-        float transC = (1.0 - smoothstep(crackW * 0.5, crackW, alongCrack)) * smoothstep(0.62, 0.72, cNoise(rw * 0.9 + 4.0))
+        float transC = (1.0 - smoothstep(crackW * 0.5, crackW, alongCrack)) * smoothstep(0.7, 0.8, cNoise(rw * 0.9 + 4.0))
           * (1.0 - smoothstep(0.85, 0.95, a)) * (1.0 - step(0.99, rd.a));
-        asphalt *= 1.0 - max(max(longC, jointC), transC) * fine * 0.45;
+        asphalt *= 1.0 - max(max(longC, jointC), transC) * fine * 0.3;
         // The outer edge, dusty with grit from the shoulder.
         asphalt = mix(asphalt, vec3(0.21, 0.195, 0.165), (1.0 - smoothstep(0.0, 0.06, Ec)) * 0.4 * (0.4 + n2));
         // Lines: edge lines 20 cm wide, 40 cm in; centre dashes 3.5 m every 12 m; worn where the wheels run.
@@ -429,10 +437,10 @@ const ROAD_SURFACE_GLSL = `
         vec3 gravelC = grit * (1.0 - ruts * 0.17) * (1.0 + (1.0 - smoothstep(0.0, 0.18, a)) * 0.08 + smoothstep(0.78, 1.0, a) * 0.06);
         gravelC = mix(gravelC, grit * vec3(0.52, 0.5, 0.48), hole);
 
-        // Farm track: dirt ruts, grass between and beside them.
+        // Farm track: dry, dusty ruts, grass between and beside them.
         float dL = clamp(dot(texture2D(gDiff3, rw * 1.7).rgb, vec3(0.333)) / 0.09, 0.55, 1.6);
-        vec3 dirt = vec3(0.24, 0.2, 0.145) * mix(1.0, dL, 0.7);
-        float trackDirt = clamp(rGauss((a - 0.46) / 0.17) * 1.3 + (n2 - 0.5) * 0.6 - (1.0 - smoothstep(0.0, 0.2, a)) * 0.4, 0.0, 1.0);
+        vec3 dirt = vec3(0.36, 0.3, 0.2) * mix(1.0, dL, 0.6);
+        float trackDirt = clamp(rGauss((a - 0.48) / 0.22) * 1.35 + (n2 - 0.5) * 0.6 - (1.0 - smoothstep(0.0, 0.2, a)) * 0.4, 0.0, 1.0);
         vec3 trackC = mix(ground, dirt, trackDirt);
 
         // The shoulder: grey grit along asphalt, a worn margin along gravel, grass coming through.

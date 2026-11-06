@@ -22,8 +22,10 @@ const MAX_TUFTS = 52000;
  * get none; a campaign road's cells grow pasture tufts up to its drawn verge.
  */
 function tuftsFor(c: TerrainCell | undefined): { count: number; low: number; high: number; dry: number } | null {
-  if (roadCell(c)) return PASTURE_TUFTS;
-  if (!c || c.roadName || c.bridge || c.prop || c.blocksMovement || c.yard === 'courtyard') return null;
+  // (The scenery border round the map is out of bounds, but its fields have tufts like any other.)
+  if (!c || c.bridge || c.prop || c.yard === 'courtyard') return null;
+  // Its verge is pasture; its carriageway and shoulder cells too, beside the drawn road (checked tuft by tuft).
+  if (c.roadName) return c.type === 'open' || roadCell(c) ? PASTURE_TUFTS : null;
   if (c.type === 'tall_grass') return { count: 90, low: .1, high: .15, dry: .55 };
   if (c.type === 'open') return c.yard ? { count: 16, low: .055, high: .085, dry: .15 } : PASTURE_TUFTS;
   return null;
@@ -152,7 +154,7 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
     const z0 = Math.max(0, Math.floor(cz - r)), z1 = Math.min(MAP_ROWS - 1, Math.ceil(cz + r));
     for (let z = z0; z <= z1 && n < MAX_TUFTS; z++) for (let x = x0; x <= x1 && n < MAX_TUFTS; x++) {
       if (Math.hypot(x + .5 - cx, z + .5 - cz) > r + .8) continue;
-      const cell = terrain[z]?.[x], kind = tuftsFor(cell), onRoadCell = roadCell(cell);
+      const cell = terrain[z]?.[x], kind = tuftsFor(cell), onRoadCell = !!cell?.roadName;
       if (!kind) continue;
       // Clumpy: some patches thick, some thin.
       const patchiness = .45 + fbm(x * .23 + 5.1, z * .23 + 1.7) * 1.1;

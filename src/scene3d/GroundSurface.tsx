@@ -6,6 +6,7 @@ import { MapSection } from './mapSections';
 import { createRoadData, landscapeMaterial } from './roadMaterial';
 import { makeGrainTexture } from './materials';
 import { buildGroundGeometry } from './groundGeometry';
+import { COVER_UV, grassMask } from './groundCover';
 import { groundHeightAt, hash2, waterBedHeightAt } from './terrainHeight';
 import { useLakeWaterMaterial } from './LakeWaterMaterial';
 
@@ -27,7 +28,8 @@ export function GroundSurface({ terrain, section, regional = false }: { terrain:
 
   const grain = useMemo(() => makeGrainTexture(1.6), []);
   const roads = useMemo(() => regional ? createRoadData(section, terrain) : undefined, [regional, section, terrain]);
-  const material = useMemo(() => landscapeMaterial(grain, roads, section), [grain, roads, section]);
+  const material = useMemo(() => landscapeMaterial(grain, roads, section, { mask: grassMask(terrain, regional), uv: COVER_UV }),
+    [grain, roads, section, terrain, regional]);
   useEffect(() => () => { material.dispose(); }, [material]);
   useEffect(() => () => { roads?.dispose(); }, [roads]);
   useEffect(() => () => { geometry.dispose(); }, [geometry]);
