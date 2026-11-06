@@ -367,7 +367,7 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
  *   dashed centre line, worn where the wheels run.
  * - Gravel: grey-beige grit with two compacted wheel tracks, loose grit
  *   between them and along the sides, the odd damp pothole.
- * - Farm track: two dirt ruts with grass between them and on either side.
+ * - Farm track: a worn, pale band with two dusty ruts, grass between them.
  * Edges fray with noise; detail finer than a pixel fades out zoomed out.
  * Sets roadW (how much road covers the point), roadRough and roadPaved for
  * the roughness and normal stages, and rw (world position in cells).
@@ -417,9 +417,9 @@ const ROAD_SURFACE_GLSL = `
         float jointC = (1.0 - smoothstep(crackW * 0.5, crackW, abs(fromCentre + (cNoise(rw * 1.7 + 2.0) - 0.5) * 0.06)))
           * smoothstep(0.6, 0.75, cNoise(rw * 0.3 + 8.0)) * marked;
         float alongCrack = abs(rd.a - 0.68 + (cNoise(rw * 6.0) - 0.5) * 0.03) * 0.5;
-        float transC = (1.0 - smoothstep(crackW * 0.5, crackW, alongCrack)) * smoothstep(0.7, 0.8, cNoise(rw * 0.9 + 4.0))
+        float transC = (1.0 - smoothstep(crackW * 0.5, crackW, alongCrack)) * smoothstep(0.8, 0.88, cNoise(rw * 0.9 + 4.0))
           * (1.0 - smoothstep(0.85, 0.95, a)) * (1.0 - step(0.99, rd.a));
-        asphalt *= 1.0 - max(max(longC, jointC), transC) * fine * 0.3;
+        asphalt *= 1.0 - max(max(longC, jointC), transC) * fine * 0.24;
         // The outer edge, dusty with grit from the shoulder.
         asphalt = mix(asphalt, vec3(0.21, 0.195, 0.165), (1.0 - smoothstep(0.0, 0.06, Ec)) * 0.4 * (0.4 + n2));
         // Lines: edge lines 20 cm wide, 40 cm in; centre dashes 3.5 m every 12 m; worn where the wheels run.
@@ -433,14 +433,15 @@ const ROAD_SURFACE_GLSL = `
         float gL = clamp(dot(texture2D(gDiff4, rw * 1.6).rgb, vec3(0.333)) / 0.11, 0.55, 1.6);
         vec3 grit = vec3(0.34, 0.3, 0.22) * mix(1.0, gL, 0.7);
         float ruts = rGauss((a - 0.42) / 0.14);
-        float hole = smoothstep(0.75, 0.78, cNoise(rw * 3.3 + 21.0)) * ruts * fine;
+        float hole = smoothstep(0.82, 0.85, cNoise(rw * 4.1 + 21.0)) * ruts * fine;
         vec3 gravelC = grit * (1.0 - ruts * 0.17) * (1.0 + (1.0 - smoothstep(0.0, 0.18, a)) * 0.08 + smoothstep(0.78, 1.0, a) * 0.06);
-        gravelC = mix(gravelC, grit * vec3(0.52, 0.5, 0.48), hole);
+        gravelC = mix(gravelC, grit * vec3(0.66, 0.64, 0.62), hole);
 
-        // Farm track: dry, dusty ruts, grass between and beside them.
+        // Farm track: a worn, pale band with two dusty ruts, grass between them.
         float dL = clamp(dot(texture2D(gDiff3, rw * 1.7).rgb, vec3(0.333)) / 0.09, 0.55, 1.6);
         vec3 dirt = vec3(0.36, 0.3, 0.2) * mix(1.0, dL, 0.6);
-        float trackDirt = clamp(rGauss((a - 0.48) / 0.22) * 1.35 + (n2 - 0.5) * 0.6 - (1.0 - smoothstep(0.0, 0.2, a)) * 0.4, 0.0, 1.0);
+        float trackDirt = clamp(rGauss((a - 0.5) / 0.2) * 1.25 + (1.0 - smoothstep(0.8, 1.05, a)) * 0.45 + (n2 - 0.5) * 0.5
+          - (1.0 - smoothstep(0.0, 0.25, a)) * 0.25, 0.0, 1.0);
         vec3 trackC = mix(ground, dirt, trackDirt);
 
         // The shoulder: grey grit along asphalt, a worn margin along gravel, grass coming through.
