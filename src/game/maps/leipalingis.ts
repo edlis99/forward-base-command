@@ -38,9 +38,12 @@ const RAW_ROADS: MapRoad[] = snapshot.roads.flatMap(road => {
     current.push(segment[1]);
   }
   if (current.length > 1) sections.push(current);
-  // Designed map: real proportions next to the houses (a village street is narrower than a house).
+  // Designed map: widths set by the vehicles that use them (a tank is about
+  // 0.22 cell wide, an APC 0.26; one cell is about 12 m). Two of them pass
+  // each other on an ordinary road with room to spare, a farm track takes one
+  // with a margin, main roads are wider still.
   const width = snapshot.designed
-    ? (/primary/.test(road.class) ? .7 : /secondary/.test(road.class) ? .6 : road.class === 'track' ? .26 : road.class === 'residential' ? .42 : .5)
+    ? (/primary/.test(road.class) ? .95 : /secondary/.test(road.class) ? .82 : road.class === 'track' ? .38 : road.class === 'residential' ? .58 : .7)
     : /primary|secondary/.test(road.class) ? 1.35 : road.class === 'track' ? .38 : .88;
   return sections.map(points => ({ ...road, width, points }));
 });

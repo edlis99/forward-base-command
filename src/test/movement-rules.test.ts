@@ -173,7 +173,8 @@ describe('M10 / M11: road convoys and spacing', () => {
       }
       return best;
     };
-    const start = roadNear(J.x, J.y + 10);
+    // On route 180 east of the village: from its west side the farm track and its bridge are now the quicker way.
+    const start = roadNear(J.x + 30, J.y + 2);
     const group = types.map((t, i) => add(s, t, 'player', start.x + (i % 4 - 1.5) * 30, start.y + Math.floor(i / 4) * 30, { selected: true }));
     // Destination: open road on route 180 short of Leipalingis (not inside the town, where units would occupy buildings).
     let dest = { x: 0, y: 0 }, best = Infinity;
@@ -198,11 +199,13 @@ describe('M10 / M11: road convoys and spacing', () => {
       }
     });
     gaps.sort((a, b) => a - b);
-    // Measured on this route: 78% before the road-march rule, 88% after.
+    // Measured on this route: 87% on the road. (From the village's west side,
+    // the old start, it was 78% before the road-march rule and 88% after.)
     expect(onRoad / moving).toBeGreaterThan(.85);
-    expect(gaps[gaps.length >> 1]).toBeGreaterThan(2);
-    // Robust low end of the march (the moment of pulling out side by side at the start is excluded by the percentile).
-    expect(gaps[Math.floor(gaps.length * .1)]).toBeGreaterThan(1.5);
+    expect(gaps[gaps.length >> 1]).toBeGreaterThan(1.9);
+    // Robust low end of the march: about 1.4 cells, where the column closes up
+    // to its lane interval over the bridge on route 180 (rule M15).
+    expect(gaps[Math.floor(gaps.length * .1)]).toBeGreaterThan(1.3);
     expect(group.every(u => !u.targetPos)).toBe(true);
     expect(group.every(u => !u.convoyAhead)).toBe(true);
   }, 60000);

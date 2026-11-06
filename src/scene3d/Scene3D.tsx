@@ -10,6 +10,9 @@ import { cellCoverScore, cellConcealmentScore, cellTacticalScore, scoreToColor }
 import { GroundSurface, WaterSheet, GrassTufts, GroundDetail, ShoreReeds } from './GroundSurface';
 import { Bridges } from './Bridges';
 import { GrassField } from './GrassField';
+import { GrassShells } from './GrassShells';
+import { TrackMarks } from './TrackMarks';
+import { grassHeightAt } from './groundCover';
 import { MAP_SECTIONS, MapSection } from './mapSections';
 import { CampaignMap } from '../components/CampaignMap';
 import { cameraView } from './cameraView';
@@ -127,7 +130,8 @@ function TerrainSection({ terrain, regional, section, highQuality }: { terrain: 
       <GroundSurface terrain={terrain} section={section} regional={regional} />
       <WaterSheet terrain={terrain} section={section} />
       <Bridges terrain={terrain} section={section} />
-      <GrassTufts terrain={terrain} section={section} />
+      {/* Simple tall-grass blades; on High the layered grass and its tufts draw the meadows instead. */}
+      {!highQuality && <GrassTufts terrain={terrain} section={section} />}
       <ShoreReeds terrain={terrain} section={section} />
       <GroundDetail terrain={terrain} section={section} />
       {Object.entries(groups).map(([type, g]) => (
@@ -551,8 +555,9 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
           ((bl as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.35 + u.detectionLevel * 0.5;
         }
       }
-      // On a bridge the rings ride above the deck's kerbs instead of cutting through them.
-      const ringLift = hullSurface(u.pos.x / S, u.pos.y / S).onDeck ? DECK_RING_LIFT : 0;
+      // On a bridge the rings ride above the deck's kerbs instead of cutting
+      // through them; in grass, on top of the grass.
+      const ringLift = hullSurface(u.pos.x / S, u.pos.y / S).onDeck ? DECK_RING_LIFT : grassHeightAt(state.terrain, u.pos.x / S, u.pos.y / S);
       const sel = selRefs.current.get(u.id);
       if (sel) {
         sel.visible = u.selected && (u.team === 'player' || u.spottedByEnemy);
@@ -1768,6 +1773,8 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <DistantHills />
         <TerrainMesh terrain={terrain} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} highQuality={highQuality} />
         <GrassField terrain={terrain} highQuality={highQuality} />
+        {highQuality && <GrassShells terrain={terrain} highQuality={highQuality} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} />}
+        <TrackMarks gameStateRef={gameStateRef} terrain={terrain} />
         <TerrainDebugLayer gameStateRef={gameStateRef} />
         <CapturePoints gameStateRef={gameStateRef} />
         <FobLayer gameStateRef={gameStateRef} />
