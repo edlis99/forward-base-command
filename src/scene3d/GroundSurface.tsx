@@ -6,7 +6,7 @@ import { MapSection } from './mapSections';
 import { createRoadData, landscapeMaterial } from './roadMaterial';
 import { makeGrainTexture } from './materials';
 import { buildGroundGeometry } from './groundGeometry';
-import { COVER_UV, grassMask } from './groundCover';
+import { COVER_UV, grassMask, GROUND_ORDER, TUFTS_ORDER } from './groundCover';
 import { groundHeightAt, hash2, waterBedHeightAt } from './terrainHeight';
 import { useLakeWaterMaterial } from './LakeWaterMaterial';
 
@@ -35,7 +35,7 @@ export function GroundSurface({ terrain, section, regional = false }: { terrain:
   useEffect(() => () => { geometry.dispose(); }, [geometry]);
   useEffect(() => () => grain.dispose(), [grain]);
   return (
-    <mesh geometry={geometry} receiveShadow raycast={() => null}>
+    <mesh geometry={geometry} receiveShadow raycast={() => null} renderOrder={GROUND_ORDER}>
       <primitive object={material} attach="material" />
     </mesh>
   );
@@ -252,9 +252,10 @@ export function GrassTufts({ terrain, section }: { terrain: TerrainCell[][]; sec
 
   if (tufts.length === 0) return null;
   return (
-    <instancedMesh key={tufts.length} ref={ref} args={[undefined, undefined, tufts.length]} raycast={() => null}>
+    <instancedMesh key={tufts.length} ref={ref} args={[undefined, undefined, tufts.length]} raycast={() => null} renderOrder={TUFTS_ORDER}>
       <primitive object={blades} attach="geometry" />
-      <meshStandardMaterial side={THREE.DoubleSide} roughness={0.95} />
+      {/* No depth written: units and rings are never hidden in the grass. */}
+      <meshStandardMaterial side={THREE.DoubleSide} roughness={0.95} depthWrite={false} />
     </instancedMesh>
   );
 }

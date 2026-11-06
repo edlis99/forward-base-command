@@ -12,7 +12,6 @@ import { Bridges } from './Bridges';
 import { GrassField } from './GrassField';
 import { GrassShells } from './GrassShells';
 import { TrackMarks } from './TrackMarks';
-import { grassHeightAt } from './groundCover';
 import { MAP_SECTIONS, MapSection } from './mapSections';
 import { CampaignMap } from '../components/CampaignMap';
 import { cameraView } from './cameraView';
@@ -556,8 +555,8 @@ function UnitsLayer({ gameStateRef, inputRef }: { gameStateRef: React.MutableRef
         }
       }
       // On a bridge the rings ride above the deck's kerbs instead of cutting
-      // through them; in grass, on top of the grass.
-      const ringLift = hullSurface(u.pos.x / S, u.pos.y / S).onDeck ? DECK_RING_LIFT : grassHeightAt(state.terrain, u.pos.x / S, u.pos.y / S);
+      // through them. (Grass never hides them: it is drawn without depth.)
+      const ringLift = hullSurface(u.pos.x / S, u.pos.y / S).onDeck ? DECK_RING_LIFT : 0;
       const sel = selRefs.current.get(u.id);
       if (sel) {
         sel.visible = u.selected && (u.team === 'player' || u.spottedByEnemy);

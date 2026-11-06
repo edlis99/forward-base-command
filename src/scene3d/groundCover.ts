@@ -3,7 +3,7 @@ import type { TerrainCell } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
 import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
 import { groundHeightAt } from './terrainHeight';
-import { drivewaysIn, roadEdgeAt, roadHalfWidth } from './roadMaterial';
+import { drivewaysIn, roadHalfWidth } from './roadMaterial';
 
 /**
  * Shared data for what grows on the ground and what has been driven over it:
@@ -33,18 +33,17 @@ export function meshHeight(terrain: TerrainCell[][], gx: number, gz: number) {
   return (at(i, j) * (1 - fx) + at(i + 1, j) * fx) * (1 - fz) + (at(i, j + 1) * (1 - fx) + at(i + 1, j + 1) * fx) * fz;
 }
 
+/**
+ * Draw order of the ground and the grass on it. The grass is drawn right
+ * after the ground and writes no depth, so nothing is ever hidden in it:
+ * units, selection rings, range circles and markers all paint over it. Its
+ * layers still overlap as they should, drawn from the bottom up.
+ */
+export const GROUND_ORDER = -3, GRASS_LAYERS_ORDER = -2, TUFTS_ORDER = -1;
+
 /** Height of the sward in cells (one cell is about 12 m): pasture about 0.5 m, tall meadow grass about 1 m. */
 export const PASTURE_HEIGHT = .045, MEADOW_HEIGHT = .088;
-/** How high the grass stands at a point (cells), as the layered grass draws it close up. */
-export function grassHeightAt(terrain: TerrainCell[][], gx: number, gz: number) {
-  const c = terrain[Math.floor(gz)]?.[Math.floor(gx)];
-  // A campaign road's cells grow grass up to its drawn verge.
-  const g = roadCell(c) ? (roadEdgeAt(gx, gz) > -ROAD_CLEARING ? BARE : PASTURE) : grassOf(c);
-  if (g.cover < .3) return 0;
-  return (PASTURE_HEIGHT + (MEADOW_HEIGHT - PASTURE_HEIGHT) * g.tall) * (1 - trampleMap(terrain).at(gx, gz) * .88);
-}
-
-const BARE = { cover: 0, tall: 0 }, PASTURE = { cover: 1, tall: .12 };
+const PASTURE = { cover: 1, tall: .12 };
 /**
  * A campaign road's own cells (its carriageway and shoulders, stamped in
  * whole cells for movement). The road is drawn to its own width within them;

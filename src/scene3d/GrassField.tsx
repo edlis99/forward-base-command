@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import type { TerrainCell } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
 import { fbm, hash2 } from './terrainHeight';
-import { COVER_UV, meshHeight, ROAD_CLEARING, roadCell, trampleMap } from './groundCover';
+import { COVER_UV, meshHeight, ROAD_CLEARING, roadCell, trampleMap, TUFTS_ORDER } from './groundCover';
 import { roadEdgeAt } from './roadMaterial';
 import { ambienceUniforms } from './ambienceUniforms';
 
@@ -109,7 +109,8 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
   const uniforms = useMemo(() => ({ uCentre: { value: new THREE.Vector2() }, uRadius: { value: 10 }, uFade: { value: 0 },
     uTrample: { value: trampleMap(terrain).texture }, uCoverUv: { value: COVER_UV } }), [terrain]);
   const material = useMemo(() => {
-    const m = new THREE.MeshLambertMaterial({ map: meadowCard(card), alphaTest: .42, side: THREE.DoubleSide, alphaToCoverage: true });
+    // No depth written: units and rings are never hidden among the tufts (see TUFTS_ORDER).
+    const m = new THREE.MeshLambertMaterial({ map: meadowCard(card), alphaTest: .42, side: THREE.DoubleSide, alphaToCoverage: true, depthWrite: false });
     m.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, uniforms, { uTime: ambienceUniforms.uTime });
       shader.vertexShader = 'uniform float uTime;\nuniform vec2 uCentre;\nuniform float uRadius;\nuniform float uFade;\nuniform sampler2D uTrample;\nuniform vec2 uCoverUv;\nvarying float vTip;\n'
@@ -129,16 +130,21 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
       shader.fragmentShader = 'varying float vTip;\n' + shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
           // Shaded at the root, a little lighter at the tips.
           diffuseColor.rgb *= mix(vec3(0.84, 0.86, 0.8), vec3(1.1, 1.1, 1.0), vTip);`)
+        // Never brighter than the meadow round them: the card's sunlit blade
+        // highlights, tinted up like the rest, came out as yellow-white specks.
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          diffuseColor.rgb *= min(1.0, 0.3 / max(dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)), 1e-4));`)
         // Both faces of a card are lit as the meadow (normal up): the back face is not turned to the ground.
         .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n          normal = normalize( vNormal );');
     };
-    m.customProgramCacheKey = () => 'meadow-tufts-v8';
+    m.customProgramCacheKey = () => 'meadow-tufts-v9';
     return m;
   }, [card, uniforms]);
   useEffect(() => () => { material.map?.dispose(); material.dispose(); geometry.dispose(); }, [material, geometry]);
   const mesh = useMemo(() => {
     const im = new THREE.InstancedMesh(geometry, material, MAX_TUFTS);
     im.count = 0; im.frustumCulled = false; im.receiveShadow = true; im.castShadow = false;
+    im.renderOrder = TUFTS_ORDER;
     im.raycast = () => null;
     im.setColorAt(0, new THREE.Color(1, 1, 1));
     return im;
