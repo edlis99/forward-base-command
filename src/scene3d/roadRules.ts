@@ -118,47 +118,55 @@ function distToPath(p: Pt, path: Pt[]) {
 const onAnyRoad = (p: Pt) => roadEdgeAt(p[0], p[1], 1.5) > -.06;
 
 /**
- * The roads with a vertex added wherever another road ends part-way along one of their
- * segments: the map data does not always share a vertex there, and those junctions were missed.
+ * The roads with a vertex added wherever a junction point of others (a road's end, or a vertex two
+ * roads share) lies part-way along one of their segments: the map data does not always share a
+ * vertex there, and those junctions were missed - a road ending on another, or running straight
+ * through where others meet (as the state road through Seirijai's market square).
  */
 function withTees(roads: MapRoad[]): MapRoad[] {
   const key = (q: number[]) => `${Math.round(q[0] * 10)},${Math.round(q[1] * 10)}`;
   const vertices = new Map<string, number>();
   for (const road of roads) for (const q of road.points) vertices.set(key(q), (vertices.get(key(q)) ?? 0) + 1);
+  // The junction points: the roads there, and the ways they run from it.
+  const points = new Map<string, { p: Pt; there: Set<MapRoad>; dirs: Pt[] }>();
+  for (const road of roads) road.points.forEach((q, i) => {
+    const last = road.points.length - 1, k = key(q);
+    if (i !== 0 && i !== last && (vertices.get(k) ?? 0) < 2) return;
+    const at = points.get(k) ?? { p: [q[0], q[1]] as Pt, there: new Set<MapRoad>(), dirs: [] as Pt[] };
+    at.there.add(road);
+    if (i > 0) at.dirs.push(unit(sub(q as Pt, road.points[i - 1] as Pt)));
+    if (i < last) at.dirs.push(unit(sub(road.points[i + 1] as Pt, q as Pt)));
+    points.set(k, at);
+  });
   const boxes = roads.map(r => {
     const xs = r.points.map(q => q[0]), ys = r.points.map(q => q[1]);
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
   });
   const added = new Map<MapRoad, { seg: number; t: number; p: [number, number] }[]>();
-  for (const road of roads) for (const atStart of [true, false]) {
-    const pts = road.points, end = atStart ? pts[0] : pts[pts.length - 1], prev = atStart ? pts[1] : pts[pts.length - 2];
-    if (!prev || (vertices.get(key(end)) ?? 0) > 1) continue;
-    const own = unit(sub(end as Pt, prev as Pt));
-    let best: { road: MapRoad; seg: number; t: number; d: number } | null = null;
-    for (let n = 0; n < roads.length; n++) {
-      const other = roads[n], [x0, y0, x1, y1] = boxes[n];
-      if (other === road || end[0] < x0 - .1 || end[0] > x1 + .1 || end[1] < y0 - .1 || end[1] > y1 + .1) continue;
-      for (let i = 1; i < other.points.length; i++) {
-        const a = other.points[i - 1], b = other.points[i], v = sub(b as Pt, a as Pt), l2 = dot(v, v);
-        if (l2 < 1e-8) continue;
-        const t = dot(sub(end as Pt, a as Pt), v) / l2;
-        if (t <= 0 || t >= 1) continue;
-        const d = len(sub(end as Pt, [a[0] + v[0] * t, a[1] + v[1] * t]));
-        // Joining it, not running on alongside it (overlapping pieces of one road).
-        if (d < .06 && Math.abs(dot(own, unit(v))) < .95 && (!best || d < best.d)) best = { road: other, seg: i, t, d };
-      }
+  for (const { p, there, dirs } of points.values()) for (let n = 0; n < roads.length; n++) {
+    const other = roads[n], [x0, y0, x1, y1] = boxes[n];
+    if (there.has(other) || p[0] < x0 - .1 || p[0] > x1 + .1 || p[1] < y0 - .1 || p[1] > y1 + .1) continue;
+    let best: { seg: number; t: number; d: number } | null = null;
+    for (let i = 1; i < other.points.length; i++) {
+      const a = other.points[i - 1], b = other.points[i], v = sub(b as Pt, a as Pt), l2 = dot(v, v);
+      if (l2 < 1e-8) continue;
+      const t = dot(sub(p, a as Pt), v) / l2;
+      if (t <= 0 || t >= 1) continue;
+      const d = len(sub(p, [a[0] + v[0] * t, a[1] + v[1] * t]));
+      // Joining or crossing it, not running on alongside it (overlapping pieces of one road).
+      if (d < .06 && dirs.every(u => Math.abs(dot(u, unit(v))) < .95) && (!best || d < best.d)) best = { seg: i, t, d };
     }
-    if (best) added.set(best.road, [...(added.get(best.road) ?? []), { seg: best.seg, t: best.t, p: [end[0], end[1]] }]);
+    if (best) added.set(other, [...(added.get(other) ?? []), { seg: best.seg, t: best.t, p: [p[0], p[1]] }]);
   }
   return roads.map(road => {
     const list = added.get(road);
     if (!list) return road;
-    const points: MapRoad['points'] = [];
+    const withAdded: MapRoad['points'] = [];
     road.points.forEach((q, i) => {
-      for (const v of list.filter(x => x.seg === i).sort((a, b) => a.t - b.t)) points.push(v.p);
-      points.push(q);
+      for (const v of list.filter(x => x.seg === i).sort((a, b) => a.t - b.t)) withAdded.push(v.p);
+      withAdded.push(q);
     });
-    return { ...road, points };
+    return { ...road, points: withAdded };
   });
 }
 
