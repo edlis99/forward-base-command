@@ -283,6 +283,10 @@ export function createRoadData(section: MapSection, terrain?: TerrainCell[][]): 
       if (Math.abs(dx * c + dz * sn) < gap.along && Math.abs(dz * c - dx * sn) < gap.across) dash[tz * W + tx] = 1;
     }
   }
+  // And none out at a road's edge or beyond it: in a rounded corner, outside both roads, the point
+  // passes from one road to the other and its place across the road flips sides through 0 between
+  // texels, which drew a sliver of centre line there.
+  for (let i = 0; i < n; i++) if (Math.abs(across[i]) > .9) dash[i] = 1;
   // The overlap, blurred over a few metres so wear fades out smoothly into it (a sharp
   // mask drew the texels' blocks; each road's own lane wear drew streaks across it).
   for (let i = 0; i < n; i++) if (owner[i] >= 100000) junction[i] = 1;
