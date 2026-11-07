@@ -1,6 +1,7 @@
 import React, { useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { TerrainCell } from '../game/types';
+import { settlementAt } from '../game/maps/settlements';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
 import { MapSection } from './mapSections';
 import { createRoadData, landscapeMaterial } from './roadMaterial';
@@ -31,7 +32,7 @@ export function GroundSurface({ terrain, section, regional = false }: { terrain:
   const material = useMemo(() => landscapeMaterial(grain, roads, section, { mask: grassMask(terrain, regional), uv: COVER_UV }),
     [grain, roads, section, terrain, regional]);
   useEffect(() => () => { material.dispose(); }, [material]);
-  useEffect(() => () => { roads?.dispose(); }, [roads]);
+  useEffect(() => () => { roads?.dispose(); (roads?.userData.overlap as THREE.Texture | undefined)?.dispose(); }, [roads]);
   useEffect(() => () => { geometry.dispose(); }, [geometry]);
   useEffect(() => () => grain.dispose(), [grain]);
   return (
@@ -267,6 +268,8 @@ export function GroundDetail({ terrain, section }: { terrain: TerrainCell[][]; s
     for (let y = section.y; y < section.y + section.height; y++) for (let x = section.x; x < section.x + section.width; x++) {
       const t = terrain[y][x].type;
       if (t !== 'open' && t !== 'gravel' && t !== 'mud' && t !== 'crater' && t !== 'rubble') continue;
+      // Not on a road's verge or shoulder, nor in a town's or village's streets: those are kept clear.
+      if (terrain[y][x].roadName || settlementAt(x + .5, y + .5)) continue;
       const roll = hash2(x * 1.3, y * 2.7);
       if (roll > (t === 'open' ? 0.035 : 0.08)) continue;
       const a = hash2(x * 4.1, y * 6.7), b = hash2(x * 8.3, y * 1.9);

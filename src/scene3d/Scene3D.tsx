@@ -12,6 +12,7 @@ import { Bridges } from './Bridges';
 import { GrassField } from './GrassField';
 import { GrassShells } from './GrassShells';
 import { TrackMarks } from './TrackMarks';
+import { RoadFurniture } from './RoadFurniture';
 import { MAP_SECTIONS, MapSection } from './mapSections';
 import { meshHeight } from './groundCover';
 import { CampaignMap } from '../components/CampaignMap';
@@ -1811,6 +1812,8 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         <GrassField terrain={terrain} highQuality={highQuality} />
         {highQuality && <GrassShells terrain={terrain} highQuality={highQuality} regional={gameStateRef.current.mission.mapLayout === 'leipalingis_region'} />}
         <TrackMarks gameStateRef={gameStateRef} terrain={terrain} />
+        {/* Signs, traffic lights, the roundabout's island and junction markings, by the Lithuanian road rules. */}
+        {gameStateRef.current.mission.mapLayout === 'leipalingis_region' && <RoadFurniture gameStateRef={gameStateRef} terrain={terrain} />}
         <TerrainDebugLayer gameStateRef={gameStateRef} />
         <CapturePoints gameStateRef={gameStateRef} />
         <FobLayer gameStateRef={gameStateRef} />

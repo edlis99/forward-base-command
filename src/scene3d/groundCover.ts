@@ -4,6 +4,7 @@ import { MAP_COLS, MAP_ROWS } from '../game/constants';
 import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
 import { groundHeightAt } from './terrainHeight';
 import { drivewaysIn, roadHalfWidth } from './roadMaterial';
+import { trafficPlan } from './roadRules';
 
 /**
  * Shared data for what grows on the ground and what has been driven over it:
@@ -113,6 +114,10 @@ export function grassMask(terrain: TerrainCell[][], regional = true): THREE.Data
     }
     for (const d of drivewaysIn(terrain, 0, 0, MAP_COLS, MAP_ROWS)) {
       ctx.beginPath(); ctx.moveTo(...d.from); ctx.lineTo(...d.to); ctx.lineWidth = .3; ctx.stroke();
+    }
+    // Roundabouts' rings (their islands have their own lawn).
+    for (const r of trafficPlan().roundabouts) {
+      ctx.beginPath(); ctx.arc(r.x, r.y, r.ring, 0, Math.PI * 2); ctx.lineWidth = (r.hw + ROAD_CLEARING) * 2; ctx.stroke();
     }
     roads = ctx.getImageData(0, 0, TW, TH).data;
   }
