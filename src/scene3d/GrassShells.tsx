@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import type { TerrainCell } from '../game/types';
 import { ambienceUniforms } from './ambienceUniforms';
 import { groundTex, TILE_CELLS } from './groundTextures';
-import { COVER_UV, grassMask, meshHeight, MEADOW_HEIGHT, PASTURE_HEIGHT, trampleMap } from './groundCover';
+import { COVER_UV, GRASS_LAYERS_ORDER, grassMask, MEADOW_HEIGHT, meshHeight, PASTURE_HEIGHT, trampleMap } from './groundCover';
 
 /** Camera height (cells) below which the grass has its height, fully from the lower one. */
 const SHOW_BELOW = 36, FULL_BELOW = 26;
@@ -71,7 +71,8 @@ export function GrassShells({ terrain, highQuality, regional }: { terrain: Terra
     gGrass: { value: groundTex('grass', 'diffuse') }, gField: { value: groundTex('field', 'diffuse') }, gTile: { value: 1 / TILE_CELLS },
   }), [terrain, blades, regional]);
   const material = useMemo(() => {
-    const m = new THREE.MeshLambertMaterial({ color: '#ffffff' });
+    // No depth written: units and rings are never hidden in the grass (see GRASS_LAYERS_ORDER).
+    const m = new THREE.MeshLambertMaterial({ color: '#ffffff', depthWrite: false });
     m.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, uniforms, { uTime: ambienceUniforms.uTime });
       shader.vertexShader = `attribute float aShell;
@@ -140,6 +141,7 @@ export function GrassShells({ terrain, highQuality, regional }: { terrain: Terra
     im.geometry.setAttribute('aShell', new THREE.InstancedBufferAttribute(level, 1));
     grids.coarse.setAttribute('aShell', new THREE.InstancedBufferAttribute(level.slice(), 1));
     im.frustumCulled = false; im.receiveShadow = true; im.castShadow = false; im.raycast = () => null;
+    im.renderOrder = GRASS_LAYERS_ORDER;
     for (let i = 0; i < layers; i++) im.setMatrixAt(i, new THREE.Matrix4());
     return im;
   }, [grids, material, layers]);

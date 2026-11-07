@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { generateTerrain } from '../game/terrain';
-import { COVER_RES, grassHeightAt, grassMask, grassOf, MEADOW_HEIGHT, PASTURE_HEIGHT, ROAD_CLEARING, roadCell, softGround, TrampleMap, trampleMap } from '../scene3d/groundCover';
-import { roadEdgeAt } from '../scene3d/roadMaterial';
-import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
+import { COVER_RES, grassMask, grassOf, meshHeight, softGround, TrampleMap } from '../scene3d/groundCover';
+import { buildGroundGeometry } from '../scene3d/groundGeometry';
+import { MAP_SECTIONS } from '../scene3d/mapSections';
 
 const terrain = generateTerrain('leipalingis_region', 1917);
 const cells = terrain.flat();
@@ -25,6 +26,19 @@ describe('grass and the tracks in it', () => {
     expect(data[texel(meadow) * 2]).toBeGreaterThan(200);
     expect(data[texel(meadow) * 2 + 1]).toBeGreaterThan(200);
     expect(data[texel(find(c => c.type === 'water' && !c.bridge)) * 2]).toBe(0);
+  });
+  it('knows the ground exactly as it is drawn, triangle by triangle (rings, grass and tracks sit on it)', () => {
+    // A steep river bank by the start, where the corners' blend was 0.04 cell under the drawn ground.
+    const section = MAP_SECTIONS.find(s => s.x <= 28 && 28 < s.x + s.width && s.y <= 110 && 110 < s.y + s.height)!;
+    const mesh = new THREE.Mesh(buildGroundGeometry(terrain, section, true), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+    const ray = new THREE.Raycaster();
+    let worst = 0;
+    for (let k = 0; k < 100; k++) {
+      const x = 27.013 + (k % 10) * .2, z = 109.507 + Math.floor(k / 10) * .2;
+      ray.set(new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0));
+      worst = Math.max(worst, Math.abs(ray.intersectObject(mesh)[0].point.y - meshHeight(terrain, x, z)));
+    }
+    expect(worst).toBeLessThan(1e-5);
   });
   it('takes tracks on soft ground only: not on a road or a bridge deck', () => {
     expect(softGround(find(c => c.type === 'tall_grass'))).toBe(true);
@@ -51,20 +65,5 @@ describe('grass and the tracks in it', () => {
     expect(map.at(11.5, 10.5)).toBeLessThan(.2);
     for (let t = 0; t < 600; t += .5) map.update(.5);
     expect(map.at(11.5, 10.5)).toBe(0);
-  });
-  it('rings and markers sit on top of the grass, lower where it has been flattened', () => {
-    const meadow = find(c => c.type === 'tall_grass' && !c.prop);
-    const gx = meadow.x / 32 + .5, gz = meadow.y / 32 + .5;
-    expect(grassHeightAt(terrain, gx, gz)).toBeCloseTo(MEADOW_HEIGHT, 3);
-    trampleMap(terrain).stroke(gx - .5, gz, gx + .5, gz, .2, 1);
-    expect(grassHeightAt(terrain, gx, gz)).toBeLessThan(MEADOW_HEIGHT * .2);
-    // On a road, none; on its cells beside the drawn road and its shoulder, the pasture round it.
-    const road = LEIPALINGIS_ROADS.find(r => r.paved && r.points.length > 1 && r.points[0][0] > 20 && r.points[0][1] > 20)!;
-    const [ax, az] = road.points[0], [bx, bz] = road.points[1];
-    expect(grassHeightAt(terrain, (ax + bx) / 2, (az + bz) / 2)).toBe(0);
-    const verge = find(c => roadCell(c) && roadEdgeAt(c.x / 32 + .5, c.y / 32 + .5) < -ROAD_CLEARING - .05);
-    expect(roadCell(verge)).toBe(true);
-    expect(grassHeightAt(terrain, verge.x / 32 + .5, verge.y / 32 + .5)).toBeCloseTo(PASTURE_HEIGHT + (MEADOW_HEIGHT - PASTURE_HEIGHT) * .12, 3);
-    expect(PASTURE_HEIGHT).toBeLessThan(MEADOW_HEIGHT);
   });
 });

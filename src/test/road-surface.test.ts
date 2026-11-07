@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
 import { MAP_SECTIONS } from '../scene3d/mapSections';
-import { createRoadData, ROAD_E_MAX, ROAD_GUTTER, roadHalfWidth, roadKind } from '../scene3d/roadMaterial';
+import { createRoadData, ROAD_E_MAX, ROAD_GUTTER, roadEdgeAt, roadHalfWidth, roadKind } from '../scene3d/roadMaterial';
 
 /** The road data of the section holding a point, decoded there: edge distance, across, kind, dashes. */
 function roadDataAt(x: number, z: number) {
@@ -13,11 +13,23 @@ function roadDataAt(x: number, z: number) {
   return { edge: (data[i] / 255 - .5) * 2 * ROAD_E_MAX, across: (data[i + 1] / 255 - .5) * 4, kind: data[i + 2] / 255 * 4, dash: data[i + 3] / 255 };
 }
 
-/** A straight stretch of road at least `min` cells long, well inside the map. */
+/** Distance from a point to the nearest centre line of any road but `road`. */
+function otherRoadDistance(road: (typeof LEIPALINGIS_ROADS)[number], x: number, z: number) {
+  let best = Infinity;
+  for (const other of LEIPALINGIS_ROADS) if (other !== road) for (let i = 1; i < other.points.length; i++) {
+    const [ax, az] = other.points[i - 1], [bx, bz] = other.points[i], vx = bx - ax, vz = bz - az, l2 = vx * vx + vz * vz || 1;
+    const t = Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / l2));
+    best = Math.min(best, Math.hypot(ax + vx * t - x, az + vz * t - z));
+  }
+  return best;
+}
+
+/** A straight stretch of road at least `min` cells long, well inside the map, with no other road within 2 cells of its middle. */
 function stretch(test: (r: (typeof LEIPALINGIS_ROADS)[number]) => boolean, min = 3) {
   for (const road of LEIPALINGIS_ROADS.filter(test)) for (let i = 1; i < road.points.length; i++) {
     const [ax, az] = road.points[i - 1], [bx, bz] = road.points[i], len = Math.hypot(bx - ax, bz - az);
-    if (len >= min && Math.min(ax, bx) > 20 && Math.min(az, bz) > 20 && Math.max(ax, bx) < 420 && Math.max(az, bz) < 300)
+    if (len >= min && Math.min(ax, bx) > 20 && Math.min(az, bz) > 20 && Math.max(ax, bx) < 420 && Math.max(az, bz) < 300
+      && otherRoadDistance(road, (ax + bx) / 2, (az + bz) / 2) > 2)
       return { road, ax, az, ux: (bx - ax) / len, uz: (bz - az) / len, len };
   }
   throw new Error('no such road');
@@ -40,6 +52,13 @@ describe('road surfaces', () => {
     const dashes = Array.from({ length: 24 }, (_, k) => roadDataAt(ax + ux * (.5 + k * .1), az + uz * (.5 + k * .1)).dash);
     expect(Math.min(...dashes)).toBeLessThan(.3);
     expect(Math.max(...dashes)).toBeGreaterThan(.6);
+  });
+  it('knows how far inside a road a point is, for grass and tufts beside it', () => {
+    const { road, ax, az, ux, uz, len } = stretch(r => roadKind(r) === 4);
+    const hw = roadHalfWidth(road), mx = ax + ux * len / 2, mz = az + uz * len / 2;
+    expect(roadEdgeAt(mx, mz)).toBeCloseTo(hw, 2);
+    expect(roadEdgeAt(mx - uz * (hw + .3), mz + ux * (hw + .3))).toBeCloseTo(-.3, 1);
+    expect(roadEdgeAt(mx - uz * 3, mz + ux * 3, 1.5)).toBe(-Infinity);
   });
   it('tells asphalt, gravel and farm tracks apart', () => {
     for (const kind of [1, 2, 3]) {

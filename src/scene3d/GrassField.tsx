@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import type { TerrainCell } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
 import { fbm, hash2 } from './terrainHeight';
-import { COVER_UV, meshHeight, ROAD_CLEARING, roadCell, trampleMap } from './groundCover';
+import { COVER_UV, meshHeight, ROAD_CLEARING, roadCell, trampleMap, TUFTS_ORDER } from './groundCover';
 import { roadEdgeAt } from './roadMaterial';
 import { ambienceUniforms } from './ambienceUniforms';
 
@@ -26,7 +26,7 @@ function tuftsFor(c: TerrainCell | undefined): { count: number; low: number; hig
   if (!c || c.bridge || c.prop || c.yard === 'courtyard') return null;
   // Its verge is pasture; its carriageway and shoulder cells too, beside the drawn road (checked tuft by tuft).
   if (c.roadName) return c.type === 'open' || roadCell(c) ? PASTURE_TUFTS : null;
-  if (c.type === 'tall_grass') return { count: 90, low: .1, high: .15, dry: .55 };
+  if (c.type === 'tall_grass') return { count: 90, low: .1, high: .15, dry: .78 };
   if (c.type === 'open') return c.yard ? { count: 16, low: .055, high: .085, dry: .15 } : PASTURE_TUFTS;
   return null;
 }
@@ -109,14 +109,15 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
   const uniforms = useMemo(() => ({ uCentre: { value: new THREE.Vector2() }, uRadius: { value: 10 }, uFade: { value: 0 },
     uTrample: { value: trampleMap(terrain).texture }, uCoverUv: { value: COVER_UV } }), [terrain]);
   const material = useMemo(() => {
-    const m = new THREE.MeshLambertMaterial({ map: meadowCard(card), alphaTest: .42, side: THREE.DoubleSide, alphaToCoverage: true });
+    // No depth written: units and rings are never hidden among the tufts (see TUFTS_ORDER).
+    const m = new THREE.MeshLambertMaterial({ map: meadowCard(card), alphaTest: .42, side: THREE.DoubleSide, alphaToCoverage: true, depthWrite: false });
     m.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, uniforms, { uTime: ambienceUniforms.uTime });
-      shader.vertexShader = 'uniform float uTime;\nuniform vec2 uCentre;\nuniform float uRadius;\nuniform float uFade;\nuniform sampler2D uTrample;\nuniform vec2 uCoverUv;\nvarying float vTip;\n'
+      shader.vertexShader = 'uniform float uTime;\nuniform vec2 uCentre;\nuniform float uRadius;\nuniform float uFade;\nuniform sampler2D uTrample;\nuniform vec2 uCoverUv;\nattribute float aDry;\nvarying float vTip;\nvarying float vDry;\n'
         + shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
           vec3 iPos = vec3(instanceMatrix[3]);
           float fade = uFade * (1.0 - smoothstep(uRadius * 0.7, uRadius, distance(iPos.xz, uCentre)));
-          vTip = position.y;
+          vTip = position.y; vDry = aDry;
           // The ground's wind waves bend the blades: the tips swing most.
           float ph = dot(iPos.xz, vec2(0.83, 0.56)) * 0.9 - uTime * 1.6;
           float sway = sin(ph) * 0.55 + sin(ph * 2.7 + iPos.x * 3.1) * 0.2 + 0.3;
@@ -126,19 +127,29 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
           transformed *= fade;
           // Driven over or trodden down: the tuft lies nearly flat.
           transformed.y *= 1.0 - texture2D(uTrample, iPos.xz * uCoverUv).r * 0.85;`);
-      shader.fragmentShader = 'varying float vTip;\n' + shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+      shader.fragmentShader = 'varying float vTip;\nvarying float vDry;\n' + shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
           // Shaded at the root, a little lighter at the tips.
           diffuseColor.rgb *= mix(vec3(0.84, 0.86, 0.8), vec3(1.1, 1.1, 1.0), vTip);`)
+        // Never brighter than the meadow round them: the card's sunlit blade
+        // highlights, tinted up like the rest, came out as yellow-white specks.
+        // Dry tufts take the straw of the tall meadow they stand in, keeping the card's light and shade
+        // (tinting the green card turned them into green, then orange, stars on the golden meadow).
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          float tl = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+          diffuseColor.rgb = mix(diffuseColor.rgb, tl * vec3(1.32, 1.0, 0.5), vDry);
+          diffuseColor.rgb *= min(1.0, 0.3 / max(tl, 1e-4));`)
         // Both faces of a card are lit as the meadow (normal up): the back face is not turned to the ground.
         .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n          normal = normalize( vNormal );');
     };
-    m.customProgramCacheKey = () => 'meadow-tufts-v8';
+    m.customProgramCacheKey = () => 'meadow-tufts-v10';
     return m;
   }, [card, uniforms]);
   useEffect(() => () => { material.map?.dispose(); material.dispose(); geometry.dispose(); }, [material, geometry]);
   const mesh = useMemo(() => {
+    geometry.setAttribute('aDry', new THREE.InstancedBufferAttribute(new Float32Array(MAX_TUFTS), 1));
     const im = new THREE.InstancedMesh(geometry, material, MAX_TUFTS);
     im.count = 0; im.frustumCulled = false; im.receiveShadow = true; im.castShadow = false;
+    im.renderOrder = TUFTS_ORDER;
     im.raycast = () => null;
     im.setColorAt(0, new THREE.Color(1, 1, 1));
     return im;
@@ -149,6 +160,7 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
 
   const rebuild = (cx: number, cz: number, r: number, density: number) => {
     const m = mesh.instanceMatrix.array as Float32Array;
+    const dryness = mesh.geometry.getAttribute('aDry') as THREE.InstancedBufferAttribute;
     let n = 0;
     const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(MAP_COLS - 1, Math.ceil(cx + r));
     const z0 = Math.max(0, Math.floor(cz - r)), z1 = Math.min(MAP_ROWS - 1, Math.ceil(cz + r));
@@ -168,17 +180,20 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
         const y = meshHeight(terrain, px, pz) - .004;
         // Column-major: x axis (width), y axis (height), z axis (width), position.
         m.set([c * w, 0, -s * w, 0, 0, h, 0, 0, s * w, 0, c * w, 0, px, y, pz, 1], n * 16);
-        const dry = Math.min(1, kind.dry + (fbm(px * .085 + 7.3, pz * .085 + 7.3) - .45) * .9);
+        const dry = Math.max(0, Math.min(1, kind.dry + (fbm(px * .085 + 7.3, pz * .085 + 7.3) - .45) * .9));
         const bright = .95 + hash2(px * 5.7, pz * 9.1) * .3;
-        // Fresh green to straw, a shade lighter than the photographed card so tufts catch the sun like the meadow.
+        // Fresh green to straw (the shader takes dry tufts to the meadow's straw), a shade lighter than
+        // the photographed card so tufts catch the sun like the meadow.
         colour.setRGB((1.17 + dry * .45) * bright, (1.52 + dry * .03) * bright, (.82 + dry * .02) * bright);
         mesh.setColorAt(n, colour);
+        dryness.setX(n, dry);
         n++;
       }
     }
     mesh.count = n;
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    dryness.needsUpdate = true;
   };
 
   useFrame(() => {
