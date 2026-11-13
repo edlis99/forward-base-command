@@ -351,6 +351,7 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
     roughnessMap: rough, roughness: 1, metalness: 0,
   });
   material.name = 'Poly Haven terrain';
+  // (Its roughness map has scattered near-mirror texels: on grass they caught the sun as specks.)
   const diffuse = SURFACES.map(s => groundTex(s, 'diffuse'));
   material.onBeforeCompile = shader => {
     SURFACES.forEach((_, i) => { shader.uniforms[`gDiff${i}`] = { value: diffuse[i] }; });
@@ -359,6 +360,8 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
     shader.uniforms.asphaltTex = { value: diffuse[5] };
     shader.uniforms.uTime = ambienceUniforms.uTime;
     shader.vertexShader = 'attribute vec3 splatA;\nattribute vec3 splatB;\nuniform float gTile;\nvarying vec3 vSplatA;\nvarying vec3 vSplatB;\nvarying vec2 gUv;\n' + shader.vertexShader;
+    // Grass, soil and fields are matte: never glossier than this (roads set their own below).
+    shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = max(roughnessFactor, 0.88);');
     let begin = '#include <begin_vertex>\nvSplatA = splatA; vSplatB = splatB; gUv = position.xz * gTile;';
     if (roads) {
       shader.uniforms.roadData = { value: roads };
@@ -442,7 +445,7 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
       // Roads have their own surface: asphalt smooth and fine-grained, gravel
       // and ruts rough, puddles and fresh paint glossier.
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, roadRough, roadW);')
+        .replace('roughnessFactor = max(roughnessFactor, 0.88);', 'roughnessFactor = mix(max(roughnessFactor, 0.88), roadRough, roadW);')
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         if (roadW > 0.002) {
           vec3 nA = texture2D(asphaltNormal, rw * 1.9).xyz * 2.0 - 1.0;
@@ -452,7 +455,7 @@ export function landscapeMaterial(_grain: THREE.Texture, roads: THREE.Texture | 
         }`);
     }
   };
-  material.customProgramCacheKey = () => `polyhaven-landscape-v10-${roads ? 'r' : 'n'}${grass ? 'g' : ''}`;
+  material.customProgramCacheKey = () => `polyhaven-landscape-v11-${roads ? 'r' : 'n'}${grass ? 'g' : ''}`;
   return material;
 }
 
