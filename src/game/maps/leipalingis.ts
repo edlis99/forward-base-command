@@ -150,7 +150,12 @@ function distToPath(x: number, y: number, path: Point[]) {
   return best;
 }
 
-export interface RoadCrossing { roads: Set<MapRoad>; width: number; info: NonNullable<TerrainCell['bridge']>; path: Point[] }
+/**
+ * A bridge. `embanked`: the road runs along the water on an embankment and the
+ * bridge carries it only where the stream passes under it, so the deck stops at
+ * its railings and the span's ends lie on the embankment.
+ */
+export interface RoadCrossing { roads: Set<MapRoad>; width: number; info: NonNullable<TerrainCell['bridge']>; path: Point[]; embanked?: boolean }
 
 interface Piece { road: MapRoad; reversed: boolean }
 interface Chain { pieces: Piece[]; roads: MapRoad[]; points: Point[] }
@@ -219,7 +224,8 @@ function sampleChain(points: Point[]) {
  */
 function crossingRuns(chain: Chain) {
   const { samples, at, length } = sampleChain(chain.points);
-  const runs: { run: ChainSample[]; width: number }[] = [];
+  /** `inner`: for a crossing part-way along a run beside the water, where the stream passes under the road (indices into `run`). */
+  const runs: { run: ChainSample[]; width: number; inner?: [number, number] }[] = [];
   for (let i = 0; i < samples.length; i++) {
     if (!wetAt(samples[i].x, samples[i].y)) continue;
     let j = i;
@@ -234,9 +240,27 @@ function crossingRuns(chain: Chain) {
     const width = Math.max(...chain.roads.map(r => r.width));
     const wetSide = (p: ChainSample, dir: number) =>
       [.3, .8, 1.4, 2].some(o => wetAt(p.x + p.nx * dir * (width / 2 + o), p.y + p.ny * dir * (width / 2 + o)));
-    const across = run.filter(p => wetSide(p, 1) && wetSide(p, -1)).length;
-    if (across < Math.max(2, run.length * .2)) continue;
-    runs.push({ run, width });
+    const both = run.map(p => wetSide(p, 1) && wetSide(p, -1)), across = both.filter(Boolean).length;
+    if (across >= Math.max(2, run.length * .2)) { runs.push({ run, width }); continue; }
+    // A road running along the water that crosses it part-way: the stream passes from one side of
+    // the road to the other. Only that stretch is a bridge; along the banks the road stays on its
+    // embankment (bridging the whole run laid a long deck beside the water, and leaving it out left
+    // the road under the water where the stream passes).
+    let from = -1, to = -2;
+    for (let a = 0; a < both.length; a++) {
+      if (!both[a]) continue;
+      let b = a;
+      while (b + 1 < both.length && both[b + 1]) b++;
+      if (b - a > to - from) { from = a; to = b; }
+      a = b;
+    }
+    if (to - from + 1 < 8) continue;
+    const side = (part: ChainSample[]) => Math.sign(part.filter(p => wetSide(p, 1) && !wetSide(p, -1)).length - part.filter(p => wetSide(p, -1) && !wetSide(p, 1)).length);
+    const before = side(run.slice(Math.max(0, from - 15), from)), after = side(run.slice(to + 1, to + 16));
+    if (!before || !after || before === after) continue;
+    // The span reaches a little over a cell onto the embankment each side, so its ends lie beyond the deck.
+    const lo = Math.max(0, from - 12), hi = Math.min(run.length - 1, to + 12);
+    runs.push({ run: run.slice(lo, hi + 1), width, inner: [from - lo, to - lo] });
   }
   return { samples, at, length, runs };
 }
@@ -245,18 +269,20 @@ function findCrossings(roads: MapRoad[]): RoadCrossing[] {
   const crossings: RoadCrossing[] = [];
   for (const chain of buildChains(roads)) {
     const { samples, at, length, runs } = crossingRuns(chain);
-    for (const { run, width } of runs) {
-      // The span runs from land to land: about a cell beyond the water at each end.
-      let sa = Math.max(0, run[0].s - 1), sb = Math.min(length, run[run.length - 1].s + 1);
-      while (sa > 0 && wetAt(...at(sa) as [number, number])) sa = Math.max(0, sa - .25);
-      while (sb < length && wetAt(...at(sb) as [number, number])) sb = Math.min(length, sb + .25);
+    for (const { run, width, inner } of runs) {
+      // The span runs from land to land: about a cell beyond the water at each end (or, part-way
+      // along a road on the bank, from embankment to embankment).
+      let sa = Math.max(0, run[0].s - (inner ? 0 : 1)), sb = Math.min(length, run[run.length - 1].s + (inner ? 0 : 1));
+      while (!inner && sa > 0 && wetAt(...at(sa) as [number, number])) sa = Math.max(0, sa - .25);
+      while (!inner && sb < length && wetAt(...at(sb) as [number, number])) sb = Math.min(length, sb + .25);
+      const wetFrom = run[inner ? inner[0] : 0].s, wetTo = run[inner ? inner[1] : run.length - 1].s;
       const path: Point[] = [at(sa)];
       for (const p of samples) if (p.s > sa && p.s < sb && Math.abs(p.s - Math.round(p.s)) < .05) path.push([p.x, p.y]);
       path.push(at(sb));
       // River direction at the crossing: abutments are built along the banks.
-      const m = at((run[0].s + run[run.length - 1].s) / 2), flow = riverAxis(m[0], m[1]) ?? undefined;
-      crossings.push({ roads: new Set(chain.roads), width, path, info: { a: at(sa), b: at(sb), width, paved: chain.roads.some(r => r.paved),
-        tin: (run[0].s - sa) / (sb - sa), tout: (run[run.length - 1].s - sa) / (sb - sa), flow } });
+      const m = at((wetFrom + wetTo) / 2), flow = riverAxis(m[0], m[1]) ?? undefined;
+      crossings.push({ roads: new Set(chain.roads), width, path, embanked: !!inner, info: { a: at(sa), b: at(sb), width, paved: chain.roads.some(r => r.paved),
+        tin: (wetFrom - sa) / (sb - sa), tout: (wetTo - sa) / (sb - sa), flow } });
     }
   }
   return crossings;
@@ -297,7 +323,9 @@ function straightenCrossings(roads: MapRoad[]) {
     // Highways keep their alignment (modern skew bridges); the fairness of the
     // two mains is measured along them.
     if (chain.roads.some(r => /primary/.test(r.class))) continue;
-    for (const { run, width } of runs) {
+    for (const { run, width, inner } of runs) {
+      // A crossing part-way along a road on the bank keeps the road's line.
+      if (inner) continue;
       const sIn = run[0].s, sOut = run[run.length - 1].s, sMid = (sIn + sOut) / 2;
       const mid = at(sMid), t0 = at(sMid - .5), t1 = at(sMid + .5);
       const tl = Math.hypot(t1[0] - t0[0], t1[1] - t0[1]) || 1, tangent = [(t1[0] - t0[0]) / tl, (t1[1] - t0[1]) / tl];
@@ -615,6 +643,12 @@ export function buildLeipalingis(grid: TerrainCell[][], rand: () => number, set:
         const idx = y * MAP_COLS + x;
         if (!waterBefore.has(idx)) continue;
         const d = distToPath(x + .5, y + .5, c.path);
+        if (c.embanked) {
+          // Only over the stream (as far as the railings): beyond, the road is on its embankment.
+          const [ax, ay] = c.info.a, [bx, by] = c.info.b, L = Math.hypot(bx - ax, by - ay) || 1;
+          const t = ((x + .5 - ax) * (bx - ax) + (y + .5 - ay) * (by - ay)) / (L * L);
+          if (t < c.info.tin - .35 / L || t > c.info.tout + .35 / L) continue;
+        }
         if (d <= c.width / 2 + .12 + .36) { if (!deckOf.has(idx)) deckOf.set(idx, c); }
         else if (d <= c.width / 2 + .45 + .36 + .3) keepWater.add(idx);
       }

@@ -110,7 +110,11 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
     uTrample: { value: trampleMap(terrain).texture }, uCoverUv: { value: COVER_UV } }), [terrain]);
   const material = useMemo(() => {
     // No depth written: units and rings are never hidden among the tufts (see TUFTS_ORDER).
-    const m = new THREE.MeshLambertMaterial({ map: meadowCard(card), alphaTest: .42, side: THREE.DoubleSide, alphaToCoverage: true, depthWrite: false });
+    // Plain alpha test, not alpha to coverage: High draws the scene for post-processing without
+    // multisampling, so coverage smoothed nothing, and a material using it is not drawn opaque. Its
+    // tufts' edges wrote part-transparent pixels, and the canvas is transparent, its sky a page
+    // element behind it: the pale sky showed through as cream specks all over the meadows.
+    const m = new THREE.MeshLambertMaterial({ map: meadowCard(card), alphaTest: .42, side: THREE.DoubleSide, depthWrite: false });
     m.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, uniforms, { uTime: ambienceUniforms.uTime });
       shader.vertexShader = 'uniform float uTime;\nuniform vec2 uCentre;\nuniform float uRadius;\nuniform float uFade;\nuniform sampler2D uTrample;\nuniform vec2 uCoverUv;\nattribute float aDry;\nvarying float vTip;\nvarying float vDry;\n'
@@ -130,18 +134,19 @@ function Tufts({ terrain }: { terrain: TerrainCell[][] }) {
       shader.fragmentShader = 'varying float vTip;\nvarying float vDry;\n' + shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
           // Shaded at the root, a little lighter at the tips.
           diffuseColor.rgb *= mix(vec3(0.84, 0.86, 0.8), vec3(1.1, 1.1, 1.0), vTip);`)
-        // Never brighter than the meadow round them: the card's sunlit blade
-        // highlights, tinted up like the rest, came out as yellow-white specks.
+        // Never brighter than the meadow round them (about 0.2 in pasture, 0.3 in the tall
+        // meadow): the card's sunlit blade highlights, tinted up like the rest, came out as
+        // yellow-white specks.
         // Dry tufts take the straw of the tall meadow they stand in, keeping the card's light and shade
         // (tinting the green card turned them into green, then orange, stars on the golden meadow).
         .replace('#include <color_fragment>', `#include <color_fragment>
           float tl = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
           diffuseColor.rgb = mix(diffuseColor.rgb, tl * vec3(1.32, 1.0, 0.5), vDry);
-          diffuseColor.rgb *= min(1.0, 0.3 / max(tl, 1e-4));`)
+          diffuseColor.rgb *= min(1.0, (0.18 + 0.12 * vDry) / max(tl, 1e-4));`)
         // Both faces of a card are lit as the meadow (normal up): the back face is not turned to the ground.
         .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n          normal = normalize( vNormal );');
     };
-    m.customProgramCacheKey = () => 'meadow-tufts-v10';
+    m.customProgramCacheKey = () => 'meadow-tufts-v11';
     return m;
   }, [card, uniforms]);
   useEffect(() => () => { material.map?.dispose(); material.dispose(); geometry.dispose(); }, [material, geometry]);

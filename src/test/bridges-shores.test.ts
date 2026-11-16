@@ -6,7 +6,7 @@ import { deckWidth } from '../game/terrain';
 import { spanBoxes } from '../scene3d/bridgeSpans';
 import { drivewaysIn } from '../scene3d/roadMaterial';
 import { mapSections } from '../scene3d/mapSections';
-import { LEIPALINGIS_ROADS, PLAYABLE_CELLS } from '../game/maps/leipalingis';
+import { LEIPALINGIS_ROADS, PLAYABLE_CELLS, ROAD_CROSSINGS } from '../game/maps/leipalingis';
 
 const terrain = generateTerrain('leipalingis_region', 1917);
 const cells = terrain.flat();
@@ -163,5 +163,50 @@ describe('bridges, shores and driveways', () => {
       }
     }
     setActiveTerrain(undefined);
+  });
+
+  it('carries every public road over the water it crosses: none runs under the water or dams a stream', () => {
+    const water = (x: number, y: number) => { const c = at(x, y); return !!c && c.type === 'water' && !c.bridge; };
+    for (const road of LEIPALINGIS_ROADS.filter(r => r.class !== 'track')) {
+      const hw = road.width / 2;
+      let under = 0, dammed = 0;
+      for (let i = 1; i < road.points.length; i++) {
+        const [ax, ay] = road.points[i - 1], [bx, by] = road.points[i], l = Math.hypot(bx - ax, by - ay), n = Math.max(1, Math.ceil(l / .1));
+        const nx = -(by - ay) / (l || 1), ny = (bx - ax) / (l || 1);
+        for (let k = 0; k < n; k++) {
+          const x = ax + (bx - ax) * k / n, y = ay + (by - ay) * k / n;
+          // The road's own line over open water (drawn under it), or a stream on both sides of it with no bridge.
+          under = water(x, y) ? under + 1 : 0;
+          const side = (d: number) => [.3, .7, 1.1].some(o => water(x + nx * d * (hw + o), y + ny * d * (hw + o)));
+          dammed = !at(x, y)?.bridge && side(1) && side(-1) ? dammed + 1 : 0;
+          expect(under, `${road.name} under water at (${x.toFixed(1)}, ${y.toFixed(1)})`).toBeLessThan(2);
+          expect(dammed, `${road.name} dams the water at (${x.toFixed(1)}, ${y.toFixed(1)})`).toBeLessThan(5);
+        }
+      }
+    }
+  });
+
+  it('lands no bridge on another road: a road joining at a bridge meets it on the bank', () => {
+    for (const c of ROAD_CROSSINGS) for (const end of [c.info.a, c.info.b]) for (const road of LEIPALINGIS_ROADS) {
+      if (c.roads.has(road)) continue;
+      // A road that ends at the bridge end joins there; one that runs on past it would carry the deck on its carriageway.
+      const ends = [road.points[0], road.points[road.points.length - 1]];
+      if (ends.some(e => Math.hypot(e[0] - end[0], e[1] - end[1]) < .3)) continue;
+      let d = Infinity;
+      for (let i = 1; i < road.points.length; i++) {
+        const [ax, ay] = road.points[i - 1], [bx, by] = road.points[i], vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy || 1;
+        const t = Math.max(0, Math.min(1, ((end[0] - ax) * vx + (end[1] - ay) * vy) / l2));
+        d = Math.min(d, Math.hypot(ax + vx * t - end[0], ay + vy * t - end[1]));
+      }
+      expect(d, `bridge end (${end[0].toFixed(1)}, ${end[1].toFixed(1)}) on ${road.name}`).toBeGreaterThan(road.width / 2);
+    }
+  });
+
+  it('bridges Radvilonių g. where the stream passes under it, between its stretches on the banks', () => {
+    const c = ROAD_CROSSINGS.find(x => [...x.roads].some(r => r.name === 'Radvilonių g.') && Math.hypot(x.info.a[0] - 18, x.info.a[1] - 118) < 3);
+    expect(c).toBeDefined();
+    expect(c!.embanked).toBe(true);
+    // A short span over the stream, not a long deck along the bank.
+    expect(Math.hypot(c!.info.b[0] - c!.info.a[0], c!.info.b[1] - c!.info.a[1])).toBeLessThan(4.5);
   });
 });
