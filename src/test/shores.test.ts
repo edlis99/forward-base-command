@@ -115,8 +115,8 @@ describe('shores: smooth water edges, banks beside roads', () => {
       }
     }
     expect(beside).toBeGreaterThan(1000);
-    // (It dipped by up to 0.9 cell over 72 cells of road before the banks.)
-    expect(tilted / beside).toBeLessThan(.01);
+    // (Before the banks: 15.6% of these stretches dipped by more than 0.1 cell, by up to 0.9.)
+    expect(tilted / beside).toBeLessThan(.005);
   });
 
   it('keeps the water off the lane: where a road runs beside water its edges stay above the surface', () => {
@@ -139,7 +139,7 @@ describe('shores: smooth water edges, banks beside roads', () => {
       }
     }
     expect(beside).toBeGreaterThan(1000);
-    // (Before the banks the water came up over the lane's edge in tens of places along Teiraus g. and others.)
-    expect(flooded / beside).toBeLessThan(.015);
+    // (Before the banks the water came up over the lane's edge at 2.8% of them, along Teiraus g. and others.)
+    expect(flooded / beside).toBeLessThan(.005);
   });
 });
