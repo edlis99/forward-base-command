@@ -72,15 +72,20 @@ export function useLakeWaterMaterial(): THREE.MeshPhysicalMaterial {
         float fresnel = pow(1.0 - facing, 3.3);
         // Cool sky reflection above muted green-blue inland freshwater.
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.49, 0.60, 0.64), fresnel * 0.66);
-        // Shallower water close to reeds/sandy banks reads slightly lighter.
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.37, 0.49, 0.40), vLakeShore * 0.24);
+        // Shallows (vLakeShore: 1 at the waterline, 0 a fifth of a cell out): a little lighter and greener, a
+        // faint pale line right at the edge. (Kept nearly opaque: clear shallows showed the ground mesh's blocks.)
+        float shallow = vLakeShore * vLakeShore * (3.0 - 2.0 * vLakeShore);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.30, 0.42, 0.34), shallow * 0.14);
+        diffuseColor.a *= 1.0 - shallow * 0.05;
+        float edge = smoothstep(0.92, 1.0, vLakeShore);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.68, 0.60), edge * 0.1);
         // A subtle fine sparkle, not bright white ocean foam.
         vec3 sun = normalize(mat3(viewMatrix) * vec3(0.68, 0.66, 0.34));
         float glint = pow(max(0.0, dot(reflect(-viewToEye, normal), sun)), 84.0);
         diffuseColor.rgb += vec3(0.55, 0.59, 0.50) * glint * 0.12;`,
       );
     };
-    water.customProgramCacheKey = () => 'inland-lake-water-v2';
+    water.customProgramCacheKey = () => 'inland-lake-water-v3';
     return water;
   }, [maps]);
   useEffect(() => () => material.dispose(), [material]);

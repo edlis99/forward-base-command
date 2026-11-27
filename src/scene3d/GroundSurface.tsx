@@ -8,13 +8,11 @@ import { createRoadData, landscapeMaterial } from './roadMaterial';
 import { makeGrainTexture } from './materials';
 import { buildGroundGeometry } from './groundGeometry';
 import { COVER_UV, grassMask, GROUND_ORDER, TUFTS_ORDER } from './groundCover';
-import { groundHeightAt, hash2, waterBedHeightAt } from './terrainHeight';
+import { groundHeightAt, hash2, smoothShoreShare, WATER_DEPTH, waterBedHeightAt } from './terrainHeight';
 import { useLakeWaterMaterial } from './LakeWaterMaterial';
 
 const W = MAP_COLS;
 const H = MAP_ROWS;
-/** Water surface above its bed: just under the lower banks of each lake. */
-const WATER_DEPTH = 0.42;
 
 /**
  * One continuous, vertex-coloured landscape mesh for the whole map.
@@ -51,8 +49,9 @@ function LakeSurface({ geometry }: { geometry: THREE.BufferGeometry }) {
 }
 
 /** Connected inland water sheet: one surface per lake (flat) or river
- * (following its level), extended one cell under the banks so the shoreline is
- * where the ground rises through the water, not the edge of square cells. */
+ * (following its level), extended a cell under the banks so the shoreline is
+ * where the ground rises through the water, not the edge of square cells.
+ * Corners lie two to a cell, so the shallows have their own gradient. */
 export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; section: MapSection }) {
   const geometry = useMemo(() => {
     const positions: number[] = [];
@@ -65,23 +64,14 @@ export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; sec
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (isWater(x + dx, y + dy)) return true;
       return false;
     };
-    const cornerWetness = (cx: number, cy: number) => {
-      let n = 0;
-      if (isWater(cx - 1, cy - 1)) n++;
-      if (isWater(cx, cy - 1)) n++;
-      if (isWater(cx - 1, cy)) n++;
-      if (isWater(cx, cy)) n++;
-      return n / 4;
-    };
-    const cornerOffset = (cx: number, cy: number) => ({
-      x: (hash2(cx * 5.3, cy * 7.1) - 0.5) * 0.32,
-      z: (hash2(cx * 9.7, cy * 3.9) - 0.5) * 0.32,
-    });
+    // The water's smooth share at a corner: the shoreline's own curve, not the cells'.
+    const cornerWetness = (px: number, pz: number) => smoothShoreShare(terrain, px, pz);
     // Surface level at a corner from the nearest water cells only; dry corners
     // of the bank ring take the level of the water beside them.
-    const cornerLevel = (cx: number, cy: number, px: number, pz: number) => {
+    const cornerLevel = (px: number, pz: number) => {
       const bed = waterBedHeightAt(terrain, px, pz);
       if (bed !== undefined) return bed + WATER_DEPTH;
+      const cx = Math.round(px), cy = Math.round(pz);
       let sum = 0, n = 0;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const b = waterBedHeightAt(terrain, cx + dx, cy + dy);
@@ -89,30 +79,41 @@ export function WaterSheet({ terrain, section }: { terrain: TerrainCell[][]; sec
       }
       return n ? sum / n + WATER_DEPTH : undefined;
     };
+    // Corners, two a cell, computed from their lattice position alone so neighbouring
+    // quads and streaming section borders match exactly: [height, shallowness].
+    const corners = new Map<number, [number, number] | null>();
+    const corner = (i: number, j: number): [number, number] | null => {
+      const key = j * 4096 + i;
+      let c = corners.get(key);
+      if (c !== undefined) return c;
+      const px = i / 2, pz = j / 2, level = cornerLevel(px, pz);
+      if (level === undefined) { corners.set(key, null); return null; }
+      const wet = cornerWetness(px, pz), ground = groundHeightAt(terrain, px, pz);
+      // On dry corners tuck the sheet under the bank: it never floats over grass. Corners that are mostly
+      // water (narrow rivers too) hold the true surface, blending between over the shore.
+      const hold = Math.max(0, Math.min(1, (wet - .4) / .4)), tucked = Math.min(level, ground - 0.08 + wet * 0.16);
+      const height = tucked + (level - tucked) * hold * hold * (3 - 2 * hold);
+      // How shallow the water is: 1 at the waterline, 0 from about a fifth of a cell deep.
+      const depth = Math.max(0, Math.min(1, (height - ground) / 0.22));
+      c = [height, 1 - depth * depth * (3 - 2 * depth)];
+      corners.set(key, c);
+      return c;
+    };
     let base = 0;
     for (let y = section.y; y < section.y + section.height; y++)
       for (let x = section.x; x < section.x + section.width; x++) {
         if (!isWater(x, y) && !nearWater(x, y)) continue;
-        const corners: Array<[number, number]> = [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]];
-        const verts: number[] = [], vertShores: number[] = [];
-        for (const [cx, cy] of corners) {
-          // Corners are computed from their grid key alone, so neighbouring
-          // quads and streaming section borders match exactly.
-          const offset = cornerOffset(cx, cy);
-          const wet = cornerWetness(cx, cy);
-          const px = cx + offset.x, pz = cy + offset.z;
-          const level = cornerLevel(cx, cy, px, pz);
-          if (level === undefined) break;
-          // On dry corners tuck the sheet under the bank: it never floats over grass.
-          const height = wet < 1 ? Math.min(level, groundHeightAt(terrain, px, pz) - 0.08 + wet * 0.3) : level;
-          verts.push(px, height, pz);
-          vertShores.push(1 - wet);
+        for (let sj = 0; sj < 2; sj++) for (let si = 0; si < 2; si++) {
+          const i = x * 2 + si, j = y * 2 + sj;
+          const quad = [corner(i, j), corner(i + 1, j), corner(i, j + 1), corner(i + 1, j + 1)];
+          if (quad.some(c => c === null)) continue;
+          [[i, j], [i + 1, j], [i, j + 1], [i + 1, j + 1]].forEach(([ci, cj], k) => {
+            positions.push(ci / 2, quad[k]![0], cj / 2);
+            shores.push(quad[k]![1]);
+          });
+          indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+          base += 4;
         }
-        if (verts.length < 12) continue;
-        positions.push(...verts);
-        shores.push(...vertShores);
-        indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
-        base += 4;
       }
     if (!positions.length) return null;
     const geo = new THREE.BufferGeometry();

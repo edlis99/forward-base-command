@@ -33,11 +33,18 @@ describe('ground shading', () => {
     expect(groundShader(true)).toContain('mix(max(roughnessFactor, 0.88), roadRough, roadW)');
   });
 
-  it('draws nothing with alpha to coverage: the canvas is transparent (its sky is a page element behind it), so such part-transparent pixels let the sky through', () => {
+  it('draws nothing with alpha to coverage: three.js does not draw such a material opaque, and its part-transparent pixels let whatever is behind the canvas through', () => {
     const dir = join(__dirname, '../scene3d');
     for (const file of readdirSync(dir).filter(f => /\.tsx?$/.test(f))) {
       const source = readFileSync(join(dir, file), 'utf8');
       expect(/alphaToCoverage\s*[:=]\s*\{?\s*true/.test(source), file).toBe(false);
     }
+  });
+
+  it('draws the battlefield on an opaque canvas, cleared to the haze colour: no pixel can show the page behind it', () => {
+    const source = readFileSync(join(__dirname, '../scene3d/Scene3D.tsx'), 'utf8');
+    const canvas = source.slice(source.indexOf('<Canvas'), source.indexOf('<fog'));
+    expect(canvas).toMatch(/gl=\{\{[^}]*\balpha:\s*false\b/);
+    expect(canvas).toMatch(/setClearColor\('#b6c5cf',\s*1\)/);
   });
 });
