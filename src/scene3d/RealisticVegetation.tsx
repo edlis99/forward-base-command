@@ -48,6 +48,13 @@ function scatter(terrain: TerrainCell[][], section: MapSection): NatureLayout {
   for (let z = section.y; z < section.y + section.height; z++)
     for (let x = section.x; x < section.x + section.width; x++) {
       if (terrain[z][x].type !== 'forest') { villageTrees(terrain, x, z, result.broadleaf); continue; }
+      // Nothing grows on a speck of land in the middle of a lake: a forest cell nearly surrounded by water.
+      let wet = 0;
+      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const around = terrain[z + dz]?.[x + dx];
+        if ((dx || dz) && around && (around.type === 'water' || around.bridge)) wet++;
+      }
+      if (wet >= 5) continue;
       const edge = terrain[z - 1]?.[x]?.type !== 'forest'
         || terrain[z + 1]?.[x]?.type !== 'forest'
         || terrain[z]?.[x - 1]?.type !== 'forest'

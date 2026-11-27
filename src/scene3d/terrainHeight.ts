@@ -1,6 +1,7 @@
 import { TerrainCell, TerrainType } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
 import { geography } from '../game/maps/geography';
+import { LEIPALINGIS_ROADS } from '../game/maps/leipalingis';
 import { deckWidth } from '../game/terrain';
 
 // The designed Leipalingis map carries real hills in its height map (they block
@@ -35,6 +36,9 @@ export const RELIEF: Record<TerrainType | string, number> = {
   gravel: 0.35, urban: 0.15, wall: 0.3, rubble: 1.2, sandbag: 0.8,
   mud: 0.9, crater: 1.3, trench: 0.5, water: 0.25,
 };
+
+/** Water surface above its bed: just under the lower banks of each lake. */
+export const WATER_DEPTH = 0.42;
 
 export function hash2(x: number, y: number) {
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
@@ -125,13 +129,189 @@ export function groundHeightAt(terrain: TerrainCell[][] | undefined, gx: number,
   return heightAt(terrain, gx, gz, deck ? 'deck' : 'bed');
 }
 
-/** `road` treats bridge cells as plain road (used only to find deck end heights). */
-function heightAt(terrain: TerrainCell[][] | undefined, gx: number, gz: number, mode: HeightMode): number {
-  if (!terrain || terrain.length === 0) return 0;
-  if (mode === 'deck') {
-    const deck = deckAt(terrain, gx, gz);
-    if (deck) return deckSurfaceAt(terrain, deck, gx, gz);
+/**
+ * Shores. The edge of the water is a smooth curve, not the squares of the cell grid: the water's
+ * share at a point is the cell raster (water cells, and the river under bridges, counting as 1)
+ * blurred by a Gaussian a little under a cell wide, exactly, cell by cell. The ground falls from
+ * its land level to the lake bed as that share rises through SHORE_FROM..SHORE_TO, so the
+ * waterline (where the ground meets the water's surface) is a contour of a smooth field: rounded
+ * corners, no stairs. It stays within a third of the cell grid's own share (a one-cell pond is
+ * still water, a one-cell spit of land still land). Visual only: units keep walking on the same
+ * cells.
+ */
+const SHORE_SIGMA = .7, SHORE_FROM = .12, SHORE_TO = .75;
+const isWater = (c: TerrainCell | undefined) => !!c && c.type === 'water' && !c.bridge;
+const isWet = (c: TerrainCell | undefined) => !!c && (c.type === 'water' || !!c.bridge);
+
+/** Standard normal cumulative distribution (Abramowitz and Stegun 7.1.26 for the error function). */
+function phi(x: number) {
+  const z = Math.abs(x) / Math.SQRT2, t = 1 / (1 + .3275911 * z);
+  const erf = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - .284496736) * t + .254829592) * t * Math.exp(-z * z);
+  return .5 * (1 + Math.sign(x) * erf);
+}
+
+/** Per cell: 0 with no water within three cells, 2 with water in every cell of the 7 x 7 round it, else 1. */
+const shoreFlags = new WeakMap<TerrainCell[][], Uint8Array>();
+function shoreFlagsOf(terrain: TerrainCell[][]): Uint8Array {
+  let flags = shoreFlags.get(terrain);
+  if (flags) return flags;
+  // A summed-area table of the water cells: any count in a window in constant time.
+  const sat = new Int32Array((W + 1) * (H + 1));
+  for (let y = 0; y < H; y++) {
+    let row = 0;
+    for (let x = 0; x < W; x++) {
+      row += isWet(terrain[y]?.[x]) ? 1 : 0;
+      sat[(y + 1) * (W + 1) + x + 1] = sat[y * (W + 1) + x + 1] + row;
+    }
   }
+  flags = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const x0 = Math.max(0, x - 3), x1 = Math.min(W, x + 4), y0 = Math.max(0, y - 3), y1 = Math.min(H, y + 4);
+    const n = sat[y1 * (W + 1) + x1] - sat[y0 * (W + 1) + x1] - sat[y1 * (W + 1) + x0] + sat[y0 * (W + 1) + x0];
+    flags[y * W + x] = n === 0 ? 0 : n === (x1 - x0) * (y1 - y0) && x1 - x0 === 7 && y1 - y0 === 7 ? 2 : 1;
+  }
+  shoreFlags.set(terrain, flags);
+  return flags;
+}
+
+/**
+ * The water's smooth share (0 to 1) at a point: the cell raster blurred by a Gaussian of
+ * `sigma` cells (the window reaches 3 sigma, at most 3 cells).
+ */
+export function shoreWetness(terrain: TerrainCell[][], gx: number, gz: number, sigma = SHORE_SIGMA): number {
+  const cx = Math.max(0, Math.min(W - 1, Math.floor(gx))), cz = Math.max(0, Math.min(H - 1, Math.floor(gz)));
+  const flag = shoreFlagsOf(terrain)[cz * W + cx];
+  if (flag !== 1) return flag === 2 ? 1 : 0;
+  const reach = Math.min(3, 3 * sigma), x0 = Math.floor(gx - reach), x1 = Math.floor(gx + reach), z0 = Math.floor(gz - reach), z1 = Math.floor(gz + reach);
+  const wx: number[] = [], wz: number[] = [];
+  for (let k = x0; k <= x1; k++) wx.push(phi((k + 1 - gx) / sigma) - phi((k - gx) / sigma));
+  for (let k = z0; k <= z1; k++) wz.push(phi((k + 1 - gz) / sigma) - phi((k - gz) / sigma));
+  let wet = 0, total = 0;
+  for (let k = z0; k <= z1; k++) for (let i = x0; i <= x1; i++) {
+    const w = wx[i - x0] * wz[k - z0];
+    total += w;
+    if (isWet(terrain[Math.max(0, Math.min(H - 1, k))]?.[Math.max(0, Math.min(W - 1, i))])) wet += w;
+  }
+  return total > 0 ? wet / total : 0;
+}
+
+/**
+ * How far the ground has fallen to the lake bed (0 land, 1 bed) at a given water share: half a
+ * straight ramp, half a smooth step, so it keeps a slope where it starts (a low shore, level
+ * with the water, would otherwise hover at the surface and break into polygon islets).
+ */
+const shoreProfile = (share: number) => {
+  const s = Math.max(0, Math.min(1, (share - SHORE_FROM) / (SHORE_TO - SHORE_FROM)));
+  return .5 * s + .5 * s * s * (3 - 2 * s);
+};
+
+/**
+ * Banks beside roads. A road beside water runs on a bank: out to BANK_LEVEL cells beyond its
+ * carriageway the ground stays at the road's own level, then falls to the water over BANK_FALL
+ * cells. (Without it the ground fell towards the lake bed from the road's own cells: the water
+ * came up over the lane's edge, the lane tilted towards it and its edge line wandered.) The river
+ * under and beside a bridge is left open. Per ground-mesh vertex (two a cell): how far the
+ * water there is banked up (0 to 1).
+ */
+const BANK_LEVEL = .5, BANK_FALL = 1.1, BANK_SUB = 2;
+/**
+ * The river stays open beside a deck: this far beyond its half width, the banks returning over the
+ * next BANK_OPEN_FADE; and along it only as far as the deck's ends, the banks returning over
+ * BANK_END_FADE beyond them (the road on the bank there keeps its level ground).
+ */
+const BANK_OPEN = 1.15, BANK_OPEN_FADE = .8, BANK_END_FADE = .4;
+const BANK_W = W * BANK_SUB + 1, BANK_H = H * BANK_SUB + 1;
+const roadBanks = new WeakMap<TerrainCell[][], Float32Array | null>();
+
+function roadBankGrid(terrain: TerrainCell[][]): Float32Array | null {
+  const cached = roadBanks.get(terrain);
+  if (cached !== undefined) return cached;
+  let share: Float32Array | null = null;
+  // Only on the map these roads are painted on.
+  const painted = terrain.length === H && LEIPALINGIS_ROADS.slice(0, 12).some(r => {
+    const [x, y] = r.points[Math.floor(r.points.length / 2)];
+    return !!terrain[Math.floor(y)]?.[Math.floor(x)]?.roadName;
+  });
+  if (painted) {
+    const flags = shoreFlagsOf(terrain), n = BANK_W * BANK_H;
+    share = new Float32Array(n);
+    const open = new Float32Array(n).fill(1);
+    /** Every grid vertex within `reach` of a point. */
+    const around = (px: number, py: number, reach: number, fn: (k: number, d: number) => void) => {
+      const i0 = Math.max(0, Math.ceil((px - reach) * BANK_SUB)), i1 = Math.min(BANK_W - 1, Math.floor((px + reach) * BANK_SUB));
+      const j0 = Math.max(0, Math.ceil((py - reach) * BANK_SUB)), j1 = Math.min(BANK_H - 1, Math.floor((py + reach) * BANK_SUB));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const d = Math.hypot(i / BANK_SUB - px, j / BANK_SUB - py);
+        if (d <= reach) fn(j * BANK_W + i, d);
+      }
+    };
+    const smooth = (t: number) => { const c = Math.max(0, Math.min(1, t)); return c * c * (3 - 2 * c); };
+    for (const road of LEIPALINGIS_ROADS) {
+      const hw = (road.class === 'track' ? Math.max(road.width, .32) : road.width) / 2;
+      for (let seg = 1; seg < road.points.length; seg++) {
+        const [ax, ay] = road.points[seg - 1], [bx, by] = road.points[seg], steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / .2));
+        for (let st = 0; st <= steps; st++) {
+          const px = ax + (bx - ax) * st / steps, py = ay + (by - ay) * st / steps, cx = Math.floor(px), cy = Math.floor(py);
+          const cell = terrain[cy]?.[cx];
+          if (!cell || !flags[cy * W + cx]) continue;
+          // (A road's stretch on a deck makes no bank: the river runs under it.)
+          if (cell.bridge) continue;
+          around(px, py, hw + BANK_LEVEL + BANK_FALL, (k, d) => { share[k] = Math.max(share[k], 1 - smooth((d - hw - BANK_LEVEL) / BANK_FALL)); });
+        }
+      }
+    }
+    // The river stays open under and beside each bridge's deck.
+    const decks = new Set<NonNullable<TerrainCell['bridge']>>();
+    for (const row of terrain) for (const c of row) if (c.bridge) decks.add(c.bridge);
+    for (const b of decks) {
+      const [ax, ay] = b.a, [bx, by] = b.b, L = Math.hypot(bx - ax, by - ay) || 1, ux = (bx - ax) / L, uy = (by - ay) / L, half = deckWidth(b) / 2;
+      const reach = half + BANK_OPEN + BANK_OPEN_FADE + BANK_END_FADE + .5, mx = (ax + bx) / 2, my = (ay + by) / 2;
+      around(mx, my, L / 2 + reach, (k) => {
+        const px = (k % BANK_W) / BANK_SUB - ax, py = Math.floor(k / BANK_W) / BANK_SUB - ay;
+        const along = px * ux + py * uy, across = Math.abs(-px * uy + py * ux);
+        const lateral = smooth((across - half - BANK_OPEN) / BANK_OPEN_FADE);
+        const ends = smooth((along < 0 ? -along : along > L ? along - L : 0) / BANK_END_FADE);
+        open[k] = Math.min(open[k], Math.max(lateral, ends));
+      });
+    }
+    for (let k = 0; k < n; k++) share[k] *= open[k];
+  }
+  roadBanks.set(terrain, share);
+  return share;
+}
+
+/** How far the water at a point is banked up by a road beside it (0 to 1). */
+function roadBankAt(terrain: TerrainCell[][], gx: number, gz: number) {
+  const grid = roadBankGrid(terrain);
+  if (!grid) return 0;
+  const u = Math.max(0, Math.min(BANK_W - 1.001, gx * BANK_SUB)), v = Math.max(0, Math.min(BANK_H - 1.001, gz * BANK_SUB));
+  const i = Math.floor(u), j = Math.floor(v), fx = u - i, fz = v - j, k = j * BANK_W + i;
+  return (grid[k] * (1 - fx) + grid[k + 1] * fx) * (1 - fz) + (grid[k + BANK_W] * (1 - fx) + grid[k + BANK_W + 1] * fx) * fz;
+}
+
+/**
+ * The water's smooth share at a point, held within a band round the plain grid's share (the four
+ * nearest cells, bilinear), and pinned to it at each cell's centre: a water cell's centre is
+ * always under the water, a land cell's never, so a one-cell pond stays a pond and a one-cell
+ * spit stays land. Towards the cell edges, where waterlines run, the smooth share takes over.
+ */
+export function smoothShoreShare(terrain: TerrainCell[][], gx: number, gz: number) {
+  const smooth = shoreWetness(terrain, gx, gz);
+  if (smooth <= 0 || smooth >= 1) return smooth;
+  let grid = 0;
+  for (const [c, w] of cellsAround(terrain, gx, gz)) if (isWet(c)) grid += w;
+  const centre = Math.hypot(gx - Math.floor(gx) - .5, gz - Math.floor(gz) - .5), k = Math.max(0, Math.min(1, centre / .3));
+  const free = Math.max(.7 * grid, Math.min(.3 + .7 * grid, smooth));
+  return grid + (free - grid) * k * k * (3 - 2 * k);
+}
+
+/** How much of the ground at a point has fallen to the lake bed: the shore's profile, less the road bank. */
+export function wetGroundShare(terrain: TerrainCell[][], gx: number, gz: number, share = smoothShoreShare(terrain, gx, gz)) {
+  return share <= 0 ? 0 : shoreProfile(share) * (1 - roadBankAt(terrain, gx, gz));
+}
+
+/** The four cells round a point with their bilinear weights. */
+function cellsAround(terrain: TerrainCell[][], gx: number, gz: number): Array<[TerrainCell, number]> {
   const cellAt = (cx: number, cy: number): TerrainCell => {
     const row = terrain[Math.max(0, Math.min(H - 1, cy))] ?? terrain[0];
     return row[Math.max(0, Math.min(W - 1, cx))] ?? row[0];
@@ -139,21 +319,69 @@ function heightAt(terrain: TerrainCell[][] | undefined, gx: number, gz: number, 
   const u = gx - 0.5, v = gz - 0.5;
   const ix = Math.floor(u), iz = Math.floor(v);
   const fx = u - ix, fz = v - iz;
-  const wts: Array<[TerrainCell, number]> = [
+  return [
     [cellAt(ix, iz), (1 - fx) * (1 - fz)],
     [cellAt(ix + 1, iz), fx * (1 - fz)],
     [cellAt(ix, iz + 1), (1 - fx) * fz],
     [cellAt(ix + 1, iz + 1), fx * fz],
   ];
-  let level = 0, relief = 0, elev = 0, deckSum = 0;
-  for (const [c, w] of wts) {
+}
+
+/** A cell's contribution to the ground: soil level, how strongly relief shows, and elevation. */
+function cellGround(c: TerrainCell, riverBed: boolean) {
+  return {
+    level: riverBed ? GROUND_LEVEL.water : c.roadName ? 0 : GROUND_LEVEL[c.type] ?? 0,
+    relief: riverBed ? RELIEF.water : c.roadName ? 1 : RELIEF[c.type] ?? 1,
+    elev: (c.elevation ?? 1) - 1,
+  };
+}
+
+/** Land (or water) ground values from the nearest such cells, for a point with none among its own four. */
+function nearbyGround(terrain: TerrainCell[][], gx: number, gz: number, water: boolean, mode: HeightMode) {
+  let w = 0, level = 0, relief = 0, elev = 0;
+  const cx = Math.floor(gx), cz = Math.floor(gz);
+  for (let dz = -3; dz <= 3; dz++) for (let dx = -3; dx <= 3; dx++) {
+    const c = terrain[cz + dz]?.[cx + dx];
+    if (!c) continue;
+    const riverBed = !!c.bridge && mode === 'bed', wet = riverBed || isWater(c);
+    if (wet !== water || (c.bridge && mode === 'deck')) continue;
+    const weight = 1 / (Math.hypot(cx + dx + .5 - gx, cz + dz + .5 - gz) ** 2 + .25), g = cellGround(c, riverBed);
+    w += weight; level += g.level * weight; relief += g.relief * weight; elev += g.elev * weight;
+  }
+  return w > 0 ? { level: level / w, relief: relief / w, elev: elev / w } : water ? { level: GROUND_LEVEL.water, relief: RELIEF.water, elev: 0 } : { level: 0, relief: 1, elev: 0 };
+}
+
+/** `road` treats bridge cells as plain road (used only to find deck end heights). */
+function heightAt(terrain: TerrainCell[][] | undefined, gx: number, gz: number, mode: HeightMode): number {
+  if (!terrain || terrain.length === 0) return 0;
+  if (mode === 'deck') {
+    const deck = deckAt(terrain, gx, gz);
+    if (deck) return deckSurfaceAt(terrain, deck, gx, gz);
+  }
+  // The land's part of the ground apart from the water's (a river bed, and the river under a bridge).
+  const land = { w: 0, level: 0, relief: 0, elev: 0 }, water = { w: 0, level: 0, relief: 0, elev: 0 };
+  let deckSum = 0;
+  for (const [c, w] of cellsAround(terrain, gx, gz)) {
     if (w <= 0 || !c) continue;
     if (c.bridge && mode === 'deck') { deckSum += w * bridgeDeckAt(terrain, c.bridge, gx, gz); continue; }
-    const bed = !!c.bridge && mode === 'bed';
-    level += (bed ? GROUND_LEVEL.water : c.roadName ? 0 : GROUND_LEVEL[c.type] ?? 0) * w;
-    relief += (bed ? RELIEF.water : c.roadName ? 1 : RELIEF[c.type] ?? 1) * w;
-    elev += ((c.elevation ?? 1) - 1) * w;
+    const riverBed = !!c.bridge && mode === 'bed', g = cellGround(c, riverBed), part = riverBed || isWater(c) ? water : land;
+    part.w += w; part.level += g.level * w; part.relief += g.relief * w; part.elev += g.elev * w;
   }
+  // Where the road surface is wanted, and away from any water, the cells' own blend.
+  const shore = mode === 'road' ? 0 : smoothShoreShare(terrain, gx, gz), share = wetGroundShare(terrain, gx, gz, shore);
+  const total = land.w + water.w;
+  let level = land.level, relief = land.relief, elev = land.elev;
+  if (water.w > 0 || share > 0) {
+    // The ground mixes from its land values to the river bed's by the shore's smooth share.
+    const L = land.w > 1e-6 ? { level: land.level / land.w, relief: land.relief / land.w, elev: land.elev / land.w } : nearbyGround(terrain, gx, gz, false, mode);
+    const Wt = water.w > 1e-6 ? { level: water.level / water.w, relief: water.relief / water.w, elev: water.elev / water.w } : nearbyGround(terrain, gx, gz, true, mode);
+    level = total * (L.level * (1 - share) + Wt.level * share);
+    relief = total * (L.relief * (1 - share) + Wt.relief * share);
+    elev = total * (L.elev * (1 - share) + Wt.elev * share);
+  }
+  // The ground is graded towards the water: the hills' noise fades out over the last cell or two, so
+  // the waterline is a smooth curve and not a scatter of islets where a low shore meets the surface.
+  if (shore > 0) { const g = Math.max(0, Math.min(1, (shore - .02) / .38)); relief *= 1 - .8 * g * g * (3 - 2 * g); }
   const hills = (fbm(gx * 0.03, gz * 0.03) - 0.5) * 2.4 * BUMP_SCALE;
   const mid = (fbm(gx * 0.11, gz * 0.11) - 0.5) * 0.36;
   const fine = (fbm(gx * 0.45, gz * 0.45) - 0.5) * 0.06;

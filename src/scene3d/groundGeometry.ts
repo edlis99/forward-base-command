@@ -3,7 +3,7 @@ import { TerrainCell, TerrainType } from '../game/types';
 import { MAP_COLS, MAP_ROWS } from '../game/constants';
 import { MapSection } from './mapSections';
 import { SURFACES, surfaceFor } from './groundTextures';
-import { groundHeightAt, hash2, fbm } from './terrainHeight';
+import { groundHeightAt, hash2, fbm, shoreWetness, wetGroundShare } from './terrainHeight';
 
 const W = MAP_COLS;
 const H = MAP_ROWS;
@@ -58,26 +58,19 @@ export function buildGroundGeometry(terrain: TerrainCell[][], section: MapSectio
   const tmp = new THREE.Color();
   const bank = new THREE.Color('#7b6c4c');
 
-  // Shore band: damp, muddy-sandy ground on land within two cells of water
-  // (roads excluded). Weighted per cell, blended per vertex like the soil.
-  const isWet = (cx: number, cy: number) => {
-    const c = terrain[cy]?.[cx];
-    return !!c && (c.type === 'water' || !!c.bridge);
-  };
-  const shoreCache = new Map<number, number>();
-  const shoreOf = (cx: number, cy: number) => {
-    const key = cy * W + cx;
-    let v = shoreCache.get(key);
-    if (v === undefined) {
-      const c = cellAt(cx, cy);
-      v = 0;
-      if (isWet(cx, cy)) v = 1;
-      else if (!c.roadName) for (let dy = -2; dy <= 2 && v < 1; dy++) for (let dx = -2; dx <= 2; dx++) {
-        if (isWet(cx + dx, cy + dy)) v = Math.max(v, Math.max(Math.abs(dx), Math.abs(dy)) === 1 ? 1 : .3);
-      }
-      shoreCache.set(key, v);
+  // The nearest land (or water) cell to a point: the soil a bank over former water takes, or the bed of a
+  // water share found where none of a point's own four cells is water.
+  const isWet = (c: TerrainCell | undefined) => !!c && (c.type === 'water' || !!c.bridge);
+  const nearestCell = (gx: number, gz: number, wet: boolean): TerrainCell => {
+    const cx = Math.floor(gx), cz = Math.floor(gz);
+    let best = cellAt(cx, cz), bestD = Infinity;
+    for (let dz = -3; dz <= 3; dz++) for (let dx = -3; dx <= 3; dx++) {
+      const c = terrain[cz + dz]?.[cx + dx];
+      if (!c || isWet(c) !== wet) continue;
+      const d = Math.hypot(cx + dx + .5 - gx, cz + dz + .5 - gz);
+      if (d < bestD) { bestD = d; best = c; }
     }
-    return v;
+    return best;
   };
 
   for (let j = 0; j < nz; j++) {
@@ -96,19 +89,44 @@ export function buildGroundGeometry(terrain: TerrainCell[][], section: MapSectio
       ];
 
       const o = (j * nx + i) * 3;
-      let r = 0, g = 0, b = 0, shore = 0;
-      [[ix, iz], [ix + 1, iz], [ix, iz + 1], [ix + 1, iz + 1]].forEach(([cx, cy], k) => { shore += shoreOf(cx, cy) * wts[k][1]; });
+      let r = 0, g = 0, b = 0;
+      // The soil is the land's, mixing into the river bed's by the shore's smooth share (the same one
+      // that lowers the ground), so the colours follow the curve of the water's edge, not the cells.
+      const bed = wetGroundShare(terrain, gx, gz);
+      let landW = 0, bedW = 0, roadShare = 0;
+      const landCells: Array<[TerrainCell, number]> = [], bedCells: Array<[TerrainCell, number]> = [];
       for (const [c, w] of wts) {
         if (w <= 0) continue;
-        const surface = SURFACES.indexOf(surfaceFor(c, regional));
-        if (surface < 3) splatA[o + surface] += w;
-        else splatB[o + surface - 3] += w;
-        tmp.setStyle(c.yard ? ({ courtyard: '#aaa28a', garden: '#7d8d54', orchard: '#72854b' }[c.yard]) : GROUND_TINT[regional && c.roadName ? 'open' : c.type] ?? '#5c7042');
-        r += tmp.r * w; g += tmp.g * w; b += tmp.b * w;
+        if (isWet(c)) { bedW += w; bedCells.push([c, w]); }
+        else { landW += w; landCells.push([c, w]); if (c.roadName) roadShare += w; }
+      }
+      // The soil turns to the bed's (dark, damp dirt) faster than the ground falls: a shallow bed under clear water
+      // would otherwise read as a flooded meadow.
+      const soil = Math.min(1, bed * 2.4);
+      const normalised = (cells: Array<[TerrainCell, number]>, total: number) => cells.map(([c, w]) => [c, w / total] as [TerrainCell, number]);
+      // Away from water the cells' own blend; at a shore each side renormalised, then mixed (a side with
+      // no cell of its own among the four takes the nearest one's soil).
+      const groups: Array<[Array<[TerrainCell, number]>, number]> = bed <= 0 && bedW <= 0 ? [[landCells, 1]] : [
+        [landW > 1e-6 ? normalised(landCells, landW) : [[nearestCell(gx, gz, false), 1]], 1 - soil],
+        [bedW > 1e-6 ? normalised(bedCells, bedW) : [[nearestCell(gx, gz, true), 1]], soil],
+      ];
+      for (const [cells, share] of groups) {
+        if (share <= 0) continue;
+        for (const [c, w0] of cells) {
+          const w = w0 * share;
+          const surface = SURFACES.indexOf(surfaceFor(c, regional));
+          if (surface < 3) splatA[o + surface] += w;
+          else splatB[o + surface - 3] += w;
+          tmp.setStyle(c.yard ? ({ courtyard: '#aaa28a', garden: '#7d8d54', orchard: '#72854b' }[c.yard]) : GROUND_TINT[regional && c.roadName ? 'open' : c.type] ?? '#5c7042');
+          r += tmp.r * w; g += tmp.g * w; b += tmp.b * w;
+        }
       }
 
-      // Banks: shift the texture blend towards wet dirt and tint it damp.
-      const wet = Math.min(1, shore) * (.72 + .28 * fbm(gx * .4 + 3, gz * .4 + 9));
+      // Banks: damp, muddy-sandy ground on land within a cell or two of the water (roads excluded),
+      // fading out smoothly with the distance from the shore: shift the texture blend towards wet
+      // dirt and tint it damp.
+      const band = shoreWetness(terrain, gx, gz, .9), shore = Math.max(0, Math.min(1, (band - .03) / .4)) * (1 - roadShare);
+      const wet = shore * shore * (3 - 2 * shore) * (.72 + .28 * fbm(gx * .4 + 3, gz * .4 + 9));
       if (wet > .01) {
         for (let k = 0; k < 3; k++) { splatA[o + k] *= 1 - wet * .55; splatB[o + k] *= 1 - wet * .55; }
         splatB[o] += wet * .55;
@@ -128,7 +146,8 @@ export function buildGroundGeometry(terrain: TerrainCell[][], section: MapSectio
       const patch = 0.95 + fbm(gx * 0.07, gz * 0.07) * 0.16;
       const speckle = 0.98 + hash2(gx * SUB, gz * SUB) * 0.05;
       const dry = fbm(gx * 0.05 + 11, gz * 0.05 + 7);
-      col.setRGB(r, g, b).multiplyScalar(patch * speckle);
+      // Wet ground is darker: the damp bank, and more so the bed under the water.
+      col.setRGB(r, g, b).multiplyScalar(patch * speckle * (1 - .3 * bed - .1 * wet));
       // Sun-bleached patches lean ochre, damp hollows lean cool green.
       col.r *= 1 + (dry - 0.5) * 0.1;
       col.b *= 1 - (dry - 0.5) * 0.08;
