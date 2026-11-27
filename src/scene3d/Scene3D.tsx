@@ -1786,7 +1786,12 @@ const Scene3D: React.FC<Omit<SceneProps, 'overlayRef'>> = ({ gameStateRef, input
         dpr={highQuality ? [1, 2] : [1, 1]}
         camera={{ position: [W / 2, 35, H / 2 + 20], fov: 50, far: 4500 }}
         onContextMenu={(e) => e.preventDefault()}
-        gl={{ antialias: true, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.0 }}
+        // An opaque canvas (alpha: false): the sky is drawn in the scene, so nothing behind the canvas
+        // should ever show. With a transparent canvas, any pixel a material wrote with alpha below 1
+        // let the pale page background through, as cream specks (the meadow tufts did, with alpha
+        // to coverage). Where nothing is drawn it clears to the haze colour.
+        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.0 }}
+        onCreated={({ gl }) => gl.setClearColor('#b6c5cf', 1)}
         style={{ background: '#b6c5cf' }}
       >
         <fog attach="fog" args={['#b6c5cf', 320, 760]} />
